@@ -1,170 +1,71 @@
 use core::any::Any;
 use core::borrow::Borrow;
-use core::convert::Infallible;
+use core::future;
 use core::iter::{self, zip};
 use core::mem;
-use core::ops::{BitOrAssign, Bound, Shl};
+use core::ops::Bound;
 use core::task::{Context, Poll, ready};
 
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
 use bytes::{Buf as _, BufMut as _, BytesMut};
+use futures::{FutureExt as _, stream};
 use tokio_util::codec::{Decoder, Encoder};
-use tracing::{error, instrument, trace, warn};
-use uuid::Uuid;
+use tracing::instrument;
 use wasm_tokio::cm::{BoolCodec, F32Codec, F64Codec, S8Codec, U8Codec};
 use wasm_tokio::{
-    CoreNameDecoder, CoreNameEncoder, CoreVecEncoderBytes, DEFAULT_MAX_INITIAL_CAPACITY,
-    Leb128DecoderI16, Leb128DecoderI32, Leb128DecoderI64, Leb128DecoderU8, Leb128DecoderU16,
-    Leb128DecoderU32, Leb128DecoderU64, Leb128Encoder, Utf8Codec,
+    CoreNameDecoder, CoreNameEncoder, CoreVecDecoderBytes, CoreVecEncoderBytes,
+    DEFAULT_MAX_INITIAL_CAPACITY, Leb128DecoderI16, Leb128DecoderI32, Leb128DecoderI64,
+    Leb128DecoderU16, Leb128DecoderU32, Leb128DecoderU64, Leb128Encoder, Utf8Codec,
 };
 use wasmtime::bail;
-use wasmtime::component::types::{Case, Field};
-use wasmtime::component::{Type, Val};
+use wasmtime::component::Type;
+use wasmtime::component::types::{Case, Field, FutureType, StreamType};
 use wasmtime::error::Context as _;
-use wasmtime::{AsContextMut, StoreContextMut};
-use wrpc_transport::{Receive, Transmit, error_unknown_path};
+use wrpc_transport::{
+    Decode, FutureDecoder, FutureEncoder, Receive, StreamDecoder, StreamEncoder, Transmit,
+    error_unknown_path,
+};
 
-use crate::{ResourceTypes, WrpcView};
+use crate::{FutureAny, StreamAny, Val};
 
-#[cfg(feature = "async")]
-mod concurrent;
-
-/// Default `max_len` of [`ValDecoder`] and [`TupleDecoder`]
+/// Default `max_len` of [`TupleDecoder`]
 pub const DEFAULT_MAX_LEN: u32 = 1 << 24;
 
-/// Synchronous access to a store, which is either borrowed exclusively or reachable through an
-/// `Accessor`.
+/// Encodes [`Val`]s of types `tys`, e.g. function results.
 ///
-/// Wasmtime only provides an `Accessor` to host functions implementing `async func` imports,
-/// host functions implementing other imports hold a [`StoreContextMut`] across `await` points.
-///
-/// `()` provides no store, so values requiring one, such as resources, futures and streams, fail
-/// to encode and decode.
-pub trait WithStore {
-    type Data: 'static;
-
-    fn with_store<R>(
-        &mut self,
-        f: impl FnOnce(StoreContextMut<'_, Self::Data>) -> R,
-    ) -> std::io::Result<R>;
-}
-
-impl<T: 'static> WithStore for StoreContextMut<'_, T> {
-    type Data = T;
-
-    fn with_store<R>(&mut self, f: impl FnOnce(StoreContextMut<'_, T>) -> R) -> std::io::Result<R> {
-        Ok(f(self.as_context_mut()))
-    }
-}
-
-impl WithStore for () {
-    type Data = Infallible;
-
-    fn with_store<R>(
-        &mut self,
-        _: impl FnOnce(StoreContextMut<'_, Infallible>) -> R,
-    ) -> std::io::Result<R> {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "value requires a store",
-        ))
-    }
-}
-
-pub struct ValEncoder<T> {
-    pub store: T,
-    pub ty: Type,
-    pub resources: ResourceTypes,
-    pub nested: Option<Box<dyn Transmit + Send>>,
-}
-
-impl<T> ValEncoder<T> {
-    #[must_use]
-    pub fn new(store: T, ty: Type, resources: ResourceTypes) -> Self {
-        Self {
-            store,
-            ty,
-            resources,
-            nested: None,
-        }
-    }
-}
-
-impl<T> Transmit for ValEncoder<T> {
-    fn poll_transmit(
-        &mut self,
-        cx: &mut Context<'_>,
-        path: &mut Vec<usize>,
-        dst: &mut BytesMut,
-    ) -> Poll<std::io::Result<()>> {
-        let Some(nested) = &mut self.nested else {
-            return Poll::Ready(Ok(()));
-        };
-        nested.poll_transmit(cx, path, dst)
-    }
-
-    fn is_closed(&self) -> bool {
-        self.nested.as_ref().is_none_or(|nested| nested.is_closed())
-    }
-}
-
-/// Encodes a tuple of [`Val`]s of types `tys`, e.g. function results.
-pub struct TupleEncoder<T> {
-    store: T,
+/// Pending asynchronous values are transmitted using [`Transmit::poll_transmit`].
+pub struct TupleEncoder {
     pub(crate) tys: Arc<[Type]>,
-    resources: ResourceTypes,
     nested: BTreeMap<usize, Box<dyn Transmit + Send>>,
 }
 
-impl<T> TupleEncoder<T> {
+impl TupleEncoder {
     #[must_use]
-    pub fn new(store: T, tys: Arc<[Type]>, resources: ResourceTypes) -> Self {
+    pub fn new(tys: Arc<[Type]>) -> Self {
         Self {
-            store,
             tys,
-            resources,
             nested: BTreeMap::default(),
         }
     }
 }
 
-impl<T> Encoder<&[Val]> for TupleEncoder<T>
-where
-    T: WithStore<Data: WrpcView>,
-{
-    type Error = std::io::Error;
-
-    fn encode(&mut self, vs: &[Val], dst: &mut BytesMut) -> Result<(), Self::Error> {
-        self.encode_vals(vs, dst)
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))
-    }
-}
-
-impl<T> Encoder<Vec<Val>> for TupleEncoder<T>
-where
-    T: WithStore<Data: WrpcView>,
-{
+impl Encoder<Vec<Val>> for TupleEncoder {
     type Error = std::io::Error;
 
     fn encode(&mut self, vs: Vec<Val>, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        self.encode(vs.as_slice(), dst)
-    }
-}
-
-impl<T> TupleEncoder<T>
-where
-    T: WithStore<Data: WrpcView>,
-{
-    fn encode_vals(&mut self, vs: &[Val], dst: &mut BytesMut) -> wasmtime::Result<()> {
         if vs.len() != self.tys.len() {
-            bail!("value count mismatch");
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "value count mismatch",
+            ));
         }
         for (i, (v, ty)) in zip(vs, &*self.tys).enumerate() {
-            if let Some(t) = encode_val(&mut self.store, &self.resources, ty, v, dst)
-                .with_context(|| format!("failed to encode value {i}"))?
-            {
+            let t = encode_value(ty, v, dst)
+                .with_context(|| format!("failed to encode value {i}"))
+                .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+            if let Some(t) = t {
                 self.nested.insert(i, t);
             }
         }
@@ -172,7 +73,7 @@ where
     }
 }
 
-impl<T> Transmit for TupleEncoder<T> {
+impl Transmit for TupleEncoder {
     fn poll_transmit(
         &mut self,
         cx: &mut Context<'_>,
@@ -187,141 +88,131 @@ impl<T> Transmit for TupleEncoder<T> {
     }
 }
 
-fn find_enum_discriminant<'a, T>(
-    iter: impl IntoIterator<Item = T>,
-    names: impl IntoIterator<Item = &'a str>,
-    discriminant: &str,
-) -> wasmtime::Result<T> {
-    zip(iter, names)
-        .find_map(|(i, name)| (name == discriminant).then_some(i))
-        .context("unknown enum discriminant")
-}
-
-fn find_variant_discriminant<'a, T>(
-    iter: impl IntoIterator<Item = T>,
-    cases: impl IntoIterator<Item = Case<'a>>,
-    discriminant: &str,
-) -> wasmtime::Result<(T, Option<Type>)> {
-    zip(iter, cases)
-        .find_map(|(i, Case { name, ty })| (name == discriminant).then_some((i, ty)))
-        .context("unknown variant discriminant")
-}
-
-#[inline]
-fn flag_bits<'a, T: BitOrAssign + Shl<u8, Output = T> + From<u8>>(
-    names: impl IntoIterator<Item = &'a str>,
-    flags: impl IntoIterator<Item = &'a str>,
-) -> T {
-    let mut v = T::from(0);
-    let flags: HashSet<&str> = flags.into_iter().collect();
-    for (i, name) in zip(0u8.., names) {
-        if flags.contains(name) {
-            v |= T::from(1) << i;
+fn encode_seq(
+    tys: impl IntoIterator<Item: Borrow<Type>>,
+    vs: impl IntoIterator<Item = Val>,
+    dst: &mut BytesMut,
+) -> wasmtime::Result<Option<Box<dyn Transmit + Send>>> {
+    let mut nested = BTreeMap::<usize, Box<dyn Transmit + Send>>::default();
+    for (i, (v, ty)) in zip(vs, tys).enumerate() {
+        let t = encode_value(ty.borrow(), v, dst)
+            .with_context(|| format!("failed to encode element {i}"))?;
+        if let Some(t) = t {
+            nested.insert(i, t);
         }
     }
-    v
+    if nested.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(Box::new(nested)))
 }
 
-impl<T> Encoder<&Val> for ValEncoder<T>
-where
-    T: WithStore<Data: WrpcView>,
-{
-    type Error = std::io::Error;
-
-    fn encode(&mut self, v: &Val, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        let nested = encode_val(&mut self.store, &self.resources, &self.ty, v, dst)
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
-        if let Some(t) = nested {
-            self.nested = Some(t);
-        }
-        Ok(())
+fn encode_payload(
+    ty: Option<Type>,
+    v: Option<Box<Val>>,
+    dst: &mut BytesMut,
+) -> wasmtime::Result<Option<Box<dyn Transmit + Send>>> {
+    match (v, ty) {
+        (Some(v), Some(ty)) => encode_value(&ty, *v, dst).context("failed to encode payload"),
+        (Some(..), None) => bail!("payload of unknown type"),
+        (None, Some(..)) => bail!("payload missing"),
+        (None, None) => Ok(None),
     }
+}
+
+fn encode_future(ty: &FutureType, future: FutureAny) -> wasmtime::Result<Box<dyn Transmit + Send>> {
+    with_payload!(
+        ty.ty(),
+        P => {
+            let Ok(future) = future.try_into_future::<P>() else {
+                bail!("`future` type mismatch")
+            };
+            Ok(Box::new(FutureEncoder::pending(future)))
+        },
+        bail!("`future` payload type not supported, only primitive types and `string` are")
+    )
+}
+
+fn encode_stream(ty: &StreamType, stream: StreamAny) -> wasmtime::Result<Box<dyn Transmit + Send>> {
+    let Some(payload) = ty.ty() else {
+        bail!("`stream` without a payload type not supported")
+    };
+    with_payload!(
+        @some payload,
+        P => {
+            let Ok(items) = stream.try_into_stream::<P>() else {
+                bail!("`stream` type mismatch")
+            };
+            Ok(Box::new(StreamEncoder::pending(items)))
+        },
+        bail!("`stream` payload type not supported, only primitive types and `string` are")
+    )
 }
 
 #[allow(clippy::too_many_lines)]
-#[instrument(level = "trace", skip(store, resources, ty))]
-fn encode_val(
-    store: &mut impl WithStore<Data: WrpcView>,
-    resources: &ResourceTypes,
+#[instrument(level = "trace", skip(ty))]
+fn encode_value(
     ty: &Type,
-    v: &Val,
+    v: Val,
     dst: &mut BytesMut,
 ) -> wasmtime::Result<Option<Box<dyn Transmit + Send>>> {
     match (v, ty) {
         (Val::Bool(v), Type::Bool) => {
-            dst.reserve(1);
-            dst.put_u8((*v).into());
+            dst.put_u8(v.into());
             Ok(None)
         }
         (Val::S8(v), Type::S8) => {
-            dst.reserve(1);
-            dst.put_i8(*v);
+            dst.put_i8(v);
             Ok(None)
         }
         (Val::U8(v), Type::U8) => {
-            dst.reserve(1);
-            dst.put_u8(*v);
+            dst.put_u8(v);
             Ok(None)
         }
-        (Val::S16(v), Type::S16) => Leb128Encoder
-            .encode(*v, dst)
-            .context("failed to encode s16")
-            .map(|()| None),
-        (Val::U16(v), Type::U16) => Leb128Encoder
-            .encode(*v, dst)
-            .context("failed to encode u16")
-            .map(|()| None),
-        (Val::S32(v), Type::S32) => Leb128Encoder
-            .encode(*v, dst)
-            .context("failed to encode s32")
-            .map(|()| None),
-        (Val::U32(v), Type::U32) => Leb128Encoder
-            .encode(*v, dst)
-            .context("failed to encode u32")
-            .map(|()| None),
-        (Val::S64(v), Type::S64) => Leb128Encoder
-            .encode(*v, dst)
-            .context("failed to encode s64")
-            .map(|()| None),
-        (Val::U64(v), Type::U64) => Leb128Encoder
-            .encode(*v, dst)
-            .context("failed to encode u64")
-            .map(|()| None),
-        (Val::Float32(v), Type::Float32) => F32Codec
-            .encode(*v, dst)
-            .context("failed to encode f32")
-            .map(|()| None),
-        (Val::Float64(v), Type::Float64) => F64Codec
-            .encode(*v, dst)
-            .context("failed to encode f64")
-            .map(|()| None),
-        (Val::Char(v), Type::Char) => Utf8Codec
-            .encode(*v, dst)
-            .context("failed to encode char")
-            .map(|()| None),
-        (Val::String(v), Type::String) => CoreNameEncoder
-            .encode(v.as_str(), dst)
-            .context("failed to encode string")
-            .map(|()| None),
+        (Val::S16(v), Type::S16) => {
+            Leb128Encoder.encode(v, dst)?;
+            Ok(None)
+        }
+        (Val::U16(v), Type::U16) => {
+            Leb128Encoder.encode(v, dst)?;
+            Ok(None)
+        }
+        (Val::S32(v), Type::S32) => {
+            Leb128Encoder.encode(v, dst)?;
+            Ok(None)
+        }
+        (Val::U32(v), Type::U32) => {
+            Leb128Encoder.encode(v, dst)?;
+            Ok(None)
+        }
+        (Val::S64(v), Type::S64) => {
+            Leb128Encoder.encode(v, dst)?;
+            Ok(None)
+        }
+        (Val::U64(v), Type::U64) => {
+            Leb128Encoder.encode(v, dst)?;
+            Ok(None)
+        }
+        (Val::Float32(v), Type::Float32) => {
+            F32Codec.encode(v, dst)?;
+            Ok(None)
+        }
+        (Val::Float64(v), Type::Float64) => {
+            F64Codec.encode(v, dst)?;
+            Ok(None)
+        }
+        (Val::Char(v), Type::Char) => {
+            Utf8Codec.encode(v, dst)?;
+            Ok(None)
+        }
+        (Val::String(v), Type::String) => {
+            CoreNameEncoder.encode(v, dst)?;
+            Ok(None)
+        }
         (Val::List(vs), Type::List(ty)) => {
-            let ty = ty.ty();
             let n = u32::try_from(vs.len()).context("list length does not fit in u32")?;
-            dst.reserve(5 + vs.len());
-            Leb128Encoder
-                .encode(n, dst)
-                .context("failed to encode list length")?;
-            let mut nested = BTreeMap::<usize, Box<dyn Transmit + Send>>::default();
-            for (i, v) in vs.iter().enumerate() {
-                if let Some(t) = encode_val(store, resources, &ty, v, dst)
-                    .context("failed to encode list element")?
-                {
-                    nested.insert(i, t);
-                }
-            }
-            if nested.is_empty() {
-                return Ok(None);
-            }
-            Ok(Some(Box::new(nested)))
+            Leb128Encoder.encode(n, dst)?;
+            encode_seq(iter::repeat(ty.ty()), vs, dst)
         }
         (Val::Record(vs), Type::Record(ty)) => {
             if vs.len() != ty.fields().len() {
@@ -331,24 +222,13 @@ fn encode_val(
                     ty.fields().len()
                 );
             }
-            for ((name, ..), Field { name: field, .. }) in zip(vs, ty.fields()) {
+            for ((name, ..), Field { name: field, .. }) in zip(&vs, ty.fields()) {
                 if name != field {
                     bail!("record field `{name}` does not match `{field}`");
                 }
             }
-            dst.reserve(vs.len());
-            let mut nested = BTreeMap::<usize, Box<dyn Transmit + Send>>::default();
-            for (i, ((name, v), Field { ref ty, .. })) in zip(vs, ty.fields()).enumerate() {
-                if let Some(t) = encode_val(store, resources, ty, v, dst)
-                    .with_context(|| format!("failed to encode `{name}` field"))?
-                {
-                    nested.insert(i, t);
-                }
-            }
-            if nested.is_empty() {
-                return Ok(None);
-            }
-            Ok(Some(Box::new(nested)))
+            let tys = ty.fields().map(|Field { ty, .. }| ty);
+            encode_seq(tys, vs.into_iter().map(|(.., v)| v), dst)
         }
         (Val::Tuple(vs), Type::Tuple(ty)) => {
             if vs.len() != ty.types().len() {
@@ -358,308 +238,110 @@ fn encode_val(
                     ty.types().len()
                 );
             }
-            dst.reserve(vs.len());
-            let mut nested = BTreeMap::<usize, Box<dyn Transmit + Send>>::default();
-            for (i, (v, ref ty)) in zip(vs, ty.types()).enumerate() {
-                if let Some(t) = encode_val(store, resources, ty, v, dst)
-                    .context("failed to encode tuple element")?
-                {
-                    nested.insert(i, t);
-                }
-            }
-            if nested.is_empty() {
-                return Ok(None);
-            }
-            Ok(Some(Box::new(nested)))
+            encode_seq(ty.types(), vs, dst)
         }
-        (Val::Variant(discriminant, v), Type::Variant(ty)) => {
-            let cases = ty.cases();
-            let ty = match cases.len() {
-                ..=0x0000_00ff => {
-                    let (discriminant, ty) = find_variant_discriminant(0u8.., cases, discriminant)?;
-                    dst.reserve(2 + usize::from(v.is_some()));
-                    Leb128Encoder.encode(discriminant, dst)?;
-                    ty
-                }
-                0x0000_0100..=0x0000_ffff => {
-                    let (discriminant, ty) =
-                        find_variant_discriminant(0u16.., cases, discriminant)?;
-                    dst.reserve(3 + usize::from(v.is_some()));
-                    Leb128Encoder.encode(discriminant, dst)?;
-                    ty
-                }
-                0x0001_0000..=0x00ff_ffff => {
-                    let (discriminant, ty) =
-                        find_variant_discriminant(0u32.., cases, discriminant)?;
-                    dst.reserve(4 + usize::from(v.is_some()));
-                    Leb128Encoder.encode(discriminant, dst)?;
-                    ty
-                }
-                0x0100_0000..=0xffff_ffff => {
-                    let (discriminant, ty) =
-                        find_variant_discriminant(0u32.., cases, discriminant)?;
-                    dst.reserve(5 + usize::from(v.is_some()));
-                    Leb128Encoder.encode(discriminant, dst)?;
-                    ty
-                }
-                0x1_0000_0000.. => bail!("case count does not fit in u32"),
-            };
-            if let Some(v) = v {
-                let ty = ty.context("type missing for variant")?;
-                encode_val(store, resources, &ty, v, dst).context("failed to encode variant value")
-            } else if ty.is_some() {
-                bail!("payload missing for variant `{discriminant}`")
-            } else {
-                Ok(None)
-            }
+        (Val::Variant(case, v), Type::Variant(ty)) => {
+            let (i, ty) = zip(0u32.., ty.cases())
+                .find_map(|(i, Case { name, ty })| (name == case).then_some((i, ty)))
+                .with_context(|| format!("unknown variant case `{case}`"))?;
+            Leb128Encoder.encode(i, dst)?;
+            encode_payload(ty, v, dst)
         }
-        (Val::Enum(discriminant), Type::Enum(ty)) => {
-            let names = ty.names();
-            match names.len() {
-                ..=0x0000_00ff => {
-                    let discriminant = find_enum_discriminant(0u8.., names, discriminant)?;
-                    dst.reserve(2);
-                    Leb128Encoder.encode(discriminant, dst)?;
-                }
-                0x0000_0100..=0x0000_ffff => {
-                    let discriminant = find_enum_discriminant(0u16.., names, discriminant)?;
-                    dst.reserve(3);
-                    Leb128Encoder.encode(discriminant, dst)?;
-                }
-                0x0001_0000..=0x00ff_ffff => {
-                    let discriminant = find_enum_discriminant(0u32.., names, discriminant)?;
-                    dst.reserve(4);
-                    Leb128Encoder.encode(discriminant, dst)?;
-                }
-                0x0100_0000..=0xffff_ffff => {
-                    let discriminant = find_enum_discriminant(0u32.., names, discriminant)?;
-                    dst.reserve(5);
-                    Leb128Encoder.encode(discriminant, dst)?;
-                }
-                0x1_0000_0000.. => bail!("name count does not fit in u32"),
-            }
+        (Val::Enum(case), Type::Enum(ty)) => {
+            let i = zip(0u32.., ty.names())
+                .find_map(|(i, name)| (name == case).then_some(i))
+                .with_context(|| format!("unknown enum case `{case}`"))?;
+            Leb128Encoder.encode(i, dst)?;
             Ok(None)
         }
-        (Val::Option(None), Type::Option(_)) => {
-            dst.reserve(1);
+        (Val::Option(None), Type::Option(..)) => {
             dst.put_u8(0);
             Ok(None)
         }
         (Val::Option(Some(v)), Type::Option(ty)) => {
-            dst.reserve(2);
             dst.put_u8(1);
-            let ty = ty.ty();
-            encode_val(store, resources, &ty, v, dst)
-                .context("failed to encode `option::some` value")
+            encode_value(&ty.ty(), *v, dst).context("failed to encode `option::some` value")
         }
-        (Val::Result(v), Type::Result(ty)) => match v {
-            Ok(v) => match (v, ty.ok()) {
-                (Some(v), Some(ty)) => {
-                    dst.reserve(2);
-                    dst.put_u8(0);
-                    encode_val(store, resources, &ty, v, dst)
-                        .context("failed to encode `result::ok` value")
-                }
-                (Some(_v), None) => bail!("`result::ok` value of unknown type"),
-                (None, Some(_ty)) => bail!("`result::ok` value missing"),
-                (None, None) => {
-                    dst.reserve(1);
-                    dst.put_u8(0);
-                    Ok(None)
-                }
-            },
-            Err(v) => match (v, ty.err()) {
-                (Some(v), Some(ty)) => {
-                    dst.reserve(2);
-                    dst.put_u8(1);
-                    encode_val(store, resources, &ty, v, dst)
-                        .context("failed to encode `result::err` value")
-                }
-                (Some(_v), None) => bail!("`result::err` value of unknown type"),
-                (None, Some(_ty)) => bail!("`result::err` value missing"),
-                (None, None) => {
-                    dst.reserve(1);
-                    dst.put_u8(1);
-                    Ok(None)
-                }
-            },
-        },
+        (Val::Result(Ok(v)), Type::Result(ty)) => {
+            dst.put_u8(0);
+            encode_payload(ty.ok(), v, dst)
+        }
+        (Val::Result(Err(v)), Type::Result(ty)) => {
+            dst.put_u8(1);
+            encode_payload(ty.err(), v, dst)
+        }
         (Val::Flags(vs), Type::Flags(ty)) => {
             let names = ty.names();
-            let vs = vs.iter().map(String::as_str);
-            match names.len() {
-                ..=8 => {
-                    dst.reserve(1);
-                    dst.put_u8(flag_bits(names, vs));
-                }
-                9..=16 => {
-                    dst.reserve(2);
-                    dst.put_u16_le(flag_bits(names, vs));
-                }
-                17..=24 => {
-                    dst.reserve(3);
-                    dst.put_slice(&u32::to_le_bytes(flag_bits(names, vs))[..3]);
-                }
-                25..=32 => {
-                    dst.reserve(4);
-                    dst.put_u32_le(flag_bits(names, vs));
-                }
-                33..=40 => {
-                    dst.reserve(5);
-                    dst.put_slice(&u64::to_le_bytes(flag_bits(names, vs))[..5]);
-                }
-                41..=48 => {
-                    dst.reserve(6);
-                    dst.put_slice(&u64::to_le_bytes(flag_bits(names, vs))[..6]);
-                }
-                49..=56 => {
-                    dst.reserve(7);
-                    dst.put_slice(&u64::to_le_bytes(flag_bits(names, vs))[..7]);
-                }
-                57..=64 => {
-                    dst.reserve(8);
-                    dst.put_u64_le(flag_bits(names, vs));
-                }
-                65..=72 => {
-                    dst.reserve(9);
-                    dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..9]);
-                }
-                73..=80 => {
-                    dst.reserve(10);
-                    dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..10]);
-                }
-                81..=88 => {
-                    dst.reserve(11);
-                    dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..11]);
-                }
-                89..=96 => {
-                    dst.reserve(12);
-                    dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..12]);
-                }
-                97..=104 => {
-                    dst.reserve(13);
-                    dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..13]);
-                }
-                105..=112 => {
-                    dst.reserve(14);
-                    dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..14]);
-                }
-                113..=120 => {
-                    dst.reserve(15);
-                    dst.put_slice(&u128::to_le_bytes(flag_bits(names, vs))[..15]);
-                }
-                121..=128 => {
-                    dst.reserve(16);
-                    dst.put_u128_le(flag_bits(names, vs));
-                }
-                bits @ 129.. => {
-                    let mut cap = bits / 8;
-                    if bits % 8 != 0 {
-                        cap = cap.saturating_add(1);
-                    }
-                    let mut buf = vec![0; cap];
-                    let flags: HashSet<&str> = vs.into_iter().collect();
-                    for (i, name) in names.enumerate() {
-                        if flags.contains(name) {
-                            buf[i / 8] |= 1 << (i % 8);
-                        }
-                    }
-                    dst.extend_from_slice(&buf);
+            let vs: HashSet<&str> = vs.iter().map(String::as_str).collect();
+            let off = dst.len();
+            dst.put_bytes(0, names.len().div_ceil(8).max(1));
+            for (i, name) in names.enumerate() {
+                if vs.contains(name) {
+                    dst[off + i / 8] |= 1 << (i % 8);
                 }
             }
             Ok(None)
         }
-        (Val::Resource(resource), Type::Own(ty) | Type::Borrow(ty)) => {
-            if resources.guest.contains(ty) {
-                let id = Uuid::now_v7();
-                CoreVecEncoderBytes
-                    .encode(id.to_bytes_le().as_slice(), dst)
-                    .context("failed to encode resource handle")?;
-                trace!(?id, "store shared resource");
-                let prev = store.with_store(|mut store| {
-                    store
-                        .data_mut()
-                        .wrpc()
-                        .shared_resources
-                        .0
-                        .insert(id, *resource)
-                })?;
-                if prev.is_some() {
-                    error!(?id, "duplicate resource ID generated");
-                }
-                Ok(None)
-            } else {
-                bail!("encoding host resources not supported yet")
-            }
+        (Val::Resource(v), Type::Own(..) | Type::Borrow(..)) => {
+            CoreVecEncoderBytes.encode(v, dst)?;
+            Ok(None)
         }
-
-        #[cfg(feature = "async")]
-        (Val::Future(future), Type::Future(ty)) => {
-            let nested =
-                store.with_store(|store| concurrent::encode_future(store, future, ty))??;
-            dst.reserve(1);
+        (Val::Future(v), Type::Future(ty)) => {
+            let nested = encode_future(ty, v)?;
             dst.put_u8(0);
             Ok(Some(nested))
         }
-        #[cfg(feature = "async")]
-        (Val::Stream(stream), Type::Stream(ty)) => {
-            let nested =
-                store.with_store(|store| concurrent::encode_stream(store, stream, ty))??;
-            dst.reserve(1);
+        (Val::Stream(v), Type::Stream(ty)) => {
+            let nested = encode_stream(ty, v)?;
             dst.put_u8(0);
             Ok(Some(nested))
-        }
-        (_, Type::ErrorContext) => {
-            bail!("`error-context` not supported")
-        }
-        (_, Type::Map(..)) => {
-            bail!("maps not supported")
-        }
-        (_, Type::FixedLengthList(..)) => {
-            bail!("fixed-length lists not supported")
         }
         _ => bail!("value type mismatch"),
     }
 }
 
-/// Progress of a [`ValDecoder`] or [`TupleDecoder`] within a partially-received value
+/// Resume point of a [`TupleDecoder`] within a partially-received value
 enum Partial {
     Decoder(Box<dyn Any + Send>),
-    Uuid,
-    Seq {
-        n: usize,
-        vs: Vec<Val>,
-        elem: Option<Box<Partial>>,
-    },
-    Case {
-        v: Val,
-        ty: Type,
-        payload: Option<Box<Partial>>,
-    },
+    /// Decoded elements of a `list`, `record` or `tuple` of `n` elements
+    Seq(usize, Vec<Val>),
+    /// `variant`, `option` or `result` case awaiting its payload of type `Type`
+    Case(Val, Type),
 }
 
-struct Inner<T> {
-    store: T,
-    resources: ResourceTypes,
+/// Decodes [`Val`]s of types `tys`, e.g. function parameters.
+///
+/// Pending asynchronous values are received using [`Receive::poll_receive`].
+pub struct TupleDecoder {
+    pub(crate) tys: Arc<[Type]>,
     max_len: u32,
-    state: Option<Box<Partial>>,
+    /// Resume points, innermost first
+    state: Vec<Partial>,
     /// Decoders of the pending asynchronous values keyed by their paths
     nested: BTreeMap<Box<[usize]>, Box<dyn Receive + Send>>,
 }
 
-impl<T> Inner<T> {
-    fn new(store: T, resources: ResourceTypes) -> Self {
+impl TupleDecoder {
+    #[must_use]
+    pub fn new(tys: Arc<[Type]>) -> Self {
         Self {
-            store,
-            resources,
+            tys,
             max_len: DEFAULT_MAX_LEN,
-            state: None,
+            state: Vec::default(),
             nested: BTreeMap::default(),
         }
     }
+
+    /// Rejects strings and resource handles longer than `max_len` bytes and lists longer than
+    /// `max_len` elements, [`DEFAULT_MAX_LEN`] by default.
+    #[must_use]
+    pub fn with_max_len(mut self, max_len: u32) -> Self {
+        self.max_len = max_len;
+        self
+    }
 }
 
-impl<T> Receive for Inner<T> {
+impl Receive for TupleDecoder {
     fn poll_receive(
         &mut self,
         cx: &mut Context<'_>,
@@ -684,90 +366,6 @@ impl<T> Receive for Inner<T> {
 
     fn is_closed(&self) -> bool {
         self.nested.is_empty()
-    }
-}
-
-/// Decodes a [`Val`] of type `ty`.
-///
-/// Resources and asynchronous values are created in the store once their encoding is complete.
-/// Pending asynchronous values are received using [`Receive::poll_receive`].
-pub struct ValDecoder<T> {
-    ty: Type,
-    inner: Inner<T>,
-}
-
-impl<T> ValDecoder<T> {
-    #[must_use]
-    pub fn new(store: T, ty: Type, resources: ResourceTypes) -> Self {
-        Self {
-            ty,
-            inner: Inner::new(store, resources),
-        }
-    }
-
-    /// Rejects strings longer than `max_len` bytes and lists longer than `max_len` elements,
-    /// [`DEFAULT_MAX_LEN`] by default.
-    #[must_use]
-    pub fn with_max_len(mut self, max_len: u32) -> Self {
-        self.inner.max_len = max_len;
-        self
-    }
-}
-
-impl<T> Receive for ValDecoder<T> {
-    fn poll_receive(
-        &mut self,
-        cx: &mut Context<'_>,
-        path: &[usize],
-        src: &mut BytesMut,
-    ) -> Poll<std::io::Result<()>> {
-        self.inner.poll_receive(cx, path, src)
-    }
-
-    fn is_closed(&self) -> bool {
-        self.inner.is_closed()
-    }
-}
-
-/// Decodes a tuple of [`Val`]s of types `tys`, e.g. function parameters.
-///
-/// Resources and asynchronous values are created in the store once their encoding is complete.
-/// Pending asynchronous values are received using [`Receive::poll_receive`].
-pub struct TupleDecoder<T> {
-    tys: Arc<[Type]>,
-    inner: Inner<T>,
-}
-
-impl<T> TupleDecoder<T> {
-    #[must_use]
-    pub fn new(store: T, tys: Arc<[Type]>, resources: ResourceTypes) -> Self {
-        Self {
-            tys,
-            inner: Inner::new(store, resources),
-        }
-    }
-
-    /// Rejects strings longer than `max_len` bytes and lists longer than `max_len` elements,
-    /// [`DEFAULT_MAX_LEN`] by default.
-    #[must_use]
-    pub fn with_max_len(mut self, max_len: u32) -> Self {
-        self.inner.max_len = max_len;
-        self
-    }
-}
-
-impl<T> Receive for TupleDecoder<T> {
-    fn poll_receive(
-        &mut self,
-        cx: &mut Context<'_>,
-        path: &[usize],
-        src: &mut BytesMut,
-    ) -> Poll<std::io::Result<()>> {
-        self.inner.poll_receive(cx, path, src)
-    }
-
-    fn is_closed(&self) -> bool {
-        self.inner.is_closed()
     }
 }
 
@@ -809,75 +407,35 @@ where
 
 fn decode_with<T>(
     src: &mut BytesMut,
-    state: &mut Option<Box<Partial>>,
+    state: &mut Vec<Partial>,
     dec: T,
 ) -> std::io::Result<Option<T::Item>>
 where
     T: Decoder + Send + 'static,
     std::io::Error: From<T::Error>,
 {
-    let mut dec = match state.take().map(|state| *state) {
+    let mut dec = match state.pop() {
         Some(Partial::Decoder(prev)) => prev.downcast().map_or(dec, |prev| *prev),
         _ => dec,
     };
     let v = dec.decode(src)?;
     if v.is_none() {
-        *state = Some(Box::new(Partial::Decoder(Box::new(dec))));
+        state.push(Partial::Decoder(Box::new(dec)));
     }
     Ok(v)
 }
 
-impl<T> Inner<T>
-where
-    T: WithStore<Data: WrpcView>,
-{
-    fn decode<V>(
-        &mut self,
-        src: &mut BytesMut,
-        f: impl FnOnce(
-            &mut Self,
-            &mut BytesMut,
-            &mut Vec<usize>,
-            &mut Option<Box<Partial>>,
-        ) -> std::io::Result<Option<V>>,
-    ) -> std::io::Result<Option<V>> {
-        let n = self.state.is_none().then_some(src.len());
-        let mut state = self.state.take();
-        let mut path = Vec::default();
-        let v = f(self, src, &mut path, &mut state).map_err(|err| {
-            let kind = err.kind();
-            std::io::Error::new(
-                kind,
-                wasmtime::Error::from(err)
-                    .context(format!("failed to decode value at path {path:?}")),
-            )
-        })?;
-        if n != Some(src.len()) {
-            self.state = state;
-        }
-        Ok(v)
-    }
-
-    fn decode_eof<V>(&self, v: Option<V>, src: &BytesMut) -> std::io::Result<Option<V>> {
-        if v.is_none() && (self.state.is_some() || !src.is_empty()) {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                "value incomplete",
-            ));
-        }
-        Ok(v)
-    }
-
+impl TupleDecoder {
     fn decode_seq(
         &mut self,
         src: &mut BytesMut,
         path: &mut Vec<usize>,
-        state: &mut Option<Box<Partial>>,
+        state: &mut Vec<Partial>,
         len: Option<usize>,
         tys: impl IntoIterator<Item: Borrow<Type>>,
     ) -> std::io::Result<Option<Vec<Val>>> {
-        let (n, mut vs, mut elem) = match state.take().map(|state| *state) {
-            Some(Partial::Seq { n, vs, elem }) => (n, vs, elem),
+        let (n, mut vs) = match state.pop() {
+            Some(Partial::Seq(n, vs)) => (n, vs),
             _ => {
                 let n = if let Some(n) = len {
                     n
@@ -898,15 +456,15 @@ where
                 };
                 let vs =
                     Vec::with_capacity(n.min(DEFAULT_MAX_INITIAL_CAPACITY / mem::size_of::<Val>()));
-                (n, vs, None)
+                (n, vs)
             }
         };
         for ty in tys.into_iter().take(n).skip(vs.len()) {
             path.push(vs.len());
-            let v = self.decode_ty(src, ty.borrow(), path, &mut elem)?;
+            let v = self.decode_ty(src, ty.borrow(), path, state)?;
             path.pop();
             let Some(v) = v else {
-                *state = Some(Box::new(Partial::Seq { n, vs, elem }));
+                state.push(Partial::Seq(n, vs));
                 return Ok(None);
             };
             vs.push(v);
@@ -918,11 +476,11 @@ where
         &mut self,
         src: &mut BytesMut,
         path: &mut Vec<usize>,
-        state: &mut Option<Box<Partial>>,
+        state: &mut Vec<Partial>,
         case: impl FnOnce(&mut BytesMut) -> std::io::Result<Option<(Val, Option<Type>)>>,
     ) -> std::io::Result<Option<Val>> {
-        let (mut v, ty, mut payload) = match state.take().map(|state| *state) {
-            Some(Partial::Case { v, ty, payload }) => (v, ty, payload),
+        let (mut v, ty) = match state.pop() {
+            Some(Partial::Case(v, ty)) => (v, ty),
             _ => {
                 let Some((v, ty)) = case(src)? else {
                     return Ok(None);
@@ -930,11 +488,11 @@ where
                 let Some(ty) = ty else {
                     return Ok(Some(v));
                 };
-                (v, ty, None)
+                (v, ty)
             }
         };
-        let Some(p) = self.decode_ty(src, &ty, path, &mut payload)? else {
-            *state = Some(Box::new(Partial::Case { v, ty, payload }));
+        let Some(p) = self.decode_ty(src, &ty, path, state)? else {
+            state.push(Partial::Case(v, ty));
             return Ok(None);
         };
         if let Val::Variant(.., x) | Val::Option(x) | Val::Result(Ok(x) | Err(x)) = &mut v {
@@ -943,13 +501,108 @@ where
         Ok(Some(v))
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn decode_async<D>(
+        &mut self,
+        src: &mut BytesMut,
+        path: &[usize],
+        state: &mut Vec<Partial>,
+        kind: &str,
+        dec: D,
+        pending: impl FnOnce() -> (Val, Box<dyn Receive + Send>),
+        ready: impl FnOnce(D::Item) -> Val,
+    ) -> std::io::Result<Option<Val>>
+    where
+        D: Decoder + Send + 'static,
+        std::io::Error: From<D::Error>,
+    {
+        if state.is_empty() {
+            let Some(status) = decode_status(src, kind)? else {
+                return Ok(None);
+            };
+            if status == 0 {
+                let (v, r) = pending();
+                self.nested.insert(path.into(), r);
+                return Ok(Some(v));
+            }
+        }
+        let Some(v) = decode_with(src, state, dec)? else {
+            return Ok(None);
+        };
+        Ok(Some(ready(v)))
+    }
+
+    fn decode_future(
+        &mut self,
+        src: &mut BytesMut,
+        path: &[usize],
+        state: &mut Vec<Partial>,
+        ty: &FutureType,
+    ) -> std::io::Result<Option<Val>> {
+        with_payload!(
+            ty.ty(),
+            P => self.decode_async(
+                src,
+                path,
+                state,
+                "future",
+                <P as Decode>::Decoder::default(),
+                || {
+                    let (r, v) = FutureDecoder::<P>::pending();
+                    (Val::Future(FutureAny::new(v.map(Ok))), Box::new(r))
+                },
+                |v: P| Val::Future(FutureAny::new(future::ready(Ok(v)))),
+            ),
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "`future` payload type not supported, only primitive types and `string` are",
+            ))
+        )
+    }
+
+    fn decode_stream(
+        &mut self,
+        src: &mut BytesMut,
+        path: &[usize],
+        state: &mut Vec<Partial>,
+        ty: &StreamType,
+    ) -> std::io::Result<Option<Val>> {
+        let Some(payload) = ty.ty() else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "`stream` without a payload type not supported",
+            ));
+        };
+        with_payload!(
+            @some payload,
+            P => self.decode_async(
+                src,
+                path,
+                state,
+                "stream",
+                <P as Decode>::ListDecoder::default(),
+                || {
+                    let (r, items) = StreamDecoder::<P>::pending();
+                    (Val::Stream(StreamAny::new(items)), Box::new(r))
+                },
+                |vs: Vec<P>| {
+                    Val::Stream(StreamAny::new(stream::iter((!vs.is_empty()).then_some(vs))))
+                },
+            ),
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "`stream` payload type not supported, only primitive types and `string` are",
+            ))
+        )
+    }
+
     #[allow(clippy::too_many_lines)]
     fn decode_ty(
         &mut self,
         src: &mut BytesMut,
         ty: &Type,
         path: &mut Vec<usize>,
-        state: &mut Option<Box<Partial>>,
+        state: &mut Vec<Partial>,
     ) -> std::io::Result<Option<Val>> {
         match ty {
             Type::Bool => decode_leaf(BoolCodec, src, Val::Bool),
@@ -1051,58 +704,13 @@ where
                     .collect();
                 Ok(Some(Val::Flags(vs)))
             }
-            Type::Own(ty) | Type::Borrow(ty) => {
-                if self.resources.guest.contains(ty) {
-                    let mut id = uuid::Bytes::default();
-                    if !matches!(state.take().as_deref(), Some(Partial::Uuid)) {
-                        let Some(n) = Leb128DecoderU8.decode(src)? else {
-                            return Ok(None);
-                        };
-                        if usize::from(n) != id.len() {
-                            return Err(std::io::Error::new(
-                                std::io::ErrorKind::InvalidData,
-                                format!(
-                                    "invalid guest resource handle length {n}, expected {}",
-                                    id.len()
-                                ),
-                            ));
-                        }
-                    }
-                    if src.len() < id.len() {
-                        src.reserve(id.len().saturating_sub(src.len()));
-                        *state = Some(Box::new(Partial::Uuid));
-                        return Ok(None);
-                    }
-                    src.copy_to_slice(&mut id);
-                    let id = Uuid::from_bytes_le(id);
-                    trace!(?id, "lookup shared resource");
-                    let resource = self.store.with_store(|mut store| {
-                        store
-                            .data_mut()
-                            .wrpc()
-                            .shared_resources
-                            .0
-                            .get(&id)
-                            .copied()
-                            .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound))
-                    })??;
-                    Ok(Some(Val::Resource(resource)))
-                } else {
-                    Err(std::io::Error::new(
-                        std::io::ErrorKind::Unsupported,
-                        "decoding host resources not supported yet",
-                    ))
-                }
+            Type::Own(..) | Type::Borrow(..) => {
+                let dec = <CoreVecDecoderBytes>::with_max_len(self.max_len);
+                let v = decode_with(src, state, dec)?;
+                Ok(v.map(Val::Resource))
             }
-            #[cfg(feature = "async")]
             Type::Future(ty) => self.decode_future(src, path, state, ty),
-            #[cfg(feature = "async")]
             Type::Stream(ty) => self.decode_stream(src, path, state, ty),
-            #[cfg(not(feature = "async"))]
-            Type::Future(..) | Type::Stream(..) => Err(std::io::Error::new(
-                std::io::ErrorKind::Unsupported,
-                "`future` and `stream` require the `async` feature",
-            )),
             Type::ErrorContext => Err(std::io::Error::new(
                 std::io::ErrorKind::Unsupported,
                 "`error-context` not supported",
@@ -1119,42 +727,39 @@ where
     }
 }
 
-impl<T> Decoder for ValDecoder<T>
-where
-    T: WithStore<Data: WrpcView>,
-{
-    type Item = Val;
-    type Error = std::io::Error;
-
-    fn decode(&mut self, src: &mut BytesMut) -> std::io::Result<Option<Val>> {
-        let ty = &self.ty;
-        self.inner.decode(src, |inner, src, path, state| {
-            inner.decode_ty(src, ty, path, state)
-        })
-    }
-
-    fn decode_eof(&mut self, src: &mut BytesMut) -> std::io::Result<Option<Val>> {
-        let v = self.decode(src)?;
-        self.inner.decode_eof(v, src)
-    }
-}
-
-impl<T> Decoder for TupleDecoder<T>
-where
-    T: WithStore<Data: WrpcView>,
-{
+impl Decoder for TupleDecoder {
     type Item = Vec<Val>;
     type Error = std::io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> std::io::Result<Option<Vec<Val>>> {
-        let tys = &*self.tys;
-        self.inner.decode(src, |inner, src, path, state| {
-            inner.decode_seq(src, path, state, Some(tys.len()), tys)
-        })
+        let n = self.state.is_empty().then_some(src.len());
+        let mut state = mem::take(&mut self.state);
+        let mut path = Vec::default();
+        let tys = Arc::clone(&self.tys);
+        let vs = self
+            .decode_seq(src, &mut path, &mut state, Some(tys.len()), tys.iter())
+            .map_err(|err| {
+                let kind = err.kind();
+                std::io::Error::new(
+                    kind,
+                    wasmtime::Error::from(err)
+                        .context(format!("failed to decode value at path {path:?}")),
+                )
+            })?;
+        if n != Some(src.len()) {
+            self.state = state;
+        }
+        Ok(vs)
     }
 
     fn decode_eof(&mut self, src: &mut BytesMut) -> std::io::Result<Option<Vec<Val>>> {
         let vs = self.decode(src)?;
-        self.inner.decode_eof(vs, src)
+        if vs.is_none() && (!self.state.is_empty() || !src.is_empty()) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "value incomplete",
+            ));
+        }
+        Ok(vs)
     }
 }
