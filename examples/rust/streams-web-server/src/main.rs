@@ -28,7 +28,7 @@ use bindings::exports::wrpc_examples::streams::handler::Req;
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// Address to serve `wrpc-examples:streams/handler.echo` on
-    #[arg(default_value = "[::1]:4433")]
+    #[arg(default_value = "[::1]:4434")]
     addr: SocketAddr,
 }
 
