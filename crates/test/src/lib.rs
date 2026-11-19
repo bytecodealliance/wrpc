@@ -565,11 +565,11 @@ where
 #[cfg(feature = "http")]
 pub async fn http_accept(
     rx: &mut tokio::sync::mpsc::Receiver<(
-        tokio::io::DuplexStream,
+        wrpc_http::OutgoingBodyWriter,
         wrpc_http::RequestBodyReader<hyper::body::Incoming>,
     )>,
 ) -> std::io::Result<(
-    tokio::io::DuplexStream,
+    wrpc_http::OutgoingBodyWriter,
     wrpc_http::RequestBodyReader<hyper::body::Incoming>,
 )> {
     rx.recv()
@@ -582,7 +582,7 @@ pub async fn http_accept(
 pub async fn serve_http1(
     stream: TcpStream,
     tx: tokio::sync::mpsc::Sender<(
-        tokio::io::DuplexStream,
+        wrpc_http::OutgoingBodyWriter,
         wrpc_http::RequestBodyReader<hyper::body::Incoming>,
     )>,
 ) -> anyhow::Result<()> {
@@ -610,7 +610,7 @@ pub async fn serve_http2<T>(
         http::request::Parts,
         hyper::client::conn::http2::SendRequest<wrpc_http::OutgoingBody>,
         &mut tokio::sync::mpsc::Receiver<(
-            tokio::io::DuplexStream,
+            wrpc_http::OutgoingBodyWriter,
             wrpc_http::RequestBodyReader<hyper::body::Incoming>,
         )>,
     ) -> anyhow::Result<T>,

@@ -105,11 +105,41 @@ async fn error_response() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn body_writer_dropped() -> anyhow::Result<()> {
     let (body, mut tx) = OutgoingBody::new();
-    tx.write_all(b"foo").await.context("failed to write body")?;
-    drop(tx);
-    let res = body.collect().await.context("failed to read body")?;
+    let ((), res) = try_join!(
+        async move {
+            tx.write_all(b"foo").await.context("failed to write body")?;
+            drop(tx);
+            anyhow::Ok(())
+        },
+        async { body.collect().await.context("failed to read body") },
+    )?;
     assert_eq!(res.to_bytes(), "foo");
     Ok(())
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn full_body() -> anyhow::Result<()> {
+    let svc = service_fn(|req: hyper::Request<hyper::body::Incoming>| async {
+        let len = req.headers().get(http::header::CONTENT_LENGTH);
+        ensure!(len.is_some_and(|len| len == "3"));
+        let body = req.into_body().collect().await?;
+        anyhow::Ok(hyper::Response::new(Full::new(body.to_bytes())))
+    });
+    let serve = async |stream| {
+        http2::Builder::new(TokioExecutor::default())
+            .serve_connection(TokioIo::new(stream), svc)
+            .await
+            .context("failed to serve connection")
+    };
+    wrpc_test::with_http2(serve, |parts, mut sender| async move {
+        sender.ready().await?;
+        let req = http::Request::from_parts(parts, OutgoingBody::full("foo"));
+        let res = sender.send_request(req).await?;
+        let body = res.into_body().collect().await?;
+        assert_eq!(body.to_bytes(), "foo");
+        Ok(())
+    })
+    .await
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]

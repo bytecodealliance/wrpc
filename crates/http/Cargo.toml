@@ -29,8 +29,7 @@ http-body = { workspace = true }
 http-body-util = { workspace = true }
 hyper = { workspace = true, optional = true }
 hyper-util = { workspace = true, optional = true }
-pin-project-lite = { workspace = true }
-tokio = { workspace = true, features = ["io-util"] }
+tokio = { workspace = true, features = ["io-util", "sync"] }
 tokio-util = { workspace = true, features = ["io"] }
 tracing = { workspace = true, features = ["attributes"] }
 
