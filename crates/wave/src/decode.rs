@@ -19,6 +19,8 @@ use wasm_tokio::{
 use wasm_wave::wasm::{WasmType, WasmTypeKind, WasmValue};
 use wrpc_transport::{Receive, error_unknown_path};
 
+use crate::is_pending;
+
 /// Default `max_len` of [`ValueDecoder`] and [`TupleDecoder`]
 pub const DEFAULT_MAX_LEN: u32 = 1 << 24;
 
@@ -38,7 +40,7 @@ enum Partial<V> {
 
 /// [Decoder] of values of type `ty`
 ///
-/// Resources, futures and streams are not supported.
+/// Handles, futures and streams are supported as described in the [crate] documentation.
 pub struct ValueDecoder<V: WasmValue> {
     ty: V::Type,
     max_len: u32,
@@ -369,6 +371,9 @@ fn decode_ty<T: WasmValue>(
             else {
                 return Ok(None);
             };
+            if is_pending(ty, i) {
+                return Err(error_invalid_data("asynchronous value is pending"));
+            }
             let (name, ..) = case(i)?;
             T::make_variant(ty, &name, v)
                 .map(Some)

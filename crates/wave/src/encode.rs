@@ -15,9 +15,11 @@ use wasm_tokio::{CoreNameEncoder, Leb128Encoder, Utf8Codec};
 use wasm_wave::wasm::{WasmType, WasmTypeKind, WasmValue};
 use wrpc_transport::Transmit;
 
+use crate::is_pending;
+
 /// [Encoder] of values of type `T`
 ///
-/// Resources, futures and streams are not supported.
+/// Handles, futures and streams are supported as described in the [crate] documentation.
 ///
 /// ```
 /// use bytes::BytesMut;
@@ -233,13 +235,19 @@ pub(crate) fn encode_value<T: WasmValue>(
         }
         WasmTypeKind::Variant => {
             let (case, v) = v.unwrap_variant();
-            let (i, (.., ty)) = ty
+            let (i, (.., payload)) = ty
                 .variant_cases()
                 .enumerate()
                 .find(|(.., (name, ..))| *name == case)
                 .ok_or_else(|| error_invalid_input(format!("unknown variant case `{case}`")))?;
+            if is_pending(ty, i) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::WouldBlock,
+                    "asynchronous value is pending",
+                ));
+            }
             encode_discriminant(i, dst)?;
-            encode_payload(ty, v, dst)
+            encode_payload(payload, v, dst)
         }
         WasmTypeKind::Enum => {
             let case = v.unwrap_enum();

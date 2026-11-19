@@ -1,17 +1,20 @@
 use core::fmt::Debug;
+use core::future;
+use core::pin::Pin;
 
 use std::io::ErrorKind;
 use std::sync::Arc;
 
 use anyhow::Context as _;
 use bytes::{BufMut as _, BytesMut};
+use futures::stream::{self, Stream};
 use tokio::io::{duplex, split};
 use tokio::try_join;
 use tokio_util::codec::{Decoder as _, Encoder, FramedRead, FramedWrite};
 use wasm_wave::value::{Type, Value};
-use wasm_wave::wasm::WasmValue as _;
-use wrpc_transport::{Codec, Encode, FrameDecoder, FrameEncoder, Listener};
-use wrpc_wave::{TupleDecoder, TupleEncoder, ValueDecoder, ValueEncoder};
+use wasm_wave::wasm::{WasmType as _, WasmValue as _};
+use wrpc_transport::{Codec, Encode, FrameDecoder, FrameEncoder, Listener, ResourceOwn};
+use wrpc_wave::{TupleDecoder, TupleEncoder, ValueDecoder, ValueEncoder, future_type, stream_type};
 
 #[test]
 fn roundtrip() -> anyhow::Result<()> {
@@ -25,6 +28,23 @@ fn roundtrip() -> anyhow::Result<()> {
             .expect("failed to encode");
         buf
     }
+
+    fn fut<T>(
+        v: impl Future<Output = T> + Send + 'static,
+    ) -> Pin<Box<dyn Future<Output = T> + Send>> {
+        Box::pin(v)
+    }
+
+    fn items<T>(
+        v: impl Stream<Item = Vec<T>> + Send + 'static,
+    ) -> Pin<Box<dyn Stream<Item = Vec<T>> + Send>> {
+        Box::pin(v)
+    }
+
+    let future_u32 = future_type(Some(Type::U32));
+    let future_unit = future_type(None);
+    let stream_string = stream_type(Some(Type::STRING));
+    let stream_unit = stream_type(None);
 
     let names = |n| (0..n).map(|i| format!("c{i}"));
     let variant = Type::variant(names(200).map(|name| {
@@ -92,6 +112,23 @@ fn roundtrip() -> anyhow::Result<()> {
                 (None, Err(())),
             ]),
         ),
+        (
+            Type::list(Type::U8),
+            "[1, 2]",
+            encode(ResourceOwn::<()>::from(vec![1, 2])),
+        ),
+        (future_u32, "ready(42)", encode(fut(future::ready(42u32)))),
+        (future_unit, "ready", encode(fut(future::ready(())))),
+        (
+            stream_string,
+            r#"ready(["a", "b"])"#,
+            encode(items(stream::iter([vec!["a".to_string(), "b".into()]]))),
+        ),
+        (
+            stream_unit,
+            "ready(2)",
+            encode(items(stream::iter([vec![(), ()]]))),
+        ),
     ] {
         let v: Value = wasm_wave::from_str(&ty, s)?;
         let mut buf = BytesMut::default();
@@ -141,6 +178,7 @@ fn errors() -> anyhow::Result<()> {
         ),
         (Type::U32, b"\x80", ErrorKind::UnexpectedEof),
         (fixed, b"\0\0", ErrorKind::Unsupported),
+        (future_type(None), b"\0", ErrorKind::InvalidData),
     ] {
         let err = ValueDecoder::<Value>::new(ty.clone())
             .decode_eof(&mut BytesMut::from(src))
@@ -188,6 +226,13 @@ fn errors() -> anyhow::Result<()> {
         .encode(&[] as &[Value], &mut buf)
         .expect_err("encoding should fail");
     assert_eq!(err.kind(), ErrorKind::InvalidInput);
+    let future = future_type(Some(Type::U32));
+    let (pending, ..) = future.variant_cases().next().context("missing case")?;
+    let v = Value::make_variant(&future, &pending, None)?;
+    let err = ValueEncoder::new(future)
+        .encode(&v, &mut buf)
+        .expect_err("encoding should fail");
+    assert_eq!(err.kind(), ErrorKind::WouldBlock);
     Ok(())
 }
 

@@ -19,5 +19,6 @@ wrpc-transport = { workspace = true }
 
 [dev-dependencies]
 anyhow = { workspace = true, features = ["std"] }
+futures = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "rt"] }
 wasmtime = { workspace = true, features = ["runtime", "wave"] }
