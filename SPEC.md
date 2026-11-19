@@ -53,7 +53,8 @@ The indexing rules are as follows:
 - Tuple members are indexed in order of their WIT declaration
 - Variant, option and result payloads are not indexed
 - Future payloads are indexed as `0`
-- List elements are indexed in the order they appear in the list
+- List elements, including those of fixed-size lists `list<T, N>`, are indexed in the order they appear in the list
+- Map entries are indexed like elements of `list<tuple<K, V>>`, i.e. the value of the entry `i` is at index `[i, 1]`
 - Stream elements are indexed in the order they appear in the stream
 
 ### Framing
@@ -72,6 +73,8 @@ record header {
     name: string,
 }
 ```
+
+`instance` is the ID of the WIT interface of the invoked function, e.g. `wrpc-example:doc/example@0.1.0`, or empty for a function of a world, which is not part of an interface. `name` is the name of the function, where the constructor of resource `r` is named `r` and its method or static function `foo` is named `r.foo`.
 
 The header MAY be followed by one or more frames encoded using [component model value definition encoding]. The framed stream sent by the server consists of frames only:
 
@@ -176,6 +179,8 @@ A `ready` stream contains all of the stream's elements, i.e. the stream is finis
 In case a stream is pending, it is transmitted as a sequence of `list<T>` chunks using the parent's index.
 
 A pending stream ends once its index is closed.
+
+A `stream` without an element type is encoded like `stream<T>` with a `T` of empty value encoding, so a `ready` stream and each chunk of a pending stream carry only their number of elements.
 
 ### Resources
 
