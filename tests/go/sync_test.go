@@ -5,6 +5,7 @@ package integration_test
 import (
 	"context"
 	"encoding/binary"
+	"io"
 	"math"
 	"strings"
 	"syscall"
@@ -153,6 +154,8 @@ func TestFlags(t *testing.T) {
 	} {
 		ctx, client := serve(t, func(s wrpc.Server) (func() error, error) {
 			return s.Serve("wrpc-test:integration/sync", "with-flags", func(ctx context.Context, w wrpc.IndexWriteCloser, r wrpc.IndexReadCloser) {
+				_, _ = io.ReadAll(r)
+				_ = r.Close()
 				_, _ = w.Write([]byte(tc.data))
 				_ = w.Close()
 			})
