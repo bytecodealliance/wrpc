@@ -182,6 +182,18 @@ pub(crate) fn encode_value<T: WasmValue>(
             }
             Ok(())
         }
+        WasmTypeKind::Map => {
+            let (kty, vty) = ty
+                .map_key_value_types()
+                .ok_or_else(|| error_invalid_input("map type missing key/value types"))?;
+            let vs: Vec<_> = v.unwrap_map().collect();
+            encode_discriminant(vs.len(), dst)?;
+            for (k, v) in vs {
+                encode_value(&kty, &*k, dst)?;
+                encode_value(&vty, &*v, dst)?;
+            }
+            Ok(())
+        }
         WasmTypeKind::Record => {
             let vs: Vec<_> = v.unwrap_record().collect();
             let tys: Vec<_> = ty.record_fields().collect();

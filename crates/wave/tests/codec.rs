@@ -39,6 +39,7 @@ fn roundtrip() -> anyhow::Result<()> {
     let tuple = Type::tuple([Type::S8, Type::BOOL]).context("invalid tuple")?;
     let payload = Type::tuple([Type::U8, Type::STRING]).context("invalid tuple")?;
     let case = Type::variant([("a", None), ("b", Some(payload))]).context("invalid variant")?;
+    let map = Type::map(Type::STRING, Type::U32).context("invalid map")?;
     let nested = Type::record([
         ("x", Type::option(case)),
         ("y", Type::result(Some(Type::list(Type::STRING)), None)),
@@ -59,6 +60,11 @@ fn roundtrip() -> anyhow::Result<()> {
         (Type::CHAR, "'😀'", encode('😀')),
         (Type::STRING, r#""hello 😀""#, encode("hello 😀")),
         (Type::list(Type::U32), "[1, 300]", encode(vec![1u32, 300])),
+        (
+            map,
+            r#"{"b": 300, "a": 1}"#,
+            encode(vec![("b", 300u32), ("a", 1)]),
+        ),
         (record, r#"{a: 42, b: "foo"}"#, encode((42u32, "foo"))),
         (tuple, "(-1, false)", encode((-1i8, false))),
         (Type::option(Type::U32), "none", encode(None::<u32>)),
@@ -120,6 +126,7 @@ fn roundtrip() -> anyhow::Result<()> {
 fn errors() -> anyhow::Result<()> {
     let enum_ty = Type::enum_ty(["a", "b"]).context("invalid enum")?;
     let map = Type::map(Type::STRING, Type::U32).context("invalid map")?;
+    let fixed = Type::fixed_length_list(Type::U8, 2);
     for (ty, src, kind) in [
         (Type::BOOL, &b"\x02"[..], ErrorKind::InvalidData),
         (Type::STRING, b"\x01\xff", ErrorKind::InvalidData),
@@ -131,7 +138,7 @@ fn errors() -> anyhow::Result<()> {
             ErrorKind::UnexpectedEof,
         ),
         (Type::U32, b"\x80", ErrorKind::UnexpectedEof),
-        (map, b"\0", ErrorKind::Unsupported),
+        (fixed, b"\0\0", ErrorKind::Unsupported),
     ] {
         let err = ValueDecoder::<Value>::new(ty.clone())
             .decode_eof(&mut BytesMut::from(src))
@@ -145,6 +152,11 @@ fn errors() -> anyhow::Result<()> {
         .decode(&mut BytesMut::from(&b"\x02\x01\x02\x02ab"[..]))?;
     let list = Value::make_list(&tys[0], [Value::make_u8(1), Value::make_u8(2)])?;
     assert_eq!(v, Some(vec![list, Value::make_string("ab".into())]));
+    let err = ValueDecoder::<Value>::new(map)
+        .with_max_len(2)
+        .decode(&mut BytesMut::from(&b"\x03"[..]))
+        .expect_err("decoding should fail");
+    assert_eq!(err.kind(), ErrorKind::InvalidData);
     for src in [&b"\x03"[..], b"\x00\x03foo"] {
         let err = TupleDecoder::<Value>::new(Arc::clone(&tys))
             .with_max_len(2)
