@@ -74,7 +74,7 @@ record header {
 }
 ```
 
-`instance` is the ID of the WIT interface of the invoked function, e.g. `wrpc-example:doc/example@0.1.0`, or empty for a function of a world, which is not part of an interface. `name` is the name of the function, where the constructor of resource `r` is named `r` and its method or static function `foo` is named `r.foo`.
+`instance` is the component model name of the WIT interface of the invoked function: the plain name it is imported or exported under, if any, e.g. `foo` for `export foo: interface { .. }` or `import foo: wrpc-example:doc/example;`, and otherwise its [canonical interface name], i.e. its ID with the version canonicalized, even if the name in a component is not, e.g. `wrpc-example:doc/example@0.1` for version `0.1.0` and `wrpc-example:doc/example@1` for version `1.2.3`, while versions `0.0.1` and `0.1.0-rc.1` are kept as written. `instance` is empty for a function of a world, which is not part of an interface. `name` is the name of the function, where the constructor of resource `r` is named `r` and its method or static function `foo` is named `r.foo`.
 
 The header MAY be followed by one or more frames encoded using [component model value definition encoding]. The framed stream sent by the server consists of frames only:
 
@@ -182,8 +182,13 @@ A pending stream ends once its index is closed.
 
 A `stream` without an element type is encoded like `stream<T>` with a `T` of empty value encoding, so a `ready` stream and each chunk of a pending stream carry only their number of elements.
 
+### Maps
+
+A sender MUST NOT send a `map` with duplicate keys. The behavior of a receiver of such a `map` is unspecified.
+
 ### Resources
 
 Resources are encoded as opaque byte blobs, `list<u8>` and their meaning is entirely application specific.
 
 [component model value definition encoding]: https://github.com/WebAssembly/component-model/blob/main/design/mvp/Binary.md#-value-definitions
+[canonical interface name]: https://github.com/WebAssembly/component-model/blob/main/design/mvp/Text.md#-canonical-interface-name
