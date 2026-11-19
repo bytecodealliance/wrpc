@@ -127,11 +127,13 @@ fn errors() -> anyhow::Result<()> {
     let enum_ty = Type::enum_ty(["a", "b"]).context("invalid enum")?;
     let map = Type::map(Type::STRING, Type::U32).context("invalid map")?;
     let fixed = Type::fixed_length_list(Type::U8, 2);
+    let flags = Type::flags(["a", "b", "c"]).context("invalid flags")?;
     for (ty, src, kind) in [
         (Type::BOOL, &b"\x02"[..], ErrorKind::InvalidData),
         (Type::STRING, b"\x01\xff", ErrorKind::InvalidData),
         (Type::option(Type::U32), b"\x02", ErrorKind::InvalidData),
         (enum_ty, b"\x02", ErrorKind::InvalidData),
+        (flags, b"\x08", ErrorKind::InvalidData),
         (
             Type::list(Type::STRING),
             b"\x01\x03ab",

@@ -422,6 +422,9 @@ fn decode_ty<T: WasmValue>(
                 return Ok(None);
             }
             let buf = src.split_to(n);
+            if (names.len()..n * 8).any(|i| buf[i / 8] & (1 << (i % 8)) != 0) {
+                return Err(error_invalid_data("invalid flags bits"));
+            }
             let flags = names
                 .iter()
                 .enumerate()

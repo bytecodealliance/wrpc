@@ -15,17 +15,31 @@ fn plain_values() -> wasmtime::Result<()> {
         r#"(component
             (type $r (record (field "a" u32) (field "b" (list string))))
             (export "r" (type $r))
+            (type $f (flags "a" "b" "c"))
+            (export "f" (type $f))
         )"#,
     )?;
+    let component_ty = component.component_type();
+    let mut exports = component_ty.exports(&engine);
     let Some((
         ..,
         types::ComponentExtern {
             ty: types::ComponentItem::Type(ty),
             ..
         },
-    )) = component.component_type().exports(&engine).next()
+    )) = exports.next()
     else {
         bail!("record type missing")
+    };
+    let Some((
+        ..,
+        types::ComponentExtern {
+            ty: types::ComponentItem::Type(flags),
+            ..
+        },
+    )) = exports.next()
+    else {
+        bail!("flags type missing")
     };
     let v = Val::Record(vec![
         ("a".into(), Val::U32(42)),
@@ -77,6 +91,10 @@ fn plain_values() -> wasmtime::Result<()> {
         let err = unpack(dec, &mut buf.into()).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     }
+
+    let dec = ValDecoder::new((), flags, ResourceTypes::default());
+    let err = unpack(dec, &mut b"\x08"[..].into()).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     Ok(())
 }
 

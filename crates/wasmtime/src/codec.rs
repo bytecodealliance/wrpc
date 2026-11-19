@@ -1031,12 +1031,19 @@ where
             }),
             Type::Flags(ty) => {
                 let names = ty.names();
-                let n = names.len().div_ceil(8).max(1);
+                let len = names.len();
+                let n = len.div_ceil(8).max(1);
                 if src.len() < n {
                     src.reserve(n.saturating_sub(src.len()));
                     return Ok(None);
                 }
                 let buf = src.split_to(n);
+                if (len..n * 8).any(|i| buf[i / 8] & (1 << (i % 8)) != 0) {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "invalid flags bits",
+                    ));
+                }
                 let vs = names
                     .enumerate()
                     .filter(|(i, ..)| buf[i / 8] & (1 << (i % 8)) != 0)

@@ -1723,7 +1723,7 @@ mod {mod_name} {{
             if let Some(item) = <super::{name} as super::__{mod_name}__bitflags::Flags>::from_bits(<super::{name} as super::__{mod_name}__bitflags::Flags>::Bits::from_le_bytes(bits)) {{
                 Ok(Some(item))
             }} else {{
-                Err(::std::io::Error::new(::std::io::ErrorKind::Other, "invalid bits"))
+                Err(::std::io::Error::new(::std::io::ErrorKind::InvalidData, "invalid bits"))
             }}
         }}
     }}
