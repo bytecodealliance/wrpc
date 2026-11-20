@@ -20,14 +20,14 @@ use wasi_preview1_component_adapter_provider::{
     WASI_SNAPSHOT_PREVIEW1_ADAPTER_NAME, WASI_SNAPSHOT_PREVIEW1_REACTOR_ADAPTER,
 };
 use wasmtime::component::{
-    Accessor, Component, Instance, InstancePre, Linker, ResourceAny, ResourceTable, ResourceType,
-    Type, types,
+    self, Accessor, Component, Func, Instance, InstancePre, Linker, ResourceAny, ResourceTable,
+    ResourceType, Type, types,
 };
 use wasmtime::{Config, Engine, Memory, MemoryType, Store};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpCtxView, WasiHttpView};
 use wrpc_transport::{Codec, Listener};
-use wrpc_wasmtime::{Exports, TupleDecoder, TupleEncoder, call};
+use wrpc_wasmtime::{Export, Exports, TupleDecoder, TupleEncoder, Val, lift, lower};
 
 mod tcp;
 
@@ -263,6 +263,28 @@ async fn accept(lis: &TcpListener) -> std::io::Result<Listener<OwnedReadHalf, Ow
     Ok(Listener::new(tx, rx))
 }
 
+async fn call(
+    store: &Accessor<Ctx>,
+    func: Func,
+    export: &Export,
+    guest: &[ResourceType],
+    params: Vec<Val>,
+) -> anyhow::Result<Vec<Val>> {
+    let params = store.with(|store| lift(store, export.params.iter(), params, lift_resource))?;
+    let mut results = vec![component::Val::Bool(false); export.results.len()];
+    func.call_concurrent(store, &params, &mut results)
+        .await
+        .map_err(anyhow::Error::from)
+        .context("failed to call function")?;
+    store
+        .with(|store| {
+            lower(store, export.results.iter(), results, |cx, ty, resource| {
+                lower_resource(cx, guest, ty, resource)
+            })
+        })
+        .map_err(anyhow::Error::from)
+}
+
 async fn serve_conn(
     mut lis: Listener<OwnedReadHalf, OwnedWriteHalf>,
     timeout: Duration,
@@ -294,16 +316,11 @@ async fn serve_conn(
                     enc: TupleEncoder::new(Arc::clone(&export.results)),
                     dec: TupleDecoder::new(Arc::clone(&export.params)).with_max_len(max_len),
                 };
-                call(
-                    store,
-                    codec,
-                    tx,
-                    rx,
-                    func,
-                    lift_resource,
-                    |cx, ty, resource| lower_resource(cx, guest, ty, resource),
-                )
-                .await?;
+                codec
+                    .serve(tx, rx, async |params| {
+                        call(store, func, export, guest, params).await
+                    })
+                    .await?;
                 poll_fn(|cx| store.poll_no_interesting_tasks(cx)).await;
                 anyhow::Ok(())
             })
@@ -337,16 +354,11 @@ async fn serve_conn_shared(
             enc: TupleEncoder::new(Arc::clone(&export.results)),
             dec: TupleDecoder::new(Arc::clone(&export.params)).with_max_len(max_len),
         };
-        call(
-            store,
-            codec,
-            tx,
-            rx,
-            func,
-            lift_resource,
-            |cx, ty, resource| lower_resource(cx, guest, ty, resource),
-        )
-        .await?;
+        codec
+            .serve(tx, rx, async |params| {
+                call(store, func, export, guest, params).await
+            })
+            .await?;
     }
     Ok(())
 }

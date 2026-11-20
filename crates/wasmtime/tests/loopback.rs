@@ -16,14 +16,16 @@ use tokio::task::yield_now;
 use tokio::time::sleep;
 use tokio::{join, try_join};
 use tokio_util::codec::{Encoder as _, FramedRead, FramedWrite};
-use wasmtime::component::{Accessor, Component, Instance, InstancePre, Linker, ResourceAny, Type};
+use wasmtime::component::{
+    self, Accessor, Component, Func, Instance, InstancePre, Linker, ResourceAny, Type,
+};
 use wasmtime::error::Context as _;
 use wrpc_test::serve_until;
 use wrpc_transport::{
     Codec, FrameDecoder, FrameEncoder, FrameRef, HeaderEncoder, HeaderRef, Listener, invoke,
     invoke_blocking,
 };
-use wrpc_wasmtime::{Exports, TupleDecoder, TupleEncoder, call};
+use wrpc_wasmtime::{Export, Exports, TupleDecoder, TupleEncoder, Val, lift, lower};
 
 /// Resources by the index their handles carry
 type Ctx = Vec<ResourceAny>;
@@ -41,6 +43,20 @@ fn lower_resource(cx: &mut Ctx, _: &Type, resource: ResourceAny) -> wasmtime::Re
     let i = u8::try_from(cx.len())?;
     cx.push(resource);
     Ok(Bytes::copy_from_slice(&[i]))
+}
+
+async fn call(
+    store: &Accessor<Ctx>,
+    func: Func,
+    export: &Export,
+    params: Vec<Val>,
+) -> wasmtime::Result<Vec<Val>> {
+    let params = store.with(|store| lift(store, export.params.iter(), params, lift_resource))?;
+    let mut results = vec![component::Val::Bool(false); export.results.len()];
+    func.call_concurrent(store, &params, &mut results)
+        .await
+        .context("failed to call function")?;
+    store.with(|store| lower(store, export.results.iter(), results, lower_resource))
 }
 
 struct Guest<'a> {
@@ -100,16 +116,11 @@ async fn serve_conn_shared(
             enc: TupleEncoder::new(Arc::clone(&export.results)),
             dec: TupleDecoder::new(Arc::clone(&export.params)),
         };
-        call(
-            guest.store,
-            codec,
-            tx,
-            rx,
-            func,
-            lift_resource,
-            lower_resource,
-        )
-        .await?;
+        codec
+            .serve(tx, rx, async |params| {
+                call(guest.store, func, export, params).await
+            })
+            .await?;
     }
     Ok(())
 }
@@ -155,7 +166,11 @@ async fn serve_conn(
                     enc: TupleEncoder::new(Arc::clone(&export.results)),
                     dec: TupleDecoder::new(Arc::clone(&export.params)),
                 };
-                call(store, codec, tx, rx, func, lift_resource, lower_resource).await
+                codec
+                    .serve(tx, rx, async |params| {
+                        call(store, func, export, params).await
+                    })
+                    .await
             })
             .await
             .map_err(anyhow::Error::from)??;

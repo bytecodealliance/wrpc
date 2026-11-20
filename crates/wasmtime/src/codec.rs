@@ -37,7 +37,7 @@ pub const DEFAULT_MAX_LEN: u32 = 1 << 24;
 ///
 /// Pending asynchronous values are transmitted using [`Transmit::poll_transmit`].
 pub struct TupleEncoder {
-    pub(crate) tys: Arc<[Type]>,
+    tys: Arc<[Type]>,
     nested: BTreeMap<usize, Box<dyn Transmit + Send>>,
 }
 
@@ -313,7 +313,7 @@ enum Partial {
 ///
 /// Pending asynchronous values are received using [`Receive::poll_receive`].
 pub struct TupleDecoder {
-    pub(crate) tys: Arc<[Type]>,
+    tys: Arc<[Type]>,
     max_len: u32,
     /// Resume points, innermost first
     state: Vec<Partial>,
