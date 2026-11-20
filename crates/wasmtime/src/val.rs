@@ -16,6 +16,9 @@ use wasmtime::{AsContextMut, StoreContextMut, bail};
 mod concurrent;
 
 /// `future` held outside of a store, type-erased
+///
+/// [`lift`], [`lower`] and the codecs support payloads of primitive types, `string` and none,
+/// since Wasmtime requires a static payload type.
 pub struct FutureAny(Box<dyn Any + Send>);
 
 impl FutureAny {
@@ -47,6 +50,9 @@ impl Debug for FutureAny {
 }
 
 /// `stream` held outside of a store, type-erased
+///
+/// [`lift`], [`lower`] and the codecs support payloads of primitive types, `string` and none,
+/// since Wasmtime requires a static payload type.
 pub struct StreamAny(Box<dyn Any + Send>);
 
 impl StreamAny {
@@ -522,6 +528,9 @@ fn lower_val<T: 'static>(
 }
 
 /// Moves `vals` of types `tys` out of `store`, piping their `future`s and `stream`s.
+///
+/// A piped `stream` ends the same way whether the guest closes it or `store` is dropped, so a host
+/// dropping `store` before the values are transmitted must fail the transmission itself.
 ///
 /// `resource` returns the handle of a resource of the given `own` or `borrow` type, which it
 /// keeps.
