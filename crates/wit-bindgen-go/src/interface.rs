@@ -682,6 +682,76 @@ impl InterfaceGenerator<'_> {
         self.src.push_str(")");
     }
 
+    fn print_read_fixed_length_list(&mut self, ty: &Type, size: u32, reader: &str, path: &str) {
+        let fmt = self.deps.fmt();
+        let slog = self.deps.slog();
+        if is_ty(self.resolve, Type::U8, ty) {
+            let io = self.deps.io();
+            uwrite!(
+                self.src,
+                r#"func(r {io}.Reader) (v [{size}]byte, err error) {{
+    {slog}.Debug("reading byte array")
+    if _, err = {io}.ReadFull(r, v[:]); err != nil {{
+        return v, {fmt}.Errorf("failed to read byte array: %w", err)
+    }}
+    return v, nil
+}}({reader})"#,
+            );
+            return;
+        }
+        let wrpc = self.deps.wrpc();
+        let deferred = self.is_async(ty);
+        let d = if deferred { "nil, " } else { "" };
+        uwrite!(self.src, "func(r {wrpc}.IndexReadCloser, path ...uint32) (");
+        self.print_fixed_length_list(ty, size);
+        self.print_deferred_ret(deferred);
+        self.push_str(", error) {\nvar vs ");
+        self.print_fixed_length_list(ty, size);
+        self.push_str("\n");
+        if deferred {
+            let context = self.deps.context();
+            uwrite!(self.src, "var ds []func({context}.Context) error\n");
+        }
+        uwrite!(
+            self.src,
+            r#"for i := range vs {{
+        {slog}.Debug("reading list element", "i", i)
+        v, "#,
+        );
+        if deferred {
+            self.push_str("d, ");
+        }
+        self.push_str("err := ");
+        self.print_read_ty(ty, "r", "append(path, uint32(i))");
+        uwrite!(
+            self.src,
+            r#"
+        if err != nil {{
+            return vs, {d}{fmt}.Errorf("failed to read list element %d: %w", i, err)
+        }}
+        vs[i] = v
+"#,
+        );
+        if deferred {
+            uwrite!(
+                self.src,
+                r#"ds = append(ds, d)
+    }}
+    return vs, {wrpc}.JoinDeferred(ds...), nil
+"#
+            );
+        } else {
+            self.push_str("}\nreturn vs, nil\n");
+        }
+        uwrite!(self.src, "}}({reader}");
+        if !path.is_empty() {
+            self.src.push_str(", ");
+            self.src.push_str(path);
+            self.src.push_str("...");
+        }
+        self.src.push_str(")");
+    }
+
     fn print_read_option(&mut self, ty: &Type, reader: &str, path: &str) {
         let fmt = self.deps.fmt();
         let slog = self.deps.slog();
@@ -1269,7 +1339,9 @@ impl InterfaceGenerator<'_> {
             TypeDefKind::Option(ty) => self.print_read_option(ty, reader, path),
             TypeDefKind::Result(ty) => self.print_read_result(ty, reader, path),
             TypeDefKind::List(ty) => self.print_read_list(ty, reader, path),
-            TypeDefKind::FixedLengthList(..) => panic!("unsupported type: fixed size list"),
+            TypeDefKind::FixedLengthList(ty, size) => {
+                self.print_read_fixed_length_list(ty, *size, reader, path)
+            }
             TypeDefKind::Map(..) => panic!("unsupported type: map"),
             TypeDefKind::Future(ty) => self.print_read_future(ty, reader, path),
             TypeDefKind::Stream(ty) => self.print_read_stream(ty, reader, path),
@@ -1621,6 +1693,51 @@ impl InterfaceGenerator<'_> {
         );
     }
 
+    fn print_write_fixed_length_list(&mut self, ty: &Type, size: u32, name: &str, writer: &str) {
+        let context = self.deps.context();
+        let io = self.deps.io();
+        let slog = self.deps.slog();
+        let wrpc = self.deps.wrpc();
+
+        if is_ty(self.resolve, Type::U8, ty) {
+            self.print_nil_write();
+            uwrite!(
+                self.src,
+                r#"func(v [{size}]byte, w {io}.Writer) error {{
+                {slog}.Debug("writing byte array")
+                _, err := w.Write(v[:])
+                return err
+            }}({name}, {writer})"#,
+            );
+            return;
+        }
+        let fmt = self.deps.fmt();
+        self.push_str("func(v ");
+        self.print_fixed_length_list(ty, size);
+        uwrite!(
+            self.src,
+            r#", w interface {{ {io}.ByteWriter; {io}.Writer }}) (write func({context}.Context, {wrpc}.IndexWriter) error, err error) {{
+        {slog}.Debug("writing list elements")
+        writes := make(map[uint32]func({context}.Context, {wrpc}.IndexWriter) error)
+        for i, e := range v {{
+            write, err := "#
+        );
+        self.print_write_ty(ty, "e", "w");
+        uwrite!(
+            self.src,
+            r#"
+            if err != nil {{
+                return nil, {fmt}.Errorf("failed to write list element %d: %w", i, err)
+            }}
+            if write != nil {{
+                writes[uint32(i)] = write
+            }}
+        }}
+        return {wrpc}.JoinWrites(writes), nil
+    }}({name}, {writer})"#
+        );
+    }
+
     fn print_write_option(&mut self, ty: &Type, name: &str, writer: &str) {
         let context = self.deps.context();
         let fmt = self.deps.fmt();
@@ -1940,6 +2057,9 @@ impl InterfaceGenerator<'_> {
             TypeDefKind::Option(ty) => self.print_write_option(ty, name, writer),
             TypeDefKind::Result(ty) => self.print_write_result(ty, name, writer),
             TypeDefKind::List(ty) => self.print_write_list(ty, name, writer),
+            TypeDefKind::FixedLengthList(ty, size) => {
+                self.print_write_fixed_length_list(ty, *size, name, writer)
+            }
             TypeDefKind::Future(ty) => self.print_write_future(ty, name, writer),
             TypeDefKind::Stream(ty) => self.print_write_stream(ty, name, writer),
             TypeDefKind::Type(ty) => self.print_write_ty(ty, name, writer),
@@ -2883,7 +3003,8 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
                 TypeDefKind::Option(..)
                 | TypeDefKind::Enum(..)
                 | TypeDefKind::Resource
-                | TypeDefKind::Handle(..) => {}
+                | TypeDefKind::Handle(..)
+                | TypeDefKind::FixedLengthList(..) => {}
                 TypeDefKind::List(..) | TypeDefKind::Future(..) | TypeDefKind::Stream(..)
                     if result => {}
                 TypeDefKind::Tuple(Tuple { types }) if types.len() == 1 => {
@@ -2947,6 +3068,9 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
                     }
                     TypeDefKind::Option(ty) => self.print_option(ty, decl),
                     TypeDefKind::List(ty) => self.print_list(ty),
+                    TypeDefKind::FixedLengthList(ty, size) => {
+                        self.print_fixed_length_list(ty, *size)
+                    }
                     TypeDefKind::Future(ty) => self.print_future(ty),
                     TypeDefKind::Stream(ty) => self.print_stream(ty),
                     TypeDefKind::Type(ty) => self.print_opt_ty(ty, decl),
@@ -3033,6 +3157,11 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
         self.print_opt_ty(ty, true);
     }
 
+    fn print_fixed_length_list(&mut self, ty: &Type, size: u32) {
+        uwrite!(self.src, "[{size}]");
+        self.print_opt_ty(ty, true);
+    }
+
     fn print_future(&mut self, ty: &Option<Type>) {
         self.push_str("<-chan ");
         if let Some(ty) = ty {
@@ -3075,9 +3204,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
         }
         match &ty.kind {
             TypeDefKind::List(ty) => self.print_list(ty),
-            TypeDefKind::FixedLengthList(..) => {
-                panic!("unsupported anonymous type reference: fixed size list")
-            }
+            TypeDefKind::FixedLengthList(ty, size) => self.print_fixed_length_list(ty, *size),
             TypeDefKind::Map(..) => panic!("unsupported anonymous type reference: map"),
             TypeDefKind::Option(ty) => self.print_option(ty, decl),
             TypeDefKind::Result(ty) => self.print_result(ty),
@@ -3616,13 +3743,18 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({context}.Context, {wrp
 
     fn type_fixed_length_list(
         &mut self,
-        _id: TypeId,
+        id: TypeId,
         _name: &str,
-        _ty: &Type,
-        _size: u32,
-        _docs: &Docs,
+        ty: &Type,
+        size: u32,
+        docs: &Docs,
     ) {
-        panic!("unsupported type: fixed length list")
+        if let Some(name) = self.name_of(id) {
+            self.godoc(docs);
+            uwrite!(self.src, "type {name} = ");
+            self.print_fixed_length_list(ty, size);
+            self.push_str("\n");
+        }
     }
 
     fn type_map(&mut self, _id: TypeId, _name: &str, _key: &Type, _value: &Type, _docs: &Docs) {
