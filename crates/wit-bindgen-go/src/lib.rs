@@ -503,20 +503,7 @@ impl WorldGenerator for GoWrpc {
         r#gen.types(id);
 
         let identifier = Identifier::Interface(id, name);
-        let interface = &resolve.interfaces[id];
-        let name = match name {
-            WorldKey::Name(s) => s.to_string(),
-            WorldKey::Interface(..) => interface
-                .name
-                .as_ref()
-                .expect("interface name missing")
-                .to_string(),
-        };
-        let instance = if let Some(package) = interface.package {
-            resolve.id_of_name(package, &name)
-        } else {
-            name
-        };
+        let instance = resolve.name_canonicalized_world_key(name);
         r#gen.generate_imports(
             identifier,
             &instance,
