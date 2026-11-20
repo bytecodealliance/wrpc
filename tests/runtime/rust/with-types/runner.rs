@@ -53,8 +53,8 @@ pub async fn run(
     wrpc: &crate::Client,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     let a = my_types::MyA { inner: 0.0 };
-    let (mut tx, mut rx) = wrpc.connect().await?;
-    let _ = crate::client::my::inline::foo::func1(&mut tx, &mut rx, &a).await?;
+    let mut clt = wrpc.connect().await?;
+    let _ = crate::client::my::inline::foo::func1(&mut clt, &a).await?;
 
     // can't actually succeed at runtime as this is faking a resource, so check
     // that it compiles but dynamically skip it.
@@ -62,20 +62,20 @@ pub async fn run(
         let b = ::wit_bindgen_wrpc::wrpc_transport::ResourceOwn::<my_types::MyB>::from(
             ::wit_bindgen_wrpc::bytes::Bytes::new(),
         );
-        let _ = crate::client::my::inline::foo::func2(&mut tx, &mut rx, &b).await?;
+        let _ = crate::client::my::inline::foo::func2(&mut clt, &b).await?;
     }
 
     let c = my_types::MyC::A(a);
-    let _ = crate::client::i::func7(&mut tx, &mut rx, &c).await?;
+    let _ = crate::client::i::func7(&mut clt, &c).await?;
 
     let a_list = vec![a, a];
-    let _ = crate::client::my::inline::foo::func3(&mut tx, &mut rx, &a_list).await?;
+    let _ = crate::client::my::inline::foo::func3(&mut clt, &a_list).await?;
 
-    let _ = crate::client::my::inline::foo::func4(&mut tx, &mut rx, Some(a)).await?;
+    let _ = crate::client::my::inline::foo::func4(&mut clt, Some(a)).await?;
 
-    let _ = crate::client::my::inline::foo::func5(&mut tx, &mut rx).await?;
+    let _ = crate::client::my::inline::foo::func5(&mut clt).await?;
 
     let d = my_types::MyD { inner: 0 };
-    let _ = crate::client::i::func8(&mut tx, &mut rx, &d).await?;
+    let _ = crate::client::i::func8(&mut clt, &d).await?;
     Ok(())
 }

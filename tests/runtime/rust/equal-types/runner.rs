@@ -6,10 +6,10 @@ pub async fn run(
     wrpc: &crate::Client,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     let kind1 = blag::Kind1::A;
-    let (mut tx, mut rx) = wrpc.connect().await?;
-    let res1 = blag::f(&mut tx, &mut rx, &kind1).await?;
+    let mut clt = wrpc.connect().await?;
+    let res1 = blag::f(&mut clt, &kind1).await?;
     let kind6 = blah::Kind6::A;
-    let res2 = blah::f(&mut tx, &mut rx, &kind6).await?;
+    let res2 = blah::f(&mut clt, &kind6).await?;
     assert_eq!(res1, res2);
     let t2 = blag::T2 {
         l: blag::T3 {
@@ -33,8 +33,8 @@ pub async fn run(
         tree: t.clone(),
         stream: None,
     };
-    let res1 = blag::h(&mut tx, &mut rx, &t_stream).await?;
-    let res2 = blah::h(&mut tx, &mut rx, &t_stream).await?;
+    let res1 = blag::h(&mut clt, &t_stream).await?;
+    let res2 = blah::h(&mut clt, &t_stream).await?;
     let blah::CustomResult::Ok(res2) = res2 else {
         unreachable!()
     };

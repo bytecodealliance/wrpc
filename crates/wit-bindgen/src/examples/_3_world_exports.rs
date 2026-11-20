@@ -36,7 +36,6 @@ crate::generate!({
     anyhow_path: "anyhow",
     bytes_path: "bytes",
     futures_path: "futures",
-    tokio_path: "tokio",
     tokio_util_path: "tokio_util",
     tracing_path: "tracing",
     wrpc_transport_path: "wrpc_transport",

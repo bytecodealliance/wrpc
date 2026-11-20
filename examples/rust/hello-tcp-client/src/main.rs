@@ -1,8 +1,7 @@
 use anyhow::Context as _;
 use clap::Parser;
 use tokio::net::TcpStream;
-use wit_bindgen_wrpc::tokio_util::codec::{FramedRead, FramedWrite};
-use wit_bindgen_wrpc::wrpc_transport::{FrameDecoder, FrameEncoder};
+use wit_bindgen_wrpc::wrpc_transport::Framed;
 
 mod bindings {
     wit_bindgen_wrpc::generate!({
@@ -32,9 +31,7 @@ async fn main() -> anyhow::Result<()> {
         .set_nodelay(true)
         .context("failed to set TCP_NODELAY")?;
     let (rx, tx) = stream.split();
-    let tx = FramedWrite::new(tx, FrameEncoder);
-    let rx = FramedRead::new(rx, FrameDecoder::default());
-    let hello = bindings::wrpc_examples::hello::handler::hello(tx, rx)
+    let hello = bindings::wrpc_examples::hello::handler::hello(Framed::new(tx, rx))
         .await
         .context("failed to invoke `wrpc-examples.hello/handler.hello`")?;
     eprintln!("{hello}");

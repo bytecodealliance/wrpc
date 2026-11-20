@@ -11,8 +11,8 @@ pub async fn run(
     let (tx, rx) = oneshot::channel();
     let a = async { tx.send(()).unwrap() };
     let b = async {
-        let (wrpc_tx, wrpc_rx) = wrpc.connect().await?;
-        let (rx, io) = f(wrpc_tx, wrpc_rx, Box::pin(async move { rx.await.unwrap() })).await?;
+        let wrpc_clt = wrpc.connect().await?;
+        let (rx, io) = f(wrpc_clt, Box::pin(async move { rx.await.unwrap() })).await?;
         try_join!(async { Ok(rx.await) }, io)?;
         ::wit_bindgen_wrpc::anyhow::Ok(())
     };

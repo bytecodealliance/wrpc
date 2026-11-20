@@ -10,9 +10,84 @@ use tokio_util::codec::{Decoder, Encoder, FramedRead, FramedWrite};
 use tracing::{Instrument as _, debug, instrument, trace};
 
 use crate::{
-    Codec, Decode, Encode, FrameDecoder, FrameEncoder, HeaderEncoder, HeaderRef, Receipt, Receive,
-    Transmission, Transmit, receive, transmit,
+    Codec, Decode, Encode, FrameDecoder, FrameEncoder, Framed, HeaderEncoder, HeaderRef, Receipt,
+    Receive, Transmission, Transmit, receive, transmit,
 };
+
+/// Client invoking functions with parameters encoded by `E`, such as [`Framed`], see
+/// [`Codec::invoke`]
+pub trait Invoke<E: Transmit> {
+    /// Future transmitting the asynchronous parameters and receiving the asynchronous results of
+    /// an invocation
+    type Invocation<D: Receive>: Future<Output = std::io::Result<()>>;
+
+    /// Invokes function `func` on instance `instance` with `params` using `codec`, see
+    /// [`Codec::invoke`]
+    fn invoke<D, T>(
+        self,
+        codec: Codec<E, D>,
+        instance: &str,
+        func: &str,
+        params: T,
+    ) -> impl Future<Output = std::io::Result<(D::Item, Self::Invocation<D>)>> + use<Self, E, D, T>
+    where
+        E: Encoder<T, Error = std::io::Error>,
+        D: Decoder<Error = std::io::Error> + Receive;
+}
+
+impl<I, O, E> Invoke<E> for Framed<I, O>
+where
+    I: AsyncRead + Unpin,
+    O: AsyncWrite + Unpin,
+    E: Transmit,
+{
+    type Invocation<D: Receive> = Invocation<
+        Transmission<FramedWrite<O, FrameEncoder>, O, E>,
+        Receipt<FramedRead<I, FrameDecoder>, I, D>,
+    >;
+
+    fn invoke<D, T>(
+        self,
+        codec: Codec<E, D>,
+        instance: &str,
+        func: &str,
+        params: T,
+    ) -> impl Future<Output = std::io::Result<(D::Item, Self::Invocation<D>)>> + use<I, O, E, D, T>
+    where
+        E: Encoder<T, Error = std::io::Error>,
+        D: Decoder<Error = std::io::Error> + Receive,
+    {
+        let Self { tx, rx } = self;
+        codec.invoke(tx, rx, instance, func, params)
+    }
+}
+
+impl<'a, I, O, E> Invoke<E> for &'a mut Framed<I, O>
+where
+    I: AsyncRead + Unpin,
+    O: AsyncWrite + Unpin,
+    E: Transmit,
+{
+    type Invocation<D: Receive> = Invocation<
+        Transmission<&'a mut FramedWrite<O, FrameEncoder>, O, E>,
+        Receipt<&'a mut FramedRead<I, FrameDecoder>, I, D>,
+    >;
+
+    fn invoke<D, T>(
+        self,
+        codec: Codec<E, D>,
+        instance: &str,
+        func: &str,
+        params: T,
+    ) -> impl Future<Output = std::io::Result<(D::Item, Self::Invocation<D>)>> + use<'a, I, O, E, D, T>
+    where
+        E: Encoder<T, Error = std::io::Error>,
+        D: Decoder<Error = std::io::Error> + Receive,
+    {
+        let Framed { tx, rx } = self;
+        codec.invoke(tx, rx, instance, func, params)
+    }
+}
 
 impl<E, D> Codec<E, D>
 where
@@ -108,29 +183,44 @@ where
     }
 }
 
-/// Invokes function `func` on instance `instance` over the frames written by `tx` and read by `rx`
-/// using the default codecs of `params` and results `R`, see [`Codec::invoke`]
-pub fn invoke<P, R, F, W, I, O>(
-    tx: W,
-    rx: F,
+/// Invokes function `func` on instance `instance` using `clt` and the default codecs of `params`
+/// and results `R`, see [`Codec::invoke`]
+pub fn invoke<P, R, C>(
+    clt: C,
     instance: &str,
     func: &str,
     params: P,
-) -> impl Future<
-    Output = std::io::Result<(
-        R,
-        Invocation<Transmission<W, O, P::Encoder>, Receipt<F, I, R::Decoder>>,
-    )>,
-> + use<P, R, F, W, I, O>
+) -> impl Future<Output = std::io::Result<(R, C::Invocation<R::Decoder>)>> + use<P, R, C>
 where
-    F: BorrowMut<FramedRead<I, FrameDecoder>>,
-    W: BorrowMut<FramedWrite<O, FrameEncoder>>,
-    I: AsyncRead + Unpin,
-    O: AsyncWrite + Unpin,
+    C: Invoke<P::Encoder>,
     P: Encode,
     R: Decode,
 {
-    Codec::<P::Encoder, R::Decoder>::default().invoke(tx, rx, instance, func, params)
+    clt.invoke(
+        Codec::<P::Encoder, R::Decoder>::default(),
+        instance,
+        func,
+        params,
+    )
+}
+
+/// Invokes function `func` on instance `instance` using `clt` and the default codecs of `params`
+/// and results `R`, see [`Codec::invoke_blocking`]
+pub async fn invoke_blocking<P, R, C>(
+    clt: C,
+    instance: &str,
+    func: &str,
+    params: P,
+) -> std::io::Result<R>
+where
+    C: Invoke<P::Encoder>,
+    P: Encode,
+    R: Decode,
+{
+    let (ret, io) = invoke(clt, instance, func, params).await?;
+    trace!("awaiting I/O completion");
+    io.await?;
+    Ok(ret)
 }
 
 /// Future transmitting the parameters and receiving the results of an invocation, see
@@ -166,24 +256,4 @@ where
         }
         Poll::Ready(Ok(()))
     }
-}
-
-/// Invokes function `func` on instance `instance` using the default codecs of `params` and
-/// results `R`, see [`Codec::invoke_blocking`]
-pub async fn invoke_blocking<P, R, I, O>(
-    tx: impl BorrowMut<FramedWrite<O, FrameEncoder>>,
-    rx: impl BorrowMut<FramedRead<I, FrameDecoder>>,
-    instance: &str,
-    func: &str,
-    params: P,
-) -> std::io::Result<R>
-where
-    I: AsyncRead + Unpin,
-    O: AsyncWrite + Unpin,
-    P: Encode,
-    R: Decode,
-{
-    Codec::<P::Encoder, R::Decoder>::default()
-        .invoke_blocking(tx, rx, instance, func, params)
-        .await
 }

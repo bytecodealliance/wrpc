@@ -3,10 +3,9 @@ use crate::client::my::inline::blah::{bar, Foo};
 pub async fn run(
     wrpc: &crate::Client,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
-    let (tx, rx) = wrpc.connect().await?;
+    let clt = wrpc.connect().await?;
     bar(
-        tx,
-        rx,
+        clt,
         &Foo {
             field1: "x".to_string(),
             field2: vec![2, 3, 3, 4],

@@ -12,8 +12,7 @@ use rustls::{
     pki_types::{CertificateDer, ServerName, UnixTime},
     version::TLS13,
 };
-use tokio_util::codec::{FramedRead, FramedWrite};
-use wrpc_transport::{FrameDecoder, FrameEncoder};
+use wrpc_transport::Framed;
 use wrpc_wasi_keyvalue::wasi::keyvalue::store;
 
 #[derive(Parser, Debug)]
@@ -87,37 +86,34 @@ async fn main() -> anyhow::Result<()> {
             .open_bi()
             .await
             .context("failed to open stream")?;
-        anyhow::Ok((
-            FramedWrite::new(tx, FrameEncoder),
-            FramedRead::new(rx, FrameDecoder::default()),
-        ))
+        anyhow::Ok(Framed::new(tx, rx))
     };
-    let (tx, rx) = connect().await?;
-    let bucket = store::open(tx, rx, "example")
+    let clt = connect().await?;
+    let bucket = store::open(clt, "example")
         .await
         .context("failed to invoke `open`")?
         .context("failed to open empty bucket")?;
-    let (tx, rx) = connect().await?;
-    store::Bucket::set(tx, rx, &bucket.as_borrow(), "foo", &Bytes::from("bar"))
+    let clt = connect().await?;
+    store::Bucket::set(clt, &bucket.as_borrow(), "foo", &Bytes::from("bar"))
         .await
         .context("failed to invoke `set`")?
         .context("failed to set `foo`")?;
-    let (tx, rx) = connect().await?;
-    let ok = store::Bucket::exists(tx, rx, &bucket.as_borrow(), "foo")
+    let clt = connect().await?;
+    let ok = store::Bucket::exists(clt, &bucket.as_borrow(), "foo")
         .await
         .context("failed to invoke `exists`")?
         .context("failed to check if `foo` exists")?;
     ensure!(ok);
-    let (tx, rx) = connect().await?;
-    let v = store::Bucket::get(tx, rx, &bucket.as_borrow(), "foo")
+    let clt = connect().await?;
+    let v = store::Bucket::get(clt, &bucket.as_borrow(), "foo")
         .await
         .context("failed to invoke `get`")?
         .context("failed to get `foo`")?;
     ensure!(v.as_deref() == Some(b"bar".as_slice()));
 
-    let (tx, rx) = connect().await?;
+    let clt = connect().await?;
     let store::KeyResponse { keys, cursor: _ } =
-        store::Bucket::list_keys(tx, rx, &bucket.as_borrow(), None)
+        store::Bucket::list_keys(clt, &bucket.as_borrow(), None)
             .await
             .context("failed to invoke `list-keys`")?
             .context("failed to list keys")?;

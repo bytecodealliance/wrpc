@@ -1,6 +1,5 @@
 use clap::Parser;
-use wit_bindgen_wrpc::tokio_util::codec::{FramedRead, FramedWrite};
-use wit_bindgen_wrpc::wrpc_transport::{FrameDecoder, FrameEncoder};
+use wit_bindgen_wrpc::wrpc_transport::Framed;
 
 #[cfg(target_family = "wasm")]
 mod tcp;
@@ -84,11 +83,9 @@ async fn invoke(addr: &str) -> String {
         pollables_tx,
     )
     .expect("failed to connect");
-    let tx = FramedWrite::new(tx, FrameEncoder);
-    let rx = FramedRead::new(rx, FrameDecoder::default());
     let (s, _) = join!(
         async {
-            wrpc_bindings::wrpc_examples::hello::handler::hello(tx, rx)
+            wrpc_bindings::wrpc_examples::hello::handler::hello(Framed::new(tx, rx))
                 .await
                 .expect("failed to invoke `wrpc-examples.hello/handler.hello`")
         },
@@ -131,9 +128,7 @@ async fn invoke(addr: &str) -> String {
         .expect("failed to connect");
     stream.set_nodelay(true).expect("failed to set TCP_NODELAY");
     let (rx, tx) = stream.split();
-    let tx = FramedWrite::new(tx, FrameEncoder);
-    let rx = FramedRead::new(rx, FrameDecoder::default());
-    wrpc_bindings::wrpc_examples::hello::handler::hello(tx, rx)
+    wrpc_bindings::wrpc_examples::hello::handler::hello(Framed::new(tx, rx))
         .await
         .expect("failed to invoke `wrpc-examples.hello/handler.hello`")
 }

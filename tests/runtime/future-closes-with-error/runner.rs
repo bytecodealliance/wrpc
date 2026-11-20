@@ -11,10 +11,9 @@ pub async fn run(
 
     drop(tx);
 
-    let (wrpc_tx, wrpc_rx) = wrpc.connect().await?;
+    let wrpc_clt = wrpc.connect().await?;
     f(
-        wrpc_tx,
-        wrpc_rx,
+        wrpc_clt,
         Box::pin(async move {
             let res = rx.await;
             res.unwrap_or_default()

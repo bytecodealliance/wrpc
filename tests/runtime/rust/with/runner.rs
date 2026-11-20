@@ -26,7 +26,7 @@ pub async fn run(
     let msg = other::my::inline::foo::Msg {
         field: "hello".to_string(),
     };
-    let (tx, rx) = wrpc.connect().await?;
-    crate::client::my::inline::bar::bar(tx, rx, &msg).await?;
+    let clt = wrpc.connect().await?;
+    crate::client::my::inline::bar::bar(clt, &msg).await?;
     Ok(())
 }

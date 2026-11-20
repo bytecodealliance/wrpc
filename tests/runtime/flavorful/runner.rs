@@ -3,21 +3,19 @@ use crate::client::test::flavorful::to_test::*;
 pub async fn run(
     wrpc: &crate::Client,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
-    let (mut tx, mut rx) = wrpc.connect().await?;
+    let mut clt = wrpc.connect().await?;
     f_list_in_record1(
-        &mut tx,
-        &mut rx,
+        &mut clt,
         &ListInRecord1 {
             a: "list_in_record1".to_string(),
         },
     )
     .await?;
-    assert_eq!(f_list_in_record2(&mut tx, &mut rx).await?.a, "list_in_record2");
+    assert_eq!(f_list_in_record2(&mut clt).await?.a, "list_in_record2");
 
     assert_eq!(
         f_list_in_record3(
-            &mut tx,
-            &mut rx,
+            &mut clt,
             &ListInRecord3 {
                 a: "list_in_record3 input".to_string()
             }
@@ -29,8 +27,7 @@ pub async fn run(
 
     assert_eq!(
         f_list_in_record4(
-            &mut tx,
-            &mut rx,
+            &mut clt,
             &ListInAlias {
                 a: "input4".to_string()
             }
@@ -40,32 +37,31 @@ pub async fn run(
         "result4"
     );
 
-    f_list_in_variant1(&mut tx, &mut rx, Some("foo"), &Err("bar".to_string())).await?;
+    f_list_in_variant1(&mut clt, Some("foo"), &Err("bar".to_string())).await?;
     assert_eq!(
-        f_list_in_variant2(&mut tx, &mut rx).await?,
+        f_list_in_variant2(&mut clt).await?,
         Some("list_in_variant2".to_string())
     );
     assert_eq!(
-        f_list_in_variant3(&mut tx, &mut rx, Some("input3")).await?,
+        f_list_in_variant3(&mut clt, Some("input3")).await?,
         Some("output3".to_string())
     );
 
-    assert!(errno_result(&mut tx, &mut rx).await?.is_err());
+    assert!(errno_result(&mut clt).await?.is_err());
     MyErrno::A.to_string();
     _ = format!("{:?}", MyErrno::A);
     fn assert_error<T: std::error::Error>() {}
     assert_error::<MyErrno>();
 
-    assert!(errno_result(&mut tx, &mut rx).await?.is_ok());
+    assert!(errno_result(&mut clt).await?.is_ok());
 
-    let (a, b) = list_typedefs(&mut tx, &mut rx, "typedef1", &["typedef2"]).await?;
+    let (a, b) = list_typedefs(&mut clt, "typedef1", &["typedef2"]).await?;
     assert_eq!(a.as_ref(), b"typedef3");
     assert_eq!(b.len(), 1);
     assert_eq!(b[0], "typedef4");
 
     let (a, b, c) = list_of_variants(
-        &mut tx,
-        &mut rx,
+        &mut clt,
         &[true, false],
         &[Ok(()), Err(())],
         &[MyErrno::Success, MyErrno::A],

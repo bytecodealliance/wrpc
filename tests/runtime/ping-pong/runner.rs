@@ -9,10 +9,9 @@ pub async fn run(
     wrpc: &crate::Client,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     let (tx, rx) = oneshot::channel();
-    let (mut wrpc_tx, mut wrpc_rx) = wrpc.connect().await?;
+    let mut wrpc_clt = wrpc.connect().await?;
     let f1 = ping(
-        &mut wrpc_tx,
-        &mut wrpc_rx,
+        &mut wrpc_clt,
         Box::pin(async move { rx.await.unwrap() }),
         "world",
     );
@@ -25,8 +24,7 @@ pub async fn run(
     let (tx, rx) = oneshot::channel();
     let f1 = async {
         let (m3, io) = pong(
-            &mut wrpc_tx,
-            &mut wrpc_rx,
+            &mut wrpc_clt,
             Box::pin(async move { rx.await.unwrap() }),
         )
         .await?;

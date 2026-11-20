@@ -18,11 +18,9 @@ use tokio::process::{Child, Command};
 use tokio::sync::mpsc;
 use tokio::time::timeout;
 use tokio::{select, spawn};
-use tokio_util::codec::{Encoder as _, FramedRead, FramedWrite};
+use tokio_util::codec::Encoder as _;
 use tracing::{info, instrument};
-use wrpc_transport::{
-    FrameDecoder, FrameEncoder, FrameRef, Header, HeaderEncoder, HeaderRef, Listener,
-};
+use wrpc_transport::{FrameEncoder, FrameRef, Framed, Header, HeaderEncoder, HeaderRef, Listener};
 
 pub mod common;
 
@@ -122,12 +120,12 @@ where
                 let (tx, rx) = res.expect("failed to accept connection");
                 spawn(async move {
                     let mut lis = Listener::new(tx, rx);
-                    while let Some((Header { instance, name }, tx, rx)) = lis
+                    while let Some((Header { instance, name }, srv)) = lis
                         .accept()
                         .await
                         .expect("failed to read invocation header")
                     {
-                        let Ok(fut) = bindings::handle(&Echo, &instance, &name, tx, rx) else {
+                        let Ok(fut) = bindings::handle(&Echo, &instance, &name, srv) else {
                             panic!("`{instance}#{name}` is not exported");
                         };
                         fut.await.expect("failed to serve invocation");
@@ -176,11 +174,10 @@ async fn js_server() -> anyhow::Result<()> {
     }
 
     let (tx, rx) = wrpc_test::tcp_streams(addr).await?;
-    let mut tx = FramedWrite::new(tx, FrameEncoder);
-    let mut rx = FramedRead::new(rx, FrameDecoder::default());
-    common::assert_sync(&mut tx, &mut rx).await?;
-    common::assert_async(&mut tx, &mut rx).await?;
-    common::assert_eof(tx, rx).await?;
+    let mut clt = Framed::new(tx, rx);
+    common::assert_sync(&mut clt).await?;
+    common::assert_async(&mut clt).await?;
+    common::assert_eof(clt).await?;
 
     server.start_kill().context("failed to kill `node`")?;
     server.wait().await.context("failed to wait for `node`")?;
@@ -207,11 +204,10 @@ async fn js_http_server() -> anyhow::Result<()> {
         .parse()
         .context("failed to parse request URI")?;
     let (tx, rx) = wrpc_test::http_open(sender, parts).await?;
-    let mut tx = FramedWrite::new(tx, FrameEncoder);
-    let mut rx = FramedRead::new(rx, FrameDecoder::default());
-    common::assert_sync(&mut tx, &mut rx).await?;
-    common::assert_async(&mut tx, &mut rx).await?;
-    common::assert_eof(tx, rx).await?;
+    let mut clt = Framed::new(tx, rx);
+    common::assert_sync(&mut clt).await?;
+    common::assert_async(&mut clt).await?;
+    common::assert_eof(clt).await?;
 
     server.start_kill().context("failed to kill `node`")?;
     server.wait().await.context("failed to wait for `node`")?;

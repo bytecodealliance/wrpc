@@ -10,16 +10,16 @@ impl test_exports::Handler for Component {
         &self,
         a: f32,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<Result<f32, String>> {
-        let (tx, rx) = self.0.connect().await?;
-        test_imports::string_error(tx, rx, a).await
+        let clt = self.0.connect().await?;
+        test_imports::string_error(clt, a).await
     }
 
     async fn enum_error(
         &self,
         a: f32,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<Result<f32, test_exports::E>> {
-        let (tx, rx) = self.0.connect().await?;
-        let res = test_imports::enum_error(tx, rx, a).await?;
+        let clt = self.0.connect().await?;
+        let res = test_imports::enum_error(clt, a).await?;
         Ok(match res {
             Ok(b) => Ok(b),
             Err(test_imports::E::A) => Err(test_exports::E::A),
@@ -32,8 +32,8 @@ impl test_exports::Handler for Component {
         &self,
         a: f32,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<Result<f32, test_exports::E2>> {
-        let (tx, rx) = self.0.connect().await?;
-        let res = test_imports::record_error(tx, rx, a).await?;
+        let clt = self.0.connect().await?;
+        let res = test_imports::record_error(clt, a).await?;
         Ok(match res {
             Ok(b) => Ok(b),
             Err(test_imports::E2 { line, column }) => Err(test_exports::E2 { line, column }),
@@ -44,8 +44,8 @@ impl test_exports::Handler for Component {
         &self,
         a: f32,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<Result<f32, test_exports::E3>> {
-        let (tx, rx) = self.0.connect().await?;
-        let res = test_imports::variant_error(tx, rx, a).await?;
+        let clt = self.0.connect().await?;
+        let res = test_imports::variant_error(clt, a).await?;
         Ok(match res {
             Ok(b) => Ok(b),
             Err(test_imports::E3::E1(test_imports::E::A)) => {
@@ -67,15 +67,15 @@ impl test_exports::Handler for Component {
         &self,
         a: u32,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<Result<u32, ()>> {
-        let (tx, rx) = self.0.connect().await?;
-        test_imports::empty_error(tx, rx, a).await
+        let clt = self.0.connect().await?;
+        test_imports::empty_error(clt, a).await
     }
 
     async fn double_error(
         &self,
         a: u32,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<Result<Result<(), String>, String>> {
-        let (tx, rx) = self.0.connect().await?;
-        test_imports::double_error(tx, rx, a).await
+        let clt = self.0.connect().await?;
+        test_imports::double_error(clt, a).await
     }
 }

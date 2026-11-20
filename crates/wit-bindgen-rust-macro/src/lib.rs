@@ -145,9 +145,6 @@ impl Parse for Config {
                     Opt::FuturesPath(path) => {
                         opts.futures_path = Some(path.value());
                     }
-                    Opt::TokioPath(path) => {
-                        opts.tokio_path = Some(path.value());
-                    }
                     Opt::TokioUtilPath(path) => {
                         opts.tokio_util_path = Some(path.value());
                     }
@@ -306,7 +303,6 @@ mod kw {
     syn::custom_keyword!(anyhow_path);
     syn::custom_keyword!(bytes_path);
     syn::custom_keyword!(futures_path);
-    syn::custom_keyword!(tokio_path);
     syn::custom_keyword!(tokio_util_path);
     syn::custom_keyword!(tracing_path);
     syn::custom_keyword!(wasm_tokio_path);
@@ -357,7 +353,6 @@ enum Opt {
     AnyhowPath(syn::LitStr),
     BytesPath(syn::LitStr),
     FuturesPath(syn::LitStr),
-    TokioPath(syn::LitStr),
     TokioUtilPath(syn::LitStr),
     TracingPath(syn::LitStr),
     WasmTokioPath(syn::LitStr),
@@ -469,10 +464,6 @@ impl Parse for Opt {
             input.parse::<kw::futures_path>()?;
             input.parse::<Token![:]>()?;
             Ok(Opt::FuturesPath(input.parse()?))
-        } else if l.peek(kw::tokio_path) {
-            input.parse::<kw::tokio_path>()?;
-            input.parse::<Token![:]>()?;
-            Ok(Opt::TokioPath(input.parse()?))
         } else if l.peek(kw::tokio_util_path) {
             input.parse::<kw::tokio_util_path>()?;
             input.parse::<Token![:]>()?;

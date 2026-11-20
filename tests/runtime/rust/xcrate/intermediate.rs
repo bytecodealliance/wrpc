@@ -13,16 +13,16 @@ pub struct Component(pub crate::Client);
 
 impl b_exports::Handler for Component {
     async fn b(&self) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
-        let (mut tx, mut rx) = self.0.connect().await?;
-        a_imports::f(&mut tx, &mut rx).await?;
-        b_imports::b(&mut tx, &mut rx).await?;
+        let mut clt = self.0.connect().await?;
+        a_imports::f(&mut clt).await?;
+        b_imports::b(&mut clt).await?;
 
-        let x = a_imports::X::new(&mut tx, &mut rx).await?;
-        a_imports::X::foo(&mut tx, &mut rx, &x.as_borrow()).await?;
+        let x = a_imports::X::new(&mut clt).await?;
+        a_imports::X::foo(&mut clt, &x.as_borrow()).await?;
         drop(x);
 
-        let x = b_imports::X::new(&mut tx, &mut rx).await?;
-        b_imports::X::foo(&mut tx, &mut rx, &x.as_borrow()).await?;
+        let x = b_imports::X::new(&mut clt).await?;
+        b_imports::X::foo(&mut clt, &x.as_borrow()).await?;
         drop(x);
         Ok(())
     }

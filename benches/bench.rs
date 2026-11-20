@@ -18,10 +18,9 @@ use tokio::net::{TcpStream, UnixListener};
 use tokio::runtime::{Handle, Runtime};
 use tokio::task::JoinHandle;
 use tokio::try_join;
-use tokio_util::codec::{FramedRead, FramedWrite};
 use wasmtime::component::{Component, Linker, ResourceTable};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
-use wrpc_transport::{FrameDecoder, FrameEncoder, Header, Listener};
+use wrpc_transport::{Framed, Header, Listener};
 
 mod ping_bindings_wrpc {
     wit_bindgen_wrpc::generate!({
@@ -84,19 +83,17 @@ enum Func {
 impl Func {
     async fn call(
         self,
-        tx: &mut FramedWrite<impl AsyncWrite + Send + Unpin, FrameEncoder>,
-        rx: &mut FramedRead<impl AsyncRead + Send + Unpin, FrameDecoder>,
+        clt: &mut Framed<impl AsyncRead + Send + Unpin, impl AsyncWrite + Send + Unpin>,
     ) -> anyhow::Result<()> {
         match self {
-            Self::Ping => ping_bindings_wrpc::wrpc_bench::bench::ping::ping(&mut *tx, &mut *rx)
+            Self::Ping => ping_bindings_wrpc::wrpc_bench::bench::ping::ping(&mut *clt)
                 .await
                 .context("failed to call `ping`"),
             Self::Greet => {
-                let greeting = greet_bindings_wrpc::wrpc_bench::bench::greet::greet(
-                    &mut *tx, &mut *rx, "test",
-                )
-                .await
-                .context("failed to call `greet`")?;
+                let greeting =
+                    greet_bindings_wrpc::wrpc_bench::bench::greet::greet(&mut *clt, "test")
+                        .await
+                        .context("failed to call `greet`")?;
                 ensure!(
                     greeting == "Hello, test",
                     "unexpected greeting `{greeting}`"
@@ -299,15 +296,23 @@ impl Tasks {
     ) {
         self.spawn(async move {
             let mut lis = Listener::new(tx, rx);
-            while let Some((Header { instance, name }, tx, rx)) = lis.accept().await? {
-                let res = match func {
-                    Func::Ping => ping_bindings_wrpc::handle(&handler, &instance, &name, tx, rx),
-                    Func::Greet => greet_bindings_wrpc::handle(&handler, &instance, &name, tx, rx),
-                };
-                let Ok(fut) = res else {
-                    bail!("`{instance}#{name}` is not exported");
-                };
-                fut.await?;
+            while let Some((Header { instance, name }, srv)) = lis.accept().await? {
+                match func {
+                    Func::Ping => {
+                        let Ok(fut) = ping_bindings_wrpc::handle(&handler, &instance, &name, srv)
+                        else {
+                            bail!("`{instance}#{name}` is not exported");
+                        };
+                        fut.await?;
+                    }
+                    Func::Greet => {
+                        let Ok(fut) = greet_bindings_wrpc::handle(&handler, &instance, &name, srv)
+                        else {
+                            bail!("`{instance}#{name}` is not exported");
+                        };
+                        fut.await?;
+                    }
+                }
             }
             Ok(())
         });
@@ -336,14 +341,13 @@ fn bench_invoke(
     >,
 ) -> anyhow::Result<()> {
     let (tx, rx) = rt.block_on(connect)?;
-    let mut tx = FramedWrite::new(tx, FrameEncoder);
-    let mut rx = FramedRead::new(rx, FrameDecoder::default());
+    let mut clt = Framed::new(tx, rx);
     g.bench_function(transport, |b| {
         b.iter_custom(|n| {
             rt.block_on(async {
                 let start = Instant::now();
                 for _ in 0..n {
-                    if let Err(err) = func.call(&mut tx, &mut rx).await {
+                    if let Err(err) = func.call(&mut clt).await {
                         panic!("{:?}", tasks.check().err().unwrap_or(err));
                     }
                 }

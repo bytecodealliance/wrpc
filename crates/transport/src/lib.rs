@@ -15,7 +15,9 @@
 //! [`Codec::invoke`] *invokes* WIT functions by sending the invocation header and transmitting
 //! the parameters while receiving the results, [`invoke()`] uses the default codecs.
 //! [`Codec::serve`] *serves* WIT functions by receiving the parameters following the header of an
-//! invocation and transmitting the results, [`serve()`] uses the default codecs.
+//! invocation and transmitting the results, [`serve()`] uses the default codecs. Generated
+//! bindings, [`invoke()`] and [`serve()`] use any [`Invoke`] client and [`Serve`] server, such as
+//! [`Framed`]. [`Serve`] requires [`Send`] values and futures, [`Codec::serve`] does not.
 //!
 //! A transport establishes bidirectional byte streams, each carrying invocations one after
 //! another, which it yields as any [`AsyncWrite`](tokio::io::AsyncWrite)/
@@ -41,15 +43,15 @@ pub use frame::{
     FrameDecoder, FrameEncoder, FrameHeaderDecoder, FrameHeaderEncoder, FrameHeaderRef, FrameRef,
 };
 pub use header::{Header, HeaderDecoder, HeaderEncoder, HeaderRef, PROTOCOL};
-pub use invoke::{Invocation, invoke, invoke_blocking};
+pub use invoke::{Invocation, Invoke, invoke, invoke_blocking};
 pub use listener::Listener;
 pub use mux::{Receipt, Transmission, receive, transmit};
 pub use pack::{pack, unpack};
-pub use serve::serve;
+pub use serve::{Serve, serve};
 pub use value::*;
 
 use bytes::{Buf, BufMut as _, BytesMut};
-use tokio_util::codec::Encoder as _;
+use tokio_util::codec::{Encoder as _, FramedRead, FramedWrite};
 
 /// Codec of the values of invocations
 #[derive(Clone, Copy, Debug, Default)]
@@ -58,6 +60,24 @@ pub struct Codec<E, D> {
     pub enc: E,
     /// Decoder of the values received, the results when invoking and the parameters when serving
     pub dec: D,
+}
+
+/// Frames written to and read from a byte stream pair
+pub struct Framed<I, O> {
+    /// Writer of the frames sent
+    pub tx: FramedWrite<O, FrameEncoder>,
+    /// Reader of the frames received
+    pub rx: FramedRead<I, FrameDecoder>,
+}
+
+impl<I, O> Framed<I, O> {
+    /// Constructs a new [Framed] over the byte streams `tx` and `rx`
+    pub fn new(tx: O, rx: I) -> Self {
+        Self {
+            tx: FramedWrite::new(tx, FrameEncoder),
+            rx: FramedRead::new(rx, FrameDecoder::default()),
+        }
+    }
 }
 
 /// Default maximum length of the instance and function names in a [Header]

@@ -6,18 +6,17 @@ use futures::TryStreamExt as _;
 use tokio::io::AsyncRead;
 use tokio_util::codec::{FramedRead, FramedWrite};
 
-use crate::{FrameDecoder, FrameEncoder, Header, HeaderDecoder, error_connection_failed};
+use crate::{FrameDecoder, FrameEncoder, Framed, Header, HeaderDecoder, error_connection_failed};
 
-enum Rx<I> {
-    Header(FramedRead<I, HeaderDecoder>),
-    Frames(FramedRead<I, FrameDecoder>),
+enum State<I, O> {
+    Header(FramedWrite<O, FrameEncoder>, FramedRead<I, HeaderDecoder>),
+    Frames(Framed<I, O>),
     Failed,
 }
 
 /// Accepts the invocations sent over a byte stream pair one after another
 pub struct Listener<I, O> {
-    tx: FramedWrite<O, FrameEncoder>,
-    rx: Rx<I>,
+    state: State<I, O>,
     header_decoder: HeaderDecoder,
     frame_decoder: FrameDecoder,
 }
@@ -32,54 +31,52 @@ impl<I, O> Listener<I, O> {
     /// invocation headers with `header` and their frames with `frames`
     pub fn with_decoders(tx: O, rx: I, header: HeaderDecoder, frames: FrameDecoder) -> Self {
         Self {
-            tx: FramedWrite::new(tx, FrameEncoder),
-            rx: Rx::Header(FramedRead::new(rx, header.clone())),
+            state: State::Header(
+                FramedWrite::new(tx, FrameEncoder),
+                FramedRead::new(rx, header.clone()),
+            ),
             header_decoder: header,
             frame_decoder: frames,
         }
     }
 
     /// Receives the header of the next invocation, once the previous one was served, and returns
-    /// it along with the frames written to `tx` and read from `rx` to serve the invocation over,
-    /// or `None` once `rx` reaches EOF
+    /// it along with the frames to serve the invocation over, or `None` once `rx` reaches EOF
     ///
     /// This is cancel-safe, a partially received header is completed by the next call. Once
     /// receiving a header failed, this always fails. Once serving an invocation failed, the
     /// connection must be dropped, since its unread frames would be received as a header.
-    pub async fn accept(
-        &mut self,
-    ) -> std::io::Result<
-        Option<(
-            Header,
-            &mut FramedWrite<O, FrameEncoder>,
-            &mut FramedRead<I, FrameDecoder>,
-        )>,
-    >
+    pub async fn accept(&mut self) -> std::io::Result<Option<(Header, &mut Framed<I, O>)>>
     where
         I: AsyncRead + Unpin,
     {
-        self.rx = match mem::replace(&mut self.rx, Rx::Failed) {
-            Rx::Frames(rx) => Rx::Header(rx.map_decoder(|_| self.header_decoder.clone())),
-            rx => rx,
+        self.state = match mem::replace(&mut self.state, State::Failed) {
+            State::Frames(Framed { tx, rx }) => {
+                State::Header(tx, rx.map_decoder(|_| self.header_decoder.clone()))
+            }
+            state => state,
         };
-        let Rx::Header(rx) = &mut self.rx else {
+        let State::Header(.., rx) = &mut self.state else {
             return Err(error_connection_failed());
         };
         let header = match rx.try_next().await {
             Ok(Some(header)) => header,
             Ok(None) => return Ok(None),
             Err(err) => {
-                self.rx = Rx::Failed;
+                self.state = State::Failed;
                 return Err(err);
             }
         };
-        self.rx = match mem::replace(&mut self.rx, Rx::Failed) {
-            Rx::Header(rx) => Rx::Frames(rx.map_decoder(|_| self.frame_decoder.clone())),
-            rx => rx,
+        self.state = match mem::replace(&mut self.state, State::Failed) {
+            State::Header(tx, rx) => State::Frames(Framed {
+                tx,
+                rx: rx.map_decoder(|_| self.frame_decoder.clone()),
+            }),
+            state => state,
         };
-        let Rx::Frames(rx) = &mut self.rx else {
+        let State::Frames(io) = &mut self.state else {
             return Err(error_connection_failed());
         };
-        Ok(Some((header, &mut self.tx, rx)))
+        Ok(Some((header, io)))
     }
 }

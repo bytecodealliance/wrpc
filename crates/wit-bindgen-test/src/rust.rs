@@ -269,8 +269,7 @@ use std::sync::Arc;
 
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream};
-use wit_bindgen_wrpc::tokio_util::codec::{FramedRead, FramedWrite};
-use wrpc_transport::{FrameDecoder, FrameEncoder, Header, Listener};
+use wrpc_transport::{Framed, Header, Listener};
 
 {modules}
 
@@ -278,19 +277,11 @@ use wrpc_transport::{FrameDecoder, FrameEncoder, Header, Listener};
 pub struct Client(SocketAddr);
 
 impl Client {
-    pub async fn connect(
-        &self,
-    ) -> std::io::Result<(
-        FramedWrite<OwnedWriteHalf, FrameEncoder>,
-        FramedRead<OwnedReadHalf, FrameDecoder>,
-    )> {
+    pub async fn connect(&self) -> std::io::Result<Framed<OwnedReadHalf, OwnedWriteHalf>> {
         let stream = TcpStream::connect(self.0).await?;
         stream.set_nodelay(true)?;
         let (rx, tx) = stream.into_split();
-        Ok((
-            FramedWrite::new(tx, FrameEncoder),
-            FramedRead::new(rx, FrameDecoder::default()),
-        ))
+        Ok(Framed::new(tx, rx))
     }
 }
 
@@ -299,8 +290,7 @@ fn serve(
     handle: impl for<'a> Fn(
         &str,
         &str,
-        &'a mut FramedWrite<OwnedWriteHalf, FrameEncoder>,
-        &'a mut FramedRead<OwnedReadHalf, FrameDecoder>,
+        &'a mut Framed<OwnedReadHalf, OwnedWriteHalf>,
     ) -> Result<Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'a>>, String>
     + Send
     + Sync
@@ -318,12 +308,12 @@ fn serve(
             tokio::spawn(async move {
                 let mut lis = Listener::new(tx, rx);
                 loop {
-                    let (Header { instance, name }, tx, rx) = match lis.accept().await {
+                    let (Header { instance, name }, srv) = match lis.accept().await {
                         Ok(Some(next)) => next,
                         Ok(None) => return,
                         Err(err) => return eprintln!("failed to read invocation header: {err:?}"),
                     };
-                    match handle(&instance, &name, tx, rx) {
+                    match handle(&instance, &name, srv) {
                         Ok(fut) => {
                             if let Err(err) = fut.await {
                                 return eprintln!("failed to serve invocation: {err:?}");
@@ -472,25 +462,39 @@ impl Runner<'_> {
         }
         let serve = (1..=components.len())
             .map(|i| {
+                let n = components.len().saturating_sub(i);
                 let handle = components[i..]
                     .iter()
                     .enumerate()
                     .map(|(j, (module, ..))| {
-                        format!(
-                            "
-                .or_else(|(tx, rx)| {{
-                    {module}::handle(&{module}::Component(clt[{}]), instance, func, tx, rx)
-                }})",
+                        let call = format!(
+                            "{module}::handle(&{module}::Component(clt[{}]), instance, func, srv)",
                             i + j
-                        )
+                        );
+                        if j + 1 == n {
+                            format!(
+                                "
+            if let Ok(fut) = {call} {{
+                return Ok(Box::pin(fut));
+            }}"
+                            )
+                        } else {
+                            format!(
+                                "
+            let srv = match {call} {{
+                Ok(fut) => return Ok(Box::pin(fut)),
+                Err(srv) => srv,
+            }};"
+                            )
+                        }
                     })
                     .collect::<String>();
+                let srv = if n == 0 { "_" } else { "srv" };
                 format!(
                     "serve(lis.next().unwrap(), {{
         let clt = clt.clone();
-        move |instance, func, tx, rx| {{
-            Err((tx, rx)){handle}
-                .map_err(|_| format!(\"{{instance}}#{{func}}\"))
+        move |instance, func, {srv}| {{{handle}
+            Err(format!(\"{{instance}}#{{func}}\"))
         }}
     }});"
                 )

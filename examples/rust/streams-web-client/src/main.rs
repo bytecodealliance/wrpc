@@ -19,8 +19,7 @@ mod bindings {
 }
 
 use bindings::wrpc_examples::streams::handler::{Req, echo};
-use wit_bindgen_wrpc::tokio_util::codec::{FramedRead, FramedWrite};
-use wit_bindgen_wrpc::wrpc_transport::{FrameDecoder, FrameEncoder};
+use wit_bindgen_wrpc::wrpc_transport::Framed;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -63,9 +62,7 @@ async fn main() -> anyhow::Result<()> {
     );
 
     let (tx, rx) = session.open_bi().await.context("failed to open stream")?;
-    let tx = FramedWrite::new(tx, FrameEncoder);
-    let rx = FramedRead::new(rx, FrameDecoder::default());
-    let ((mut numbers, mut bytes), io) = echo(tx, rx, Req { numbers, bytes })
+    let ((mut numbers, mut bytes), io) = echo(Framed::new(tx, rx), Req { numbers, bytes })
         .await
         .context("failed to invoke `wrpc-examples:streams/handler.echo`")?;
     try_join!(

@@ -11,8 +11,8 @@ pub async fn run(
     // cancel from the other end
     let (tx, rx) = oneshot::channel();
     let f1 = async { tx.send(String::from("hello")) };
-    let (wrpc_tx, wrpc_rx) = wrpc.connect().await?;
-    let f2 = take_then_drop(wrpc_tx, wrpc_rx, Box::pin(async move { rx.await.unwrap() }));
+    let wrpc_clt = wrpc.connect().await?;
+    let f2 = take_then_drop(wrpc_clt, Box::pin(async move { rx.await.unwrap() }));
     let (result, res) = join!(f1, f2);
     res?;
     result.unwrap();
@@ -21,7 +21,7 @@ pub async fn run(
     // witness that it was written, not cancelled.
     let (tx, rx) = oneshot::channel();
     tx.send(String::from("hello3")).unwrap();
-    let (wrpc_tx, wrpc_rx) = wrpc.connect().await?;
-    read_and_drop(wrpc_tx, wrpc_rx, Box::pin(async move { rx.await.unwrap() })).await?;
+    let wrpc_clt = wrpc.connect().await?;
+    read_and_drop(wrpc_clt, Box::pin(async move { rx.await.unwrap() })).await?;
     Ok(())
 }

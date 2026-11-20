@@ -13,42 +13,42 @@ use crate::client::my::test::test_interface::{
 pub async fn run(
     wrpc: &crate::Client,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
-    let (mut tx, mut rx) = wrpc.connect().await?;
+    let mut clt = wrpc.connect().await?;
     {
         // Write the things all at once.  The callee will read them only
         // one at a time.
-        let a = TestThing::new(&mut tx, &mut rx, "a").await?;
-        let b = TestThing::new(&mut tx, &mut rx, "b").await?;
-        let c = TestThing::new(&mut tx, &mut rx, "c").await?;
+        let a = TestThing::new(&mut clt, "a").await?;
+        let b = TestThing::new(&mut clt, "b").await?;
+        let c = TestThing::new(&mut clt, "c").await?;
         let things = vec![a, b, c];
         let (stream, io) =
-            short_reads_test(&mut tx, &mut rx, Box::pin(stream::iter([things]))).await?;
+            short_reads_test(&mut clt, Box::pin(stream::iter([things]))).await?;
         let (things, ()) = try_join!(async { Ok(stream.concat().await) }, io)?;
         assert_eq!(things.len(), 3);
-        let a = TestThing::get(&mut tx, &mut rx, &things[0].as_borrow()).await?;
+        let a = TestThing::get(&mut clt, &things[0].as_borrow()).await?;
         assert_eq!(a, "a");
-        let b = TestThing::get(&mut tx, &mut rx, &things[1].as_borrow()).await?;
+        let b = TestThing::get(&mut clt, &things[1].as_borrow()).await?;
         assert_eq!(b, "b");
-        let c = TestThing::get(&mut tx, &mut rx, &things[2].as_borrow()).await?;
+        let c = TestThing::get(&mut clt, &things[2].as_borrow()).await?;
         assert_eq!(c, "c");
     }
 
     {
         // Write the things all at once.  The callee will read them only
         // one at a time.
-        let a = LeafThing::new(&mut tx, &mut rx, "a").await?;
-        let b = LeafThing::new(&mut tx, &mut rx, "b").await?;
-        let c = LeafThing::new(&mut tx, &mut rx, "c").await?;
+        let a = LeafThing::new(&mut clt, "a").await?;
+        let b = LeafThing::new(&mut clt, "b").await?;
+        let c = LeafThing::new(&mut clt, "c").await?;
         let things = vec![a, b, c];
         let (stream, io) =
-            short_reads_leaf(&mut tx, &mut rx, Box::pin(stream::iter([things]))).await?;
+            short_reads_leaf(&mut clt, Box::pin(stream::iter([things]))).await?;
         let (things, ()) = try_join!(async { Ok(stream.concat().await) }, io)?;
         assert_eq!(things.len(), 3);
-        let a = LeafThing::get(&mut tx, &mut rx, &things[0].as_borrow()).await?;
+        let a = LeafThing::get(&mut clt, &things[0].as_borrow()).await?;
         assert_eq!(a, "a");
-        let b = LeafThing::get(&mut tx, &mut rx, &things[1].as_borrow()).await?;
+        let b = LeafThing::get(&mut clt, &things[1].as_borrow()).await?;
         assert_eq!(b, "b");
-        let c = LeafThing::get(&mut tx, &mut rx, &things[2].as_borrow()).await?;
+        let c = LeafThing::get(&mut clt, &things[2].as_borrow()).await?;
         assert_eq!(c, "c");
     }
 
@@ -56,11 +56,10 @@ pub async fn run(
         // Write a thing to the first future, the read end of which the
         // callee will drop without reading from, then write it again to
         // the second future, which the callee will read.
-        let thing = TestThing::new(&mut tx, &mut rx, "a").await?;
+        let thing = TestThing::new(&mut clt, "a").await?;
         let thing = Bytes::from(thing);
         let ((.., f2), io) = dropped_reader_test(
-            &mut tx,
-            &mut rx,
+            &mut clt,
             Box::pin(future::ready(ResourceOwn::from(thing.clone()))),
             Box::pin(future::ready(ResourceOwn::from(thing))),
         )
@@ -68,7 +67,7 @@ pub async fn run(
         // Drop the first future without reading from it and read from
         // the second future and assert it matches what we wrote above.
         let (thing, ()) = try_join!(async { Ok(f2.await) }, io)?;
-        let a = TestThing::get(&mut tx, &mut rx, &thing.as_borrow()).await?;
+        let a = TestThing::get(&mut clt, &thing.as_borrow()).await?;
         assert_eq!(a, "a");
     }
 
@@ -76,11 +75,10 @@ pub async fn run(
         // Write a thing to the first future, the read end of which the
         // callee will drop without reading from, then write it again to
         // the second future, which the callee will read.
-        let thing = LeafThing::new(&mut tx, &mut rx, "a").await?;
+        let thing = LeafThing::new(&mut clt, "a").await?;
         let thing = Bytes::from(thing);
         let ((.., f2), io) = dropped_reader_leaf(
-            &mut tx,
-            &mut rx,
+            &mut clt,
             Box::pin(future::ready(ResourceOwn::from(thing.clone()))),
             Box::pin(future::ready(ResourceOwn::from(thing))),
         )
@@ -88,7 +86,7 @@ pub async fn run(
         // Drop the first future without reading from it and read from
         // the second future and assert it matches what we wrote above.
         let (thing, ()) = try_join!(async { Ok(f2.await) }, io)?;
-        let a = LeafThing::get(&mut tx, &mut rx, &thing.as_borrow()).await?;
+        let a = LeafThing::get(&mut clt, &thing.as_borrow()).await?;
         assert_eq!(a, "a");
     }
     Ok(())

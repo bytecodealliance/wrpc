@@ -10,6 +10,6 @@ fn require_send<T: Send>(t: T) -> T {
 pub async fn run(
     wrpc: &crate::Client,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
-    let (tx, rx) = wrpc.connect().await?;
-    require_send(async { one_argument(tx, rx, "hello").await }).await
+    let clt = wrpc.connect().await?;
+    require_send(async { one_argument(clt, "hello").await }).await
 }

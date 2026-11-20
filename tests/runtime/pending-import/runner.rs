@@ -13,14 +13,13 @@ use crate::client::my::test::i::*;
 pub async fn run(
     wrpc: &crate::Client,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
-    let (mut wrpc_tx, mut wrpc_rx) = wrpc.connect().await?;
+    let mut wrpc_clt = wrpc.connect().await?;
 
     // Test that Rust-level polling twice works.
     {
         let (tx, rx) = oneshot::channel();
         let mut import = pin!(pending_import(
-            &mut wrpc_tx,
-            &mut wrpc_rx,
+            &mut wrpc_clt,
             Box::pin(async move { rx.await.unwrap() })
         ));
         assert!(
@@ -46,8 +45,7 @@ pub async fn run(
     {
         let (tx, rx) = oneshot::channel();
         let mut import = Box::pin(pending_import(
-            &mut wrpc_tx,
-            &mut wrpc_rx,
+            &mut wrpc_clt,
             Box::pin(async move { rx.await.unwrap() }),
         ));
         assert!(

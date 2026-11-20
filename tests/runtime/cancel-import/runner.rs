@@ -15,10 +15,9 @@ pub async fn run(
     println!("test cancelling an import in progress");
     {
         let (mut tx, rx) = oneshot::channel();
-        let (wrpc_tx, wrpc_rx) = wrpc.connect().await?;
+        let wrpc_clt = wrpc.connect().await?;
         let mut import = Box::pin(pending_import(
-            wrpc_tx,
-            wrpc_rx,
+            wrpc_clt,
             Box::pin(async move { rx.await.unwrap() }),
         ));
         assert!(
@@ -35,10 +34,9 @@ pub async fn run(
     println!("test cancelling an import before it starts");
     {
         let (mut tx, rx) = oneshot::channel();
-        let (wrpc_tx, wrpc_rx) = wrpc.connect().await?;
+        let wrpc_clt = wrpc.connect().await?;
         let import = Box::pin(pending_import(
-            wrpc_tx,
-            wrpc_rx,
+            wrpc_clt,
             Box::pin(async move { rx.await.unwrap() }),
         ));
         drop(import);
@@ -52,10 +50,9 @@ pub async fn run(
         let (mut tx2, rx2) = oneshot::channel();
 
         // create a task in the "started" state, but don't complete it yet
-        let (wrpc_tx, wrpc_rx) = wrpc.connect().await?;
+        let wrpc_clt = wrpc.connect().await?;
         let mut started_import = Box::pin(pending_import(
-            wrpc_tx,
-            wrpc_rx,
+            wrpc_clt,
             Box::pin(async move { rx1.await.unwrap() }),
         ));
         assert!(
@@ -67,12 +64,11 @@ pub async fn run(
 
         // request the other component sets its backpressure flag meaning we
         // won't be able to create new tasks in the "started" state.
-        let (mut bp_tx, mut bp_rx) = wrpc.connect().await?;
-        backpressure_set(&mut bp_tx, &mut bp_rx, true).await?;
-        let (wrpc_tx, wrpc_rx) = wrpc.connect().await?;
+        let mut bp_clt = wrpc.connect().await?;
+        backpressure_set(&mut bp_clt, true).await?;
+        let wrpc_clt = wrpc.connect().await?;
         let mut starting_import = Box::pin(pending_import(
-            wrpc_tx,
-            wrpc_rx,
+            wrpc_clt,
             Box::pin(async move { rx2.await.unwrap() }),
         ));
         assert!(
@@ -89,7 +85,7 @@ pub async fn run(
         // cancel our in-progress export
         drop(started_import);
 
-        backpressure_set(&mut bp_tx, &mut bp_rx, false).await?;
+        backpressure_set(&mut bp_clt, false).await?;
 
         // both channels should be dropped
         tx1.closed().await;
@@ -103,10 +99,9 @@ pub async fn run(
     {
         // Start a subtask and get it into the "started" state
         let (tx, rx) = oneshot::channel();
-        let (wrpc_tx, wrpc_rx) = wrpc.connect().await?;
+        let wrpc_clt = wrpc.connect().await?;
         let mut import = Box::pin(pending_import(
-            wrpc_tx,
-            wrpc_rx,
+            wrpc_clt,
             Box::pin(async move { rx.await.unwrap() }),
         ));
         assert!(
@@ -136,10 +131,9 @@ pub async fn run(
     {
         // Start a subtask and get it into the "started" state
         let (tx1, rx1) = oneshot::channel();
-        let (wrpc_tx, wrpc_rx) = wrpc.connect().await?;
+        let wrpc_clt = wrpc.connect().await?;
         let mut started_import = Box::pin(pending_import(
-            wrpc_tx,
-            wrpc_rx,
+            wrpc_clt,
             Box::pin(async move { rx1.await.unwrap() }),
         ));
         assert!(
@@ -151,13 +145,12 @@ pub async fn run(
 
         // force the next subtask to start out in the "starting" state, not the
         // "started" state.
-        let (mut bp_tx, mut bp_rx) = wrpc.connect().await?;
-        backpressure_set(&mut bp_tx, &mut bp_rx, true).await?;
+        let mut bp_clt = wrpc.connect().await?;
+        backpressure_set(&mut bp_clt, true).await?;
         let (mut tx2, rx2) = oneshot::channel();
-        let (wrpc_tx, wrpc_rx) = wrpc.connect().await?;
+        let wrpc_clt = wrpc.connect().await?;
         let mut starting_import = Box::pin(pending_import(
-            wrpc_tx,
-            wrpc_rx,
+            wrpc_clt,
             Box::pin(async move { rx2.await.unwrap() }),
         ));
         assert!(
@@ -170,7 +163,7 @@ pub async fn run(
         // Disable backpressure in the other component which will let the
         // `starting_import`, previously in the "STARTING" state, get a queued up
         // notification that it's entered the "STARTED" state.
-        backpressure_set(&mut bp_tx, &mut bp_rx, false).await?;
+        backpressure_set(&mut bp_clt, false).await?;
         for _ in 0..5 {
             yield_now().await;
         }

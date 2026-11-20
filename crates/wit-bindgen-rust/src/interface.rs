@@ -94,45 +94,71 @@ impl InterfaceGenerator<'_> {
 
         let trait_names: Vec<_> = traits
             .values()
-            .map(|(name, ..)| format!("{name} + "))
+            .map(|(name, ..)| format!(" + {name}"))
             .collect();
 
-        uwrite!(
-            self.src,
-            r#"
-pub fn handle_interface<'a__, R__, W__, I__, O__, H__>(
-    handler: &H__,
-    instance: &str,
-    func: &str,
-    tx: W__,
-    rx: R__,
-) -> ::core::result::Result<
-    ::core::pin::Pin<
-        ::std::boxed::Box<
-            dyn ::core::future::Future<Output = {anyhow}::Result<()>> + ::core::marker::Send + 'a__
-        >
-    >,
-    (W__, R__),
->
-where
-    R__: ::core::borrow::BorrowMut<{tokio_util}::codec::FramedRead<I__, {wrpc_transport}::FrameDecoder>> + ::core::marker::Send + 'a__,
-    W__: ::core::borrow::BorrowMut<{tokio_util}::codec::FramedWrite<O__, {wrpc_transport}::FrameEncoder>> + ::core::marker::Send + 'a__,
-    I__: {tokio}::io::AsyncRead + ::core::marker::Send + ::core::marker::Unpin + 'a__,
-    O__: {tokio}::io::AsyncWrite + ::core::marker::Send + ::core::marker::Unpin + 'a__,
-    H__: Handler + {resource_traits} ::core::marker::Send + ::core::marker::Sync + ::core::clone::Clone + 'static,
-{{
-    match (instance, func) {{"#,
-            resource_traits = trait_names.join(""),
-            anyhow = self.r#gen.anyhow_path(),
-            tokio_util = self.r#gen.tokio_util_path(),
-            tokio = self.r#gen.tokio_path(),
-            wrpc_transport = self.r#gen.wrpc_transport_path(),
-        );
         let instance = match identifier {
             Identifier::Interface(.., name) => self.resolve.name_canonicalized_world_key(name),
             Identifier::World => String::new(),
         };
-        for func in &funcs_to_export {
+        uwrite!(
+            self.src,
+            r#"
+pub fn handle_interface<S__, H__>(
+    handler: &H__,
+    instance: &str,
+    func: &str,
+    srv: S__,
+) -> ::core::result::Result<
+    impl ::core::future::Future<Output = {anyhow}::Result<S__::Output>> + ::core::marker::Send + use<S__, H__>,
+    S__,
+>
+where
+    S__: {wrpc_transport}::Serve + ::core::marker::Send,
+    H__: Handler{resource_traits} + ::core::marker::Send + ::core::marker::Sync + ::core::clone::Clone,
+{{
+    let ::core::option::Option::Some(func) = lookup__(instance, func) else {{
+        return ::core::result::Result::Err(srv);
+    }};
+    ::core::result::Result::Ok(serve__(::core::clone::Clone::clone(handler), func, srv))
+}}
+
+pub(crate) fn lookup__(instance: &str, func: &str) -> ::core::option::Option<usize> {{
+    match (instance, func) {{"#,
+            resource_traits = trait_names.join(""),
+            anyhow = self.r#gen.anyhow_path(),
+            wrpc_transport = self.r#gen.wrpc_transport_path(),
+        );
+        for (i, func) in funcs_to_export.iter().enumerate() {
+            uwrite!(
+                self.src,
+                r#"
+        ("{instance}", "{}") => ::core::option::Option::Some({i}),"#,
+                rpc_func_name(func),
+            );
+        }
+        uwrite!(
+            self.src,
+            r#"
+        _ => ::core::option::Option::None,
+    }}
+}}
+
+pub(crate) async fn serve__<S__, H__>(
+    handler: H__,
+    func: usize,
+    srv: S__,
+) -> {anyhow}::Result<S__::Output>
+where
+    S__: {wrpc_transport}::Serve,
+    H__: Handler{resource_traits} + ::core::marker::Send + ::core::marker::Sync,
+{{
+    match func {{"#,
+            resource_traits = trait_names.join(""),
+            anyhow = self.r#gen.anyhow_path(),
+            wrpc_transport = self.r#gen.wrpc_transport_path(),
+        );
+        for (i, func) in funcs_to_export.iter().enumerate() {
             let fqn = if instance.is_empty() {
                 func.name.to_string()
             } else {
@@ -156,11 +182,8 @@ where
             uwrite!(
                 self.src,
                 r#"
-        ("{instance}", "{}") => {{
-            let handler = handler.clone();
-            ::core::result::Result::Ok(::std::boxed::Box::pin(async move {{
-                let res = {wrpc_transport}::serve::<{params_ty}, ({results_ty}), _, _, _, _>(tx, rx, move |{params_tuple}("#,
-                rpc_func_name(func),
+        {i} => {{
+            let res = {wrpc_transport}::serve::<{params_ty}, ({results_ty}), _, _, _>(srv, move |{params_tuple}("#,
                 wrpc_transport = self.r#gen.wrpc_transport_path(),
                 params_tuple = params_tuple.unwrap_or_default(),
             );
@@ -217,22 +240,20 @@ where
                 self.src,
                 r#"
                     ::core::result::Result::Ok::<_, {anyhow}::Error>({results})
-                }});
-                {anyhow}::Context::context(
-                    {root}send__(res).await,
-                    "failed to serve `{fqn}` invocation",
-                )
-            }}))
+            }});
+            {anyhow}::Context::context(
+                res.await,
+                "failed to serve `{fqn}` invocation",
+            )
         }}"#,
                 anyhow = self.r#gen.anyhow_path(),
-                root = self.path_to_root(),
             );
         }
 
         uwriteln!(
             self.src,
             r#"
-        _ => ::core::result::Result::Err((tx, rx)),
+        _ => ::core::unreachable!(),
     }}
 }}"#,
         );
@@ -444,7 +465,7 @@ where
             [] => {
                 uwrite!(
                     self.src,
-                    " -> impl ::core::future::Future<Output = {anyhow}::Result<()>> + use<'a, R__, W__, I__, O__>"
+                    " -> impl ::core::future::Future<Output = {anyhow}::Result<()>> + use<'a, C__>"
                 );
             }
             [ty] => {
@@ -459,10 +480,10 @@ where
                 if async_params || async_results {
                     uwrite!(
                         self.src,
-                        ", impl ::core::future::Future<Output = ::std::io::Result<()>> + use<R__, W__, I__, O__>)",
+                        ", impl ::core::future::Future<Output = ::std::io::Result<()>> + use<C__>)",
                     );
                 }
-                uwrite!(self.src, ">> + use<'a, R__, W__, I__, O__>");
+                uwrite!(self.src, ">> + use<'a, C__>");
             }
             types => {
                 uwrite!(
@@ -476,10 +497,10 @@ where
                 if async_params || async_results {
                     uwrite!(
                         self.src,
-                        "impl ::core::future::Future<Output = ::std::io::Result<()>> + use<R__, W__, I__, O__>",
+                        "impl ::core::future::Future<Output = ::std::io::Result<()>> + use<C__>",
                     );
                 }
-                uwrite!(self.src, ")>> + use<'a, R__, W__, I__, O__>");
+                uwrite!(self.src, ")>> + use<'a, C__>");
             }
         };
         self.push_str("{\n");
@@ -493,16 +514,8 @@ where
             .result
             .as_ref()
             .map(|ty| self.decoded_value(ty, "wrpc__", false));
-        let args_ty = func
-            .params
-            .iter()
-            .map(|param| format!("{}, ", self.import_param_ty(&param.ty)))
-            .collect::<String>();
         let args_tuple = self.use_tuple(func.params.len(), false);
-        let args_ty = match &args_tuple {
-            Some(tuple) => format!("{tuple}<{args_ty}>"),
-            None => format!("({args_ty})"),
-        };
+        let args_ty = self.import_args_ty(func);
         let results_ty = func
             .result
             .as_ref()
@@ -523,11 +536,11 @@ where
         let io = result.is_some() && (async_params || async_results);
         let call = if io {
             format!(
-                r#"{futures}::FutureExt::flatten({futures}::future::lazy(move |_| {wrpc_transport}::invoke::<{args_ty}, ({results_ty}), _, _, _, _>(tx__, rx__, "{instance}", "{name}", {params})))"#
+                r#"{futures}::FutureExt::flatten({futures}::future::lazy(move |_| {wrpc_transport}::invoke::<{args_ty}, ({results_ty}), _>(clt__, "{instance}", "{name}", {params})))"#
             )
         } else {
             format!(
-                r#"{wrpc_transport}::invoke_blocking::<{args_ty}, ({results_ty}), _, _>(tx__, rx__, "{instance}", "{name}", {params})"#
+                r#"{wrpc_transport}::invoke_blocking::<{args_ty}, ({results_ty}), _>(clt__, "{instance}", "{name}", {params})"#
             )
         };
         let (pat, ret) = match result {
@@ -640,11 +653,10 @@ where
             self.push_str(&to_rust_ident(func.item_name()));
         };
         if self.in_import {
+            let args_ty = self.import_args_ty(func);
             uwrite!(
                 self.src,
-                "<'a, R__: ::core::borrow::BorrowMut<{tokio_util}::codec::FramedRead<I__, {wrpc_transport}::FrameDecoder>>, W__: ::core::borrow::BorrowMut<{tokio_util}::codec::FramedWrite<O__, {wrpc_transport}::FrameEncoder>>, I__: {tokio}::io::AsyncRead + ::core::marker::Unpin, O__: {tokio}::io::AsyncWrite + ::core::marker::Unpin>(tx__: W__, rx__: R__,",
-                tokio = self.r#gen.tokio_path(),
-                tokio_util = self.r#gen.tokio_util_path(),
+                "<'a, C__: {wrpc_transport}::Invoke<<{args_ty} as {wrpc_transport}::Encode>::Encoder>>(clt__: C__,",
                 wrpc_transport = self.r#gen.wrpc_transport_path(),
             );
         } else {
@@ -876,6 +888,18 @@ where
         let prev = mem::take(&mut self.src);
         self.print_encoded_ty(ty, false);
         mem::replace(&mut self.src, prev).to_string()
+    }
+
+    fn import_args_ty(&mut self, func: &Function) -> String {
+        let args_ty = func
+            .params
+            .iter()
+            .map(|param| format!("{}, ", self.import_param_ty(&param.ty)))
+            .collect::<String>();
+        match self.use_tuple(func.params.len(), false) {
+            Some(tuple) => format!("{tuple}<{args_ty}>"),
+            None => format!("({args_ty})"),
+        }
     }
 
     fn import_param_ty(&mut self, ty: &Type) -> String {

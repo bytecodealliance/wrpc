@@ -7,9 +7,8 @@ use hyper_util::rt::TokioIo;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::sync::mpsc;
 use tokio::{spawn, try_join};
-use tokio_util::codec::{FramedRead, FramedWrite};
 use wrpc_http::OutgoingBody;
-use wrpc_transport::{FrameDecoder, FrameEncoder, Listener};
+use wrpc_transport::{Framed, Listener};
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn http2() -> anyhow::Result<()> {
@@ -113,8 +112,8 @@ async fn buffered() -> anyhow::Result<()> {
             let ((), body) = try_join!(
                 async {
                     let mut lis = Listener::new(tx, rx);
-                    let (tx, rx) = wrpc_test::next_invocation(&mut lis, "foo", "bar").await?;
-                    wrpc_transport::serve::<Bytes, Bytes, _, _, _, _>(tx, rx, async |params| {
+                    let srv = wrpc_test::next_invocation(&mut lis, "foo", "bar").await?;
+                    wrpc_transport::serve::<Bytes, Bytes, _, _, _>(srv, async |params| {
                         anyhow::Ok(params)
                     })
                     .await?;
@@ -142,11 +141,13 @@ async fn buffered() -> anyhow::Result<()> {
         let (parts, body) = transport.request(req).await?;
         Ok::<_, anyhow::Error>(http::Response::from_parts(parts, Full::new(body)))
     });
-    let tx = FramedWrite::new(tx, FrameEncoder);
-    let rx = FramedRead::new(rx, FrameDecoder::default());
-    let results =
-        wrpc_transport::invoke_blocking::<_, Bytes, _, _>(tx, rx, "foo", "bar", params.clone())
-            .await?;
+    let results = wrpc_transport::invoke_blocking::<_, Bytes, _>(
+        Framed::new(tx, rx),
+        "foo",
+        "bar",
+        params.clone(),
+    )
+    .await?;
     assert_eq!(results, params);
     Ok(())
 }

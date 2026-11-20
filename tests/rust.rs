@@ -27,9 +27,9 @@ use tokio_util::io::StreamReader;
 use tracing::instrument;
 use wrpc_test::next_invocation;
 use wrpc_transport::{
-    Decode, Encode, FrameDecoder, FrameEncoder, FrameRef, Header, HeaderDecoder, HeaderEncoder,
-    HeaderRef, Listener, ResourceBorrow, ResourceOwn, invoke, invoke_blocking, receive, serve,
-    transmit,
+    Decode, Encode, FrameDecoder, FrameEncoder, FrameRef, Framed, Header, HeaderDecoder,
+    HeaderEncoder, HeaderRef, Listener, ResourceBorrow, ResourceOwn, invoke, invoke_blocking,
+    receive, serve, transmit,
 };
 
 #[instrument(skip_all, ret)]
@@ -183,12 +183,11 @@ where
             use sync_client::wrpc_test::integration::resources::Counter;
 
             let (tx, rx) = (self.connect)().await?;
-            let mut tx = FramedWrite::new(tx, FrameEncoder);
-            let mut rx = FramedRead::new(rx, FrameDecoder::default());
-            let counter = Counter::new(&mut tx, &mut rx, 42).await?;
-            let n = Counter::get_count(&mut tx, &mut rx, &counter.as_borrow()).await?;
+            let mut clt = Framed::new(tx, rx);
+            let counter = Counter::new(&mut clt, 42).await?;
+            let n = Counter::get_count(&mut clt, &counter.as_borrow()).await?;
             ensure!(n == 42);
-            assert_eof(tx, rx).await?;
+            assert_eof(clt).await?;
             Ok("pong".into())
         }
     }
@@ -274,8 +273,8 @@ where
     };
     let serve = async |tx, rx| {
         let mut lis = Listener::new(tx, rx);
-        while let Some((Header { instance, name }, tx, rx)) = lis.accept().await? {
-            let Ok(fut) = sync_server::handle(&handler, &instance, &name, tx, rx) else {
+        while let Some((Header { instance, name }, srv)) = lis.accept().await? {
+            let Ok(fut) = sync_server::handle(&handler, &instance, &name, srv) else {
                 bail!("`{instance}#{name}` is not exported");
             };
             fut.await?;
@@ -292,10 +291,9 @@ where
         },
         async {
             let (tx, rx) = connect().await.context("failed to connect")?;
-            let mut tx = FramedWrite::new(tx, FrameEncoder);
-            let mut rx = FramedRead::new(rx, FrameDecoder::default());
-            assert_sync(&mut tx, &mut rx).await?;
-            assert_eof(tx, rx).await
+            let mut clt = Framed::new(tx, rx);
+            assert_sync(&mut clt).await?;
+            assert_eof(clt).await
         },
     )?;
     Ok(())
@@ -391,20 +389,22 @@ async fn assert_bindgen_async(
     try_join!(
         async {
             let (srv_tx, srv_rx) = accept.await.context("failed to accept")?;
-            let mut lis = Listener::new(srv_tx, srv_rx);
-            while let Some((Header { instance, name }, tx, rx)) = lis.accept().await? {
-                let Ok(fut) = bindings::handle(&Handler, &instance, &name, tx, rx) else {
-                    bail!("`{instance}#{name}` is not exported");
-                };
-                fut.await?;
-            }
-            anyhow::Ok(())
+            spawn(async move {
+                let mut lis = Listener::new(srv_tx, srv_rx);
+                while let Some((Header { instance, name }, srv)) = lis.accept().await? {
+                    let Ok(fut) = bindings::handle(&Handler, &instance, &name, srv) else {
+                        bail!("`{instance}#{name}` is not exported");
+                    };
+                    fut.await?;
+                }
+                anyhow::Ok(())
+            })
+            .await?
         },
         async {
-            let mut tx = FramedWrite::new(tx, FrameEncoder);
-            let mut rx = FramedRead::new(rx, FrameDecoder::default());
-            assert_async(&mut tx, &mut rx).await?;
-            assert_eof(tx, rx).await
+            let mut clt = Framed::new(tx, rx);
+            assert_async(&mut clt).await?;
+            assert_eof(clt).await
         },
     )?;
     Ok(())
@@ -543,15 +543,15 @@ where
             let (tx, rx) = accept().await.context("failed to accept")?;
             let mut lis = Listener::new(tx, rx);
             for _ in 0..2 {
-                let (tx, rx) = next_invocation(&mut lis, "test", "sync").await?;
-                serve::<SyncValues, SyncValues, _, _, _, _>(tx, rx, async |params| {
+                let srv = next_invocation(&mut lis, "test", "sync").await?;
+                serve::<SyncValues, SyncValues, _, _, _>(srv, async |params| {
                     assert_eq!(params, sync_values());
                     anyhow::Ok(sync_values())
                 })
                 .await?;
             }
-            let (tx, rx) = next_invocation(&mut lis, "test", "async").await?;
-            serve::<AsyncValues, AsyncValues, _, _, _, _>(tx, rx, async |params| {
+            let srv = next_invocation(&mut lis, "test", "async").await?;
+            serve::<AsyncValues, AsyncValues, _, _, _>(srv, async |params| {
                 assert_async_values(params, future::ready(Ok(()))).await?;
                 anyhow::Ok(async_values())
             })
@@ -563,11 +563,13 @@ where
         async {
             for _ in 0..2 {
                 let (tx, rx) = connect().await?;
-                let tx = FramedWrite::new(tx, FrameEncoder);
-                let rx = FramedRead::new(rx, FrameDecoder::default());
-                let res =
-                    invoke_blocking::<(&str,), (String,), _, _>(tx, rx, "test", "reset", ("arg",))
-                        .await;
+                let res = invoke_blocking::<(&str,), (String,), _>(
+                    Framed::new(tx, rx),
+                    "test",
+                    "reset",
+                    ("arg",),
+                )
+                .await;
                 res.expect_err("`test.reset` should have failed");
             }
 
@@ -577,26 +579,19 @@ where
             let dec = <SyncValues as Decode>::Decoder::default();
             let unpacked = wrpc_transport::unpack(dec, &mut buf)?;
             let (tx, rx) = connect().await?;
-            let mut tx = FramedWrite::new(tx, FrameEncoder);
-            let mut rx = FramedRead::new(rx, FrameDecoder::default());
+            let mut clt = Framed::new(tx, rx);
             for params in [sync_values(), unpacked] {
-                let res = invoke_blocking::<SyncValues, SyncValues, _, _>(
-                    &mut tx, &mut rx, "test", "sync", params,
-                )
-                .await?;
+                let res =
+                    invoke_blocking::<SyncValues, SyncValues, _>(&mut clt, "test", "sync", params)
+                        .await?;
                 assert_eq!(res, sync_values());
             }
 
-            let (res, io) = invoke::<AsyncValues, AsyncValues, _, _, _, _>(
-                &mut tx,
-                &mut rx,
-                "test",
-                "async",
-                async_values(),
-            )
-            .await?;
+            let (res, io) =
+                invoke::<AsyncValues, AsyncValues, _>(&mut clt, "test", "async", async_values())
+                    .await?;
             assert_async_values(res, io).await?;
-            assert_eof(tx, rx).await
+            assert_eof(clt).await
         },
     )?;
     Ok(())
@@ -724,11 +719,8 @@ async fn rust_quic_stopped_mid_params() -> anyhow::Result<()> {
         let (res, srv) = join!(
             async {
                 let (tx, rx) = clt.open_bi().await.expect("failed to open stream");
-                let tx = FramedWrite::new(tx, FrameEncoder);
-                let rx = FramedRead::new(rx, FrameDecoder::default());
-                invoke_blocking::<(BoxStream<'static, Bytes>,), (u32,), _, _>(
-                    tx,
-                    rx,
+                invoke_blocking::<(BoxStream<'static, Bytes>,), (u32,), _>(
+                    Framed::new(tx, rx),
                     "foo",
                     "bar",
                     (param,),
@@ -809,11 +801,8 @@ async fn rust_webtransport_stopped_mid_params() -> anyhow::Result<()> {
         let (res, srv) = join!(
             async {
                 let (tx, rx) = clt.open_bi().await.expect("failed to open stream");
-                let tx = FramedWrite::new(tx, FrameEncoder);
-                let rx = FramedRead::new(rx, FrameDecoder::default());
-                invoke_blocking::<(BoxStream<'static, Bytes>,), (u32,), _, _>(
-                    tx,
-                    rx,
+                invoke_blocking::<(BoxStream<'static, Bytes>,), (u32,), _>(
+                    Framed::new(tx, rx),
                     "foo",
                     "bar",
                     (param,),
@@ -886,20 +875,22 @@ async fn assert_oneshot(
 ) -> anyhow::Result<()> {
     join!(
         async {
-            let clt_tx = FramedWrite::new(clt_tx, FrameEncoder);
-            let clt_rx = FramedRead::new(clt_rx, FrameDecoder::default());
-            let (a,) =
-                invoke_blocking::<(u32,), (String,), _, _>(clt_tx, clt_rx, "foo", "bar", (42,))
-                    .await
-                    .expect("failed to invoke `foo.bar`");
+            let (a,) = invoke_blocking::<(u32,), (String,), _>(
+                Framed::new(clt_tx, clt_rx),
+                "foo",
+                "bar",
+                (42,),
+            )
+            .await
+            .expect("failed to invoke `foo.bar`");
             assert_eq!(a, "test");
         },
         async {
             let mut lis = Listener::new(tx, rx);
-            let (tx, rx) = next_invocation(&mut lis, "foo", "bar")
+            let srv = next_invocation(&mut lis, "foo", "bar")
                 .await
                 .expect("failed to read invocation header");
-            serve::<(u32,), (&str,), _, _, _, _>(tx, rx, async |params| {
+            serve::<(u32,), (&str,), _, _, _>(srv, async |params| {
                 assert_eq!(params, (42,));
                 anyhow::Ok(("test",))
             })
@@ -944,10 +935,10 @@ async fn rust_oneshot_no_params() -> anyhow::Result<()> {
             },
             async {
                 let mut lis = Listener::new(tx, rx);
-                let (tx, rx) = next_invocation(&mut lis, "foo", "bar")
+                let srv = next_invocation(&mut lis, "foo", "bar")
                     .await
                     .expect("failed to read invocation header");
-                serve::<(), (&str,), _, _, _, _>(tx, rx, async |()| anyhow::Ok(("test",)))
+                serve::<(), (&str,), _, _, _>(srv, async |()| anyhow::Ok(("test",)))
                     .await
                     .expect("failed to serve invocation");
             }
@@ -966,17 +957,10 @@ async fn rust_reuse_streams() -> anyhow::Result<()> {
     let (srv_rx, srv_tx) = split(srv);
     try_join!(
         async {
-            let mut clt_tx = FramedWrite::new(clt_tx, FrameEncoder);
-            let mut clt_rx = FramedRead::new(clt_rx, FrameDecoder::default());
+            let mut clt = Framed::new(clt_tx, clt_rx);
             for n in [1u32, 2] {
-                let (m,) = invoke_blocking::<(u32,), (u32,), _, _>(
-                    &mut clt_tx,
-                    &mut clt_rx,
-                    "foo",
-                    "bar",
-                    (n,),
-                )
-                .await?;
+                let (m,) =
+                    invoke_blocking::<(u32,), (u32,), _>(&mut clt, "foo", "bar", (n,)).await?;
                 ensure!(m == n + 1);
             }
             for n in [3u32, 4] {
@@ -986,14 +970,14 @@ async fn rust_reuse_streams() -> anyhow::Result<()> {
                         instance: "foo",
                         name: "bar",
                     },
-                    clt_tx.write_buffer_mut(),
+                    clt.tx.write_buffer_mut(),
                 )?;
-                let tx = transmit(enc, &mut clt_tx, (n,))?;
+                let tx = transmit(enc, &mut clt.tx, (n,))?;
                 tx.await?;
             }
             for n in [3u32, 4] {
                 let dec = <(u32,) as Decode>::Decoder::default();
-                let ((m,), io) = receive(dec, &mut clt_rx).await?;
+                let ((m,), io) = receive(dec, &mut clt.rx).await?;
                 io.await?;
                 ensure!(m == n + 1);
             }
@@ -1002,12 +986,11 @@ async fn rust_reuse_streams() -> anyhow::Result<()> {
         async {
             let mut lis = Listener::new(srv_tx, srv_rx);
             for _ in 0..4 {
-                let Some((Header { instance, name }, tx, rx)) = lis.accept().await? else {
+                let Some((Header { instance, name }, srv)) = lis.accept().await? else {
                     bail!("stream ended");
                 };
                 ensure!(instance == "foo" && name == "bar");
-                serve::<(u32,), (u32,), _, _, _, _>(tx, rx, async |(n,)| anyhow::Ok((n + 1,)))
-                    .await?;
+                serve::<(u32,), (u32,), _, _, _>(srv, async |(n,)| anyhow::Ok((n + 1,))).await?;
             }
             anyhow::Ok(())
         },
@@ -1023,11 +1006,10 @@ async fn rust_oneshot_raw() -> anyhow::Result<()> {
     join!(
         async {
             let (rx, tx) = split(&mut clt);
-            let tx = FramedWrite::new(tx, FrameEncoder);
-            let rx = FramedRead::new(rx, FrameDecoder::default());
-            let (a,) = invoke_blocking::<(u32,), (String,), _, _>(tx, rx, "foo", "bar", (42,))
-                .await
-                .expect("failed to invoke `foo.bar`");
+            let (a,) =
+                invoke_blocking::<(u32,), (String,), _>(Framed::new(tx, rx), "foo", "bar", (42,))
+                    .await
+                    .expect("failed to invoke `foo.bar`");
             assert_eq!(a, "test");
         },
         async {
@@ -1097,18 +1079,16 @@ async fn rust_oneshot_raw_strings_invalid_utf8() -> anyhow::Result<()> {
     let (rx, tx) = split(srv);
     join!(
         async {
-            let clt_tx = FramedWrite::new(clt_tx, FrameEncoder);
-            let clt_rx = FramedRead::new(clt_rx, FrameDecoder::default());
-            bindings::wrpc_test::raw_strings::strings::bar(clt_tx, clt_rx)
+            bindings::wrpc_test::raw_strings::strings::bar(Framed::new(clt_tx, clt_rx))
                 .await
                 .expect_err("invalid UTF-8 must be rejected");
         },
         async {
             let mut lis = Listener::new(tx, rx);
-            let (tx, rx) = next_invocation(&mut lis, "wrpc-test:raw-strings/strings", "bar")
+            let srv = next_invocation(&mut lis, "wrpc-test:raw-strings/strings", "bar")
                 .await
                 .expect("failed to read invocation header");
-            serve::<(), (Bytes,), _, _, _, _>(tx, rx, async |()| {
+            serve::<(), (Bytes,), _, _, _>(srv, async |()| {
                 anyhow::Ok((Bytes::from_static(b"\xff"),))
             })
             .await
@@ -1178,11 +1158,8 @@ async fn rust_oneshot_raw_strings_invalid_utf8_result() -> anyhow::Result<()> {
         let (rx, tx) = split(srv);
         join!(
             async {
-                let clt_tx = FramedWrite::new(clt_tx, FrameEncoder);
-                let clt_rx = FramedRead::new(clt_rx, FrameDecoder::default());
-                invoke_blocking::<(), (String,), _, _>(
-                    clt_tx,
-                    clt_rx,
+                invoke_blocking::<(), (String,), _>(
+                    Framed::new(clt_tx, clt_rx),
                     "wrpc-test:raw-strings/strings",
                     func,
                     (),
@@ -1196,8 +1173,8 @@ async fn rust_oneshot_raw_strings_invalid_utf8_result() -> anyhow::Result<()> {
                     .accept()
                     .await
                     .expect("failed to read invocation header");
-                let (header, tx, rx) = next.expect("connection closed");
-                let Ok(fut) = bindings::handle(&Handler, &header.instance, &header.name, tx, rx)
+                let (header, srv) = next.expect("connection closed");
+                let Ok(fut) = bindings::handle(&Handler, &header.instance, &header.name, srv)
                 else {
                     panic!("`{func}` is not exported");
                 };
@@ -1257,16 +1234,19 @@ async fn rust_oneshot_borrowed() -> anyhow::Result<()> {
     let mut res = Vec::default();
     let mut lis = Listener::new(&mut res, req.as_ref());
     let next = lis.accept().await?;
-    let (Header { instance, name }, tx, rx) = next.context("connection closed")?;
-    let Ok(fut) = bindings::handle(&Handler, &instance, &name, tx, rx) else {
+    let (Header { instance, name }, srv) = next.context("connection closed")?;
+    let Ok(fut) = bindings::handle(&Handler, &instance, &name, srv) else {
         bail!("`{instance}#{name}` is not exported");
     };
     fut.await?;
     drop(lis);
-    let tx = FramedWrite::new(sink(), FrameEncoder);
-    let rx = FramedRead::new(res.as_slice(), FrameDecoder::default());
-    let (greeting,) =
-        invoke_blocking::<(&str,), (String,), _, _>(tx, rx, "", "greet", ("world",)).await?;
+    let (greeting,) = invoke_blocking::<(&str,), (String,), _>(
+        Framed::new(sink(), res.as_slice()),
+        "",
+        "greet",
+        ("world",),
+    )
+    .await?;
     assert_eq!(greeting, "Hello, world");
     Ok(())
 }
@@ -1304,14 +1284,12 @@ async fn rust_bindgen_not_send() -> anyhow::Result<()> {
     let (clt_rx, clt_tx) = split(clt);
     let clt_rx: Box<dyn AsyncRead + Unpin> = Box::new(clt_rx);
     let clt_tx: Box<dyn AsyncWrite + Unpin> = Box::new(clt_tx);
-    let clt_tx = FramedWrite::new(clt_tx, FrameEncoder);
-    let clt_rx = FramedRead::new(clt_rx, FrameDecoder::default());
+    let clt = Framed::new(clt_tx, clt_rx);
     let (rx, tx) = split(srv);
     let (greeting, ()) = try_join!(
         async {
             let (greeting, io) = bindings::wrpc_test::not_send::greeter::greet(
-                clt_tx,
-                clt_rx,
+                clt,
                 Box::pin(async { "world".into() }),
             )
             .await?;
@@ -1320,8 +1298,8 @@ async fn rust_bindgen_not_send() -> anyhow::Result<()> {
         },
         async {
             let mut lis = Listener::new(tx, rx);
-            while let Some((Header { instance, name }, tx, rx)) = lis.accept().await? {
-                let Ok(fut) = bindings::handle(&Handler, &instance, &name, tx, rx) else {
+            while let Some((Header { instance, name }, srv)) = lis.accept().await? {
+                let Ok(fut) = bindings::handle(&Handler, &instance, &name, srv) else {
                     bail!("`{instance}#{name}` is not exported");
                 };
                 fut.await?;
@@ -1378,17 +1356,16 @@ async fn rust_bindgen_instance_names() -> anyhow::Result<()> {
     let (rx, tx) = split(srv);
     let ((), instances) = try_join!(
         async {
-            let mut clt_tx = FramedWrite::new(clt_tx, FrameEncoder);
-            let mut clt_rx = FramedRead::new(clt_rx, FrameDecoder::default());
-            bindings::wrpc_test::instance_names::iface::f(&mut clt_tx, &mut clt_rx).await?;
-            bindings::foo::f(&mut clt_tx, &mut clt_rx).await?;
+            let mut clt = Framed::new(clt_tx, clt_rx);
+            bindings::wrpc_test::instance_names::iface::f(&mut clt).await?;
+            bindings::foo::f(&mut clt).await?;
             anyhow::Ok(())
         },
         async {
             let mut lis = Listener::new(tx, rx);
             let mut instances = Vec::default();
-            while let Some((Header { instance, name }, tx, rx)) = lis.accept().await? {
-                let Ok(fut) = bindings::handle(&Handler, &instance, &name, tx, rx) else {
+            while let Some((Header { instance, name }, srv)) = lis.accept().await? {
+                let Ok(fut) = bindings::handle(&Handler, &instance, &name, srv) else {
                     bail!("`{instance}#{name}` is not exported");
                 };
                 fut.await?;
@@ -1459,11 +1436,8 @@ async fn rust_stream_of_futures() -> anyhow::Result<()> {
         tx.await?;
         anyhow::Ok((s, io))
     };
-    let clt_tx = FramedWrite::new(clt_tx, FrameEncoder);
-    let clt_rx = FramedRead::new(clt_rx, FrameDecoder::default());
-    let clt = invoke::<(BoxStream<'static, Vec<BoxFuture<'static, u8>>>,), (), _, _, _, _>(
-        clt_tx,
-        clt_rx,
+    let clt = invoke::<(BoxStream<'static, Vec<BoxFuture<'static, u8>>>,), (), _>(
+        Framed::new(clt_tx, clt_rx),
         "test",
         "f",
         (s,),

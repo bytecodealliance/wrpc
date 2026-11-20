@@ -22,9 +22,9 @@ mod d {
 pub async fn run(
     wrpc: &crate::Client,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
-    let (mut tx, mut rx) = wrpc.connect().await?;
-    a::test::suffix::imports::foo(&mut tx, &mut rx).await?;
-    crate::client::foo::f(&mut tx, &mut rx).await?;
-    crate::client::bar::f(&mut tx, &mut rx).await?;
+    let mut clt = wrpc.connect().await?;
+    a::test::suffix::imports::foo(&mut clt).await?;
+    crate::client::foo::f(&mut clt).await?;
+    crate::client::bar::f(&mut clt).await?;
     Ok(())
 }
