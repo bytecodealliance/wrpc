@@ -35,18 +35,16 @@ impl LanguageMethods for Go {
         _config: &crate::config::WitConfig,
         _args: &[String],
     ) -> bool {
-        // The wRPC Go generator does not yet support bare `stream` types,
-        // `error-context`, or `map`.
-        matches!(name, "streams.wit" | "error-context.wit" | "map.wit")
+        // The wRPC Go generator does not yet support bare `stream` types
+        // or `error-context`.
+        matches!(name, "streams.wit" | "error-context.wit")
     }
 
     fn should_fail_runtime(&self, name: &str) -> bool {
         matches!(
             name,
-            // The wRPC Go generator does not yet support `map`.
-            "map"
-                // The wRPC Go generator does not yet support bare `stream` types.
-                | "simple-stream"
+            // The wRPC Go generator does not yet support bare `stream` types.
+            "simple-stream"
                 // The wRPC Go generator has no `--generate-unused-types` option.
                 | "unused-types"
         )

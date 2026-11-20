@@ -138,16 +138,20 @@ func testNestedRoundtrip(ctx context.Context, c wrpc.Invoker) {
 func testVariantRoundtrip(ctx context.Context, c wrpc.Invoker) {
 	m := to_test.NamesById{1: "one"}
 	asMap := must(to_test.VariantRoundtrip(ctx, c, to_test.NewMapOrStringAsMap(m)))
-	assertEqual(asMap.GetAsMap()[1], "one")
+	gotMap, ok := asMap.GetAsMap()
+	assertEqual(ok, true)
+	assertEqual(gotMap[1], "one")
 
 	asStr := must(to_test.VariantRoundtrip(ctx, c, to_test.NewMapOrStringAsString("hello")))
-	assertEqual(asStr.GetAsString(), "hello")
+	gotStr, ok := asStr.GetAsString()
+	assertEqual(ok, true)
+	assertEqual(gotStr, "hello")
 }
 
 func testResultRoundtrip(ctx context.Context, c wrpc.Invoker) {
 	m := to_test.NamesById{5: "five"}
 	okResult := must(to_test.ResultRoundtrip(ctx, c, wrpc.Ok[string](m)))
-	assertEqual(okResult.Ok[5], "five")
+	assertEqual((*okResult.Ok)[5], "five")
 
 	errResult := must(to_test.ResultRoundtrip(ctx, c, wrpc.Err[to_test.NamesById]("bad input")))
 	assertEqual(*errResult.Err, "bad input")
