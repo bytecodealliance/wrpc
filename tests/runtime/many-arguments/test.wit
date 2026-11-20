@@ -18,6 +18,7 @@ interface to-test {
     a14: u64,
     a15: u64,
     a16: u64,
+    a17: u64,
   );
 }
 

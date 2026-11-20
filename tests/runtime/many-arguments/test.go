@@ -29,6 +29,7 @@ func (handler) ManyArguments(
 	a14 uint64,
 	a15 uint64,
 	a16 uint64,
+	a17 uint64,
 ) error {
 	assertEqual(a1, 1)
 	assertEqual(a2, 2)
@@ -46,6 +47,7 @@ func (handler) ManyArguments(
 	assertEqual(a14, 14)
 	assertEqual(a15, 15)
 	assertEqual(a16, 16)
+	assertEqual(a17, 17)
 	return nil
 }
 

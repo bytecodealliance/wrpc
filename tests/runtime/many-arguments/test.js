@@ -5,7 +5,7 @@ export const handlers = () => [
     manyArguments(...args) {
       assert.deepEqual(
         args,
-        Array.from({ length: 16 }, (_, i) => BigInt(i + 1)),
+        Array.from({ length: 17 }, (_, i) => BigInt(i + 1)),
       );
     },
   },

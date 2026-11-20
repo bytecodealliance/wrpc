@@ -13,6 +13,8 @@ use wit_bindgen_core::wit_parser::{
 use wit_bindgen_core::{Source, TypeInfo, dealias, uwrite, uwriteln};
 use wrpc_introspect::{async_paths_ty, async_paths_tyid, is_ty, rpc_func_name};
 
+const MAX_TUPLE_LEN: usize = 16;
+
 pub struct InterfaceGenerator<'a> {
     pub src: Source,
     pub(super) identifier: Identifier<'a>,
@@ -148,15 +150,37 @@ where
                 .as_ref()
                 .map(|ty| format!("{}, ", self.encoded_ty(ty)))
                 .unwrap_or_default();
+            let wrpc_transport = self.r#gen.wrpc_transport_path().to_string();
             uwrite!(
                 self.src,
                 r#"
-        ("{instance}", "{}") => {{
+        ("{instance}", "{}") => {{"#,
+                rpc_func_name(func),
+            );
+            let serve = if func.params.len() > MAX_TUPLE_LEN {
+                self.print_params_decoder(func.params.len());
+                let decoders = func
+                    .params
+                    .iter()
+                    .map(|param| {
+                        format!(
+                            "<{} as {wrpc_transport}::Decode>::Decoder, ",
+                            self.decoded_ty(&param.ty)
+                        )
+                    })
+                    .collect::<String>();
+                format!(
+                    "{wrpc_transport}::Codec::<<({results_ty}) as {wrpc_transport}::Encode>::Encoder, ParamsDecoder__<{decoders}>>::default().serve"
+                )
+            } else {
+                format!("{wrpc_transport}::serve::<({params_ty}), ({results_ty}), _, _, _, _>")
+            };
+            uwrite!(
+                self.src,
+                r#"
             let handler = handler.clone();
             ::core::result::Result::Ok(::std::boxed::Box::pin(async move {{
-                let res = {wrpc_transport}::serve::<({params_ty}), ({results_ty}), _, _, _, _>(tx, rx, move |("#,
-                rpc_func_name(func),
-                wrpc_transport = self.r#gen.wrpc_transport_path(),
+                let res = {serve}(tx, rx, move |("#,
             );
             for i in 0..func.params.len() {
                 uwrite!(self.src, "p{i}, ");
@@ -497,8 +521,8 @@ where
             .as_ref()
             .map(|ty| format!("{}, ", self.decoded_ty(ty)))
             .unwrap_or_default();
-        let futures = self.r#gen.futures_path();
-        let wrpc_transport = self.r#gen.wrpc_transport_path();
+        let futures = self.r#gen.futures_path().to_string();
+        let wrpc_transport = self.r#gen.wrpc_transport_path().to_string();
         let params = {
             let s = params.join(", ");
             if params.len() == 1 {
@@ -509,14 +533,37 @@ where
         };
         let name = rpc_func_name(func);
         let io = result.is_some() && (async_params || async_results);
-        let call = if io {
-            format!(
-                r#"{futures}::FutureExt::flatten({futures}::future::lazy(move |_| {wrpc_transport}::invoke::<({args_ty}), ({results_ty}), _, _, _, _>(tx__, rx__, "{instance}", "{name}", ({params}))))"#
+        let (invoke, invoke_blocking) = if func.params.len() > MAX_TUPLE_LEN {
+            self.print_params_encoder(func.params.len());
+            let encoders = func
+                .params
+                .iter()
+                .map(|param| {
+                    format!(
+                        "<{} as {wrpc_transport}::Encode>::Encoder, ",
+                        self.import_param_ty(&param.ty)
+                    )
+                })
+                .collect::<String>();
+            let codec = format!(
+                "{wrpc_transport}::Codec::<ParamsEncoder__<{encoders}>, <({results_ty}) as {wrpc_transport}::Decode>::Decoder>::default()"
+            );
+            (
+                format!("{codec}.invoke"),
+                format!("{codec}.invoke_blocking"),
             )
         } else {
-            format!(
-                r#"{wrpc_transport}::invoke_blocking::<({args_ty}), ({results_ty}), _, _>(tx__, rx__, "{instance}", "{name}", ({params}))"#
+            (
+                format!("{wrpc_transport}::invoke::<({args_ty}), ({results_ty}), _, _, _, _>"),
+                format!("{wrpc_transport}::invoke_blocking::<({args_ty}), ({results_ty}), _, _>"),
             )
+        };
+        let call = if io {
+            format!(
+                r#"{futures}::FutureExt::flatten({futures}::future::lazy(move |_| {invoke}(tx__, rx__, "{instance}", "{name}", ({params}))))"#
+            )
+        } else {
+            format!(r#"{invoke_blocking}(tx__, rx__, "{instance}", "{name}", ({params}))"#)
         };
         let (pat, ret) = match result {
             Some(result) if io => (
@@ -555,6 +602,216 @@ where
                 self.src.push_str("}\n");
             }
         }
+    }
+
+    fn print_params_encoder(&mut self, n: usize) {
+        let bytes = self.r#gen.bytes_path().to_string();
+        let tokio_util = self.r#gen.tokio_util_path().to_string();
+        let wrpc_transport = self.r#gen.wrpc_transport_path().to_string();
+        let cs = (0..n).map(|i| format!("C{i}, ")).collect::<String>();
+        let vs = (0..n).map(|i| format!("V{i}, ")).collect::<String>();
+        uwrite!(
+            self.src,
+            r"
+    #[derive(::core::default::Default)]
+    struct ParamsEncoder__<{cs}>({cs});
+
+    impl<{cs}> {wrpc_transport}::Transmit for ParamsEncoder__<{cs}>
+    where"
+        );
+        for i in 0..n {
+            uwrite!(self.src, " C{i}: {wrpc_transport}::Transmit,");
+        }
+        uwrite!(
+            self.src,
+            r"
+    {{
+        fn poll_transmit(&mut self, cx: &mut ::core::task::Context<'_>, path: &mut ::std::vec::Vec<usize>, dst: &mut {bytes}::BytesMut) -> ::core::task::Poll<::std::io::Result<()>> {{
+            let mut ready = true;"
+        );
+        for i in 0..n {
+            uwrite!(
+                self.src,
+                r"
+            path.push({i});
+            let res = {wrpc_transport}::Transmit::poll_transmit(&mut self.{i}, cx, path, dst);
+            path.pop();
+            match res {{
+                ::core::task::Poll::Ready(::core::result::Result::Ok(())) => {{}}
+                ::core::task::Poll::Ready(::core::result::Result::Err(err)) => return ::core::task::Poll::Ready(::core::result::Result::Err(err)),
+                ::core::task::Poll::Pending => ready = false,
+            }}"
+            );
+        }
+        let closed = (0..n)
+            .map(|i| format!("{wrpc_transport}::Transmit::is_closed(&self.{i})"))
+            .collect::<Vec<_>>()
+            .join(" && ");
+        uwrite!(
+            self.src,
+            r"
+            if ready {{
+                ::core::task::Poll::Ready(::core::result::Result::Ok(()))
+            }} else {{
+                ::core::task::Poll::Pending
+            }}
+        }}
+
+        fn is_closed(&self) -> bool {{
+            {closed}
+        }}
+    }}
+
+    impl<{cs}{vs}> {tokio_util}::codec::Encoder<({vs})> for ParamsEncoder__<{cs}>
+    where"
+        );
+        for i in 0..n {
+            uwrite!(
+                self.src,
+                " C{i}: {tokio_util}::codec::Encoder<V{i}, Error = ::std::io::Error>,"
+            );
+        }
+        let vars = (0..n).map(|i| format!("v{i}, ")).collect::<String>();
+        uwrite!(
+            self.src,
+            r"
+    {{
+        type Error = ::std::io::Error;
+
+        fn encode(&mut self, ({vars}): ({vs}), dst: &mut {bytes}::BytesMut) -> ::std::io::Result<()> {{"
+        );
+        for i in 0..n {
+            uwrite!(
+                self.src,
+                "\n{tokio_util}::codec::Encoder::encode(&mut self.{i}, v{i}, dst)?;"
+            );
+        }
+        uwriteln!(
+            self.src,
+            r"
+            ::core::result::Result::Ok(())
+        }}
+    }}"
+        );
+    }
+
+    fn print_params_decoder(&mut self, n: usize) {
+        let bytes = self.r#gen.bytes_path().to_string();
+        let tokio_util = self.r#gen.tokio_util_path().to_string();
+        let wrpc_transport = self.r#gen.wrpc_transport_path().to_string();
+        let cs = (0..n).map(|i| format!("C{i}, ")).collect::<String>();
+        let decoders = (0..n)
+            .map(|i| format!(" C{i}: {tokio_util}::codec::Decoder<Error = ::std::io::Error>,"))
+            .collect::<String>();
+        uwrite!(
+            self.src,
+            r"
+            struct ParamsDecoder__<{cs}>
+            where{decoders}
+            {{"
+        );
+        for i in 0..n {
+            uwrite!(
+                self.src,
+                "\nc{i}: C{i},\nv{i}: ::core::option::Option<C{i}::Item>,"
+            );
+        }
+        uwrite!(
+            self.src,
+            r"
+            }}
+
+            impl<{cs}> ::core::default::Default for ParamsDecoder__<{cs}>
+            where{decoders}"
+        );
+        for i in 0..n {
+            uwrite!(self.src, " C{i}: ::core::default::Default,");
+        }
+        self.push_str(
+            "
+{
+fn default() -> Self {
+Self {",
+        );
+        for i in 0..n {
+            uwrite!(
+                self.src,
+                "\nc{i}: ::core::default::Default::default(),\nv{i}: ::core::option::Option::None,"
+            );
+        }
+        uwrite!(
+            self.src,
+            r"
+                    }}
+                }}
+            }}
+
+            impl<{cs}> {wrpc_transport}::Receive for ParamsDecoder__<{cs}>
+            where{decoders}"
+        );
+        for i in 0..n {
+            uwrite!(self.src, " C{i}: {wrpc_transport}::Receive,");
+        }
+        uwrite!(
+            self.src,
+            r"
+            {{
+                fn poll_receive(&mut self, cx: &mut ::core::task::Context<'_>, path: &[usize], src: &mut {bytes}::BytesMut) -> ::core::task::Poll<::std::io::Result<()>> {{
+                    match path.split_first() {{"
+        );
+        for i in 0..n {
+            uwrite!(
+                self.src,
+                "\n::core::option::Option::Some(({i}, rest)) => {wrpc_transport}::Receive::poll_receive(&mut self.c{i}, cx, rest, src),"
+            );
+        }
+        let closed = (0..n)
+            .map(|i| format!("{wrpc_transport}::Receive::is_closed(&self.c{i})"))
+            .collect::<Vec<_>>()
+            .join(" && ");
+        let items = (0..n).map(|i| format!("C{i}::Item, ")).collect::<String>();
+        uwrite!(
+            self.src,
+            r"
+                        _ => ::core::task::Poll::Ready(::core::result::Result::Err({wrpc_transport}::error_unknown_path(path))),
+                    }}
+                }}
+
+                fn is_closed(&self) -> bool {{
+                    {closed}
+                }}
+            }}
+
+            impl<{cs}> {tokio_util}::codec::Decoder for ParamsDecoder__<{cs}>
+            where{decoders}
+            {{
+                type Item = ({items});
+                type Error = ::std::io::Error;
+
+                fn decode(&mut self, src: &mut {bytes}::BytesMut) -> ::core::result::Result<::core::option::Option<Self::Item>, Self::Error> {{"
+        );
+        for i in 0..n {
+            uwrite!(
+                self.src,
+                r"
+                    if self.v{i}.is_none() {{
+                        let ::core::option::Option::Some(v) = {tokio_util}::codec::Decoder::decode(&mut self.c{i}, src)? else {{
+                            return ::core::result::Result::Ok(::core::option::Option::None)
+                        }};
+                        self.v{i} = ::core::option::Option::Some(v);
+                    }}"
+            );
+        }
+        let values = (0..n)
+            .map(|i| format!("self.v{i}.take().unwrap(), "))
+            .collect::<String>();
+        uwriteln!(
+            self.src,
+            r"
+                    ::core::result::Result::Ok(::core::option::Option::Some(({values})))
+                }}
+            }}"
+        );
     }
 
     fn rustdoc(&mut self, docs: &Docs) {

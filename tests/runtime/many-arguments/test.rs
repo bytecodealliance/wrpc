@@ -20,6 +20,7 @@ impl crate::server::exports::test::many_arguments::to_test::Handler for Componen
         a14: u64,
         a15: u64,
         a16: u64,
+        a17: u64,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
         assert_eq!(a1, 1);
         assert_eq!(a2, 2);
@@ -37,6 +38,7 @@ impl crate::server::exports::test::many_arguments::to_test::Handler for Componen
         assert_eq!(a14, 14);
         assert_eq!(a15, 15);
         assert_eq!(a16, 16);
+        assert_eq!(a17, 17);
         Ok(())
     }
 }
