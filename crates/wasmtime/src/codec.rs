@@ -134,11 +134,8 @@ fn encode_future(ty: &FutureType, future: FutureAny) -> wasmtime::Result<Box<dyn
 }
 
 fn encode_stream(ty: &StreamType, stream: StreamAny) -> wasmtime::Result<Box<dyn Transmit + Send>> {
-    let Some(payload) = ty.ty() else {
-        bail!("`stream` without a payload type not supported")
-    };
     with_payload!(
-        @some payload,
+        ty.ty(),
         P => {
             let Ok(items) = stream.try_into_stream::<P>() else {
                 bail!("`stream` type mismatch")
@@ -640,15 +637,9 @@ impl TupleDecoder {
         state: &mut Vec<Partial>,
         ty: &StreamType,
     ) -> std::io::Result<Option<Val>> {
-        let Some(payload) = ty.ty() else {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Unsupported,
-                "`stream` without a payload type not supported",
-            ));
-        };
         let max_len = self.max_len;
         with_payload!(
-            @some payload,
+            ty.ty(),
             P => self.decode_async(
                 src,
                 path,

@@ -181,11 +181,8 @@ pub(super) fn lift_stream<T>(
     let Type::Stream(ty) = ty else {
         bail!("value type mismatch")
     };
-    let Some(payload) = ty.ty() else {
-        bail!("`stream` without a payload type not supported")
-    };
     with_payload!(
-        @some payload,
+        ty.ty(),
         P => new_stream::<P, T>(store, stream),
         bail!("`stream` payload type not supported")
     )
@@ -236,16 +233,13 @@ pub(super) fn lower_stream<T>(
     stream: &mut component::StreamAny,
 ) -> wasmtime::Result<StreamAny> {
     let res = match ty {
-        Type::Stream(ty) => match ty.ty() {
-            Some(payload) => with_payload!(
-                @some payload,
-                P => pipe_stream::<P, T>(store.as_context_mut(), stream.clone()),
-                Err(format_err!(
-                    "`stream` payload type not supported, only primitive types and `string` are"
-                ))
-            ),
-            None => Err(format_err!("`stream` without a payload type not supported")),
-        },
+        Type::Stream(ty) => with_payload!(
+            ty.ty(),
+            P => pipe_stream::<P, T>(store.as_context_mut(), stream.clone()),
+            Err(format_err!(
+                "`stream` payload type not supported, only primitive types and `string` are"
+            ))
+        ),
         _ => Err(format_err!("value type mismatch")),
     };
     if res.is_err()

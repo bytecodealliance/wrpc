@@ -304,9 +304,10 @@ async fn async_values() -> anyhow::Result<()> {
   (type $s (stream u8))
   (type $f (future string))
   (type $u (future))
-  (type $t (tuple $s $f $u))
+  (type $e (stream))
+  (type $t (tuple $s $f $u $e))
   (type $g (tuple $s $f))
-  (type $fn (func async (param "s" $s) (param "f" $f) (param "u" $u) (result $t)))
+  (type $fn (func async (param "s" $s) (param "f" $f) (param "u" $u) (param "e" $e) (result $t)))
   (core module $mem (memory (export "memory") 1))
   (core instance $mem (instantiate $mem))
   (alias core export $mem "memory" (core memory $memory))
@@ -334,10 +335,11 @@ async fn async_values() -> anyhow::Result<()> {
     (global $s (mut i32) (i32.const 0))
     (global $f (mut i32) (i32.const 0))
     (data (i32.const 0x100) "foobar")
-    (func (export "run") (param i32 i32 i32) (result i32)
+    (func (export "run") (param i32 i32 i32 i32) (result i32)
       (i32.store (i32.const 0) (local.get 0))
       (i32.store (i32.const 4) (local.get 1))
       (i32.store (i32.const 8) (local.get 2))
+      (i32.store (i32.const 12) (local.get 3))
       i32.const 0)
     (func $wait (param $w i32) (result i32)
       (call $waitable.join (local.get $w) (global.get $ws))
@@ -390,12 +392,13 @@ async fn async_values() -> anyhow::Result<()> {
                 let (tx, rx) = wrpc_test::tcp_streams(addr).await?;
                 let mut tx = FramedWrite::new(tx, FrameEncoder);
                 let mut rx = FramedRead::new(rx, FrameDecoder::default());
-                let (((s, f, u),), io) = invoke::<
+                let (((s, f, u, e),), io) = invoke::<
                     _,
                     ((
                         BoxStream<'static, Vec<u8>>,
                         BoxFuture<'static, String>,
                         BoxFuture<'static, ()>,
+                        BoxStream<'static, Vec<()>>,
                     ),),
                     _,
                     _,
@@ -419,12 +422,18 @@ async fn async_values() -> anyhow::Result<()> {
                             "baz".to_string()
                         }) as BoxFuture<'static, String>,
                         Box::pin(yield_now()) as BoxFuture<'static, ()>,
+                        Box::pin(stream::iter([vec![(); 2], vec![()]]))
+                            as BoxStream<'static, Vec<()>>,
                     ),
                 )
                 .await?;
-                let (s, f, ()) = receive(io, async { join!(s.collect::<Vec<_>>(), f, u) }).await?;
+                let (s, f, (), e) = receive(io, async {
+                    join!(s.collect::<Vec<_>>(), f, u, e.collect::<Vec<_>>())
+                })
+                .await?;
                 assert_eq!(s.concat(), b"foobar");
                 assert_eq!(f, "baz");
+                assert_eq!(e.concat().len(), 3);
 
                 let (((s, f),), io) = invoke::<
                     (),
