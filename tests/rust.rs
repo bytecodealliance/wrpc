@@ -1333,6 +1333,74 @@ async fn rust_bindgen_not_send() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[test_log::test(tokio::test)]
+async fn rust_bindgen_instance_names() -> anyhow::Result<()> {
+    mod bindings {
+        wit_bindgen_wrpc::generate!({
+            inline: "
+                package wrpc-test:instance-names@1.2.3+build;
+
+                interface iface {
+                    f: func();
+                }
+
+                world instance-names {
+                    import iface;
+                    import foo: interface {
+                        f: func();
+                    }
+                    export iface;
+                    export foo: interface {
+                        f: func();
+                    }
+                }
+            ",
+        });
+    }
+
+    #[derive(Clone, Copy)]
+    struct Handler;
+
+    impl bindings::exports::wrpc_test::instance_names::iface::Handler for Handler {
+        async fn f(&self) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl bindings::exports::foo::Handler for Handler {
+        async fn f(&self) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    let (clt, srv) = duplex(1024);
+    let (clt_rx, clt_tx) = split(clt);
+    let (rx, tx) = split(srv);
+    let ((), instances) = try_join!(
+        async {
+            let mut clt_tx = FramedWrite::new(clt_tx, FrameEncoder);
+            let mut clt_rx = FramedRead::new(clt_rx, FrameDecoder::default());
+            bindings::wrpc_test::instance_names::iface::f(&mut clt_tx, &mut clt_rx).await?;
+            bindings::foo::f(&mut clt_tx, &mut clt_rx).await?;
+            anyhow::Ok(())
+        },
+        async {
+            let mut lis = Listener::new(tx, rx);
+            let mut instances = Vec::default();
+            while let Some((Header { instance, name }, tx, rx)) = lis.accept().await? {
+                let Ok(fut) = bindings::handle(&Handler, &instance, &name, tx, rx) else {
+                    bail!("`{instance}#{name}` is not exported");
+                };
+                fut.await?;
+                instances.push(instance);
+            }
+            anyhow::Ok(instances)
+        },
+    )?;
+    assert_eq!(instances, ["wrpc-test:instance-names/iface@1", "foo"]);
+    Ok(())
+}
+
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 #[instrument(ret)]
 async fn rust_oneshot_duplex() -> anyhow::Result<()> {

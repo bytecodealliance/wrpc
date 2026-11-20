@@ -2126,22 +2126,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
             wrpc = self.deps.wrpc(),
         );
         let instance = match identifier {
-            Identifier::Interface(id, name) => {
-                let interface = &self.resolve.interfaces[id];
-                let name = match name {
-                    WorldKey::Name(s) => s.to_string(),
-                    WorldKey::Interface(..) => interface
-                        .name
-                        .as_ref()
-                        .expect("interface name missing")
-                        .to_string(),
-                };
-                if let Some(package) = interface.package {
-                    self.resolve.id_of_name(package, &name)
-                } else {
-                    name
-                }
-            }
+            Identifier::Interface(.., name) => self.resolve.name_canonicalized_world_key(name),
             Identifier::World => String::new(),
         };
         for (i, func) in funcs_to_export.iter().enumerate() {

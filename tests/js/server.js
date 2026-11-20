@@ -100,10 +100,10 @@ const asyncHandler = {
 
 const instances = {
   "": (inv) => world.serveInterface(inv, worldHandler),
-  "wrpc-test:integration/foo": (inv) => foo.serveInterface(inv, fooHandler),
+  foo: (inv) => foo.serveInterface(inv, fooHandler),
   "wrpc-test:integration/sync": (inv) => sync.serveInterface(inv, syncHandler),
   "wrpc-test:integration/resources": (inv) => resources.serveInterface(inv, resourcesHandler),
-  "wrpc-test:integration/strange": (inv) => strange.serveInterface(inv, strangeHandler),
+  strange: (inv) => strange.serveInterface(inv, strangeHandler),
   "wrpc-test:integration/async": (inv) => async.serveInterface(inv, asyncHandler),
 };
 

@@ -77,14 +77,9 @@ async fn go_bindgen() -> anyhow::Result<()> {
         let mut tx = FramedWrite::new(tx, FrameEncoder);
         let mut rx = FramedRead::new(rx, FrameDecoder::default());
         common::assert_sync(&mut tx, &mut rx).await?;
-        let res = invoke_blocking::<(&str,), (u32,), _, _>(
-            &mut tx,
-            &mut rx,
-            "wrpc-test:integration/foo",
-            "f",
-            ("panic",),
-        )
-        .await;
+        let res =
+            invoke_blocking::<(&str,), (u32,), _, _>(&mut tx, &mut rx, "foo", "f", ("panic",))
+                .await;
         let Err(err) = res else {
             bail!("a panicking handler must fail the invocation");
         };

@@ -154,7 +154,7 @@ async fn js_server() -> anyhow::Result<()> {
         let mut buf = BytesMut::default();
         HeaderEncoder.encode(
             HeaderRef {
-                instance: "wrpc-test:integration/foo",
+                instance: "foo",
                 name: "foo",
             },
             &mut buf,

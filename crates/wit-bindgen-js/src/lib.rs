@@ -221,19 +221,6 @@ fn name_package_module(resolve: &Resolve, id: PackageId) -> String {
     }
 }
 
-/// The wRPC instance name of the interface `id` imported or exported as `name`.
-fn interface_instance(resolve: &Resolve, name: &WorldKey, id: InterfaceId) -> String {
-    let iface = &resolve.interfaces[id];
-    let name = match name {
-        WorldKey::Name(s) => s.clone(),
-        WorldKey::Interface(..) => iface.name.clone().expect("interface name missing"),
-    };
-    match iface.package {
-        Some(pkg) => resolve.id_of_name(pkg, &name),
-        None => name,
-    }
-}
-
 /// The specifier of the module at `to` relative to the module at `from`.
 fn relative(from: &str, to: &str) -> String {
     let depth = from.split('/').count();
@@ -1026,7 +1013,7 @@ impl WorldGenerator for JsWrpc {
         let types: Vec<_> = iface.types.values().copied().collect();
         r#gen.define_types(resolve, &types);
         let funcs: Vec<_> = iface.functions.values().collect();
-        r#gen.client_funcs(resolve, &interface_instance(resolve, name, id), &funcs);
+        r#gen.client_funcs(resolve, &resolve.name_canonicalized_world_key(name), &funcs);
         let m = r#gen.m;
         self.modules.push((path, m));
         Ok(())
@@ -1067,7 +1054,7 @@ impl WorldGenerator for JsWrpc {
         id: InterfaceId,
         _files: &mut Files,
     ) -> Result<()> {
-        let instance = interface_instance(resolve, name, id);
+        let instance = resolve.name_canonicalized_world_key(name);
         let Some(path) = self.name_interface(resolve, id, name, true)? else {
             unreachable!("exports are always generated")
         };
