@@ -1847,10 +1847,6 @@ impl_tuple_codec!(
     (V9 C9 c9 9)
     (V10 C10 c10 10)
     (V11 C11 c11 11)
-    (V12 C12 c12 12)
-    (V13 C13 c13 13)
-    (V14 C14 c14 14)
-    (V15 C15 c15 15)
 );
 
 /// Encoder for `future<T>`, whose value is transmitted on its path and the values nested in it
