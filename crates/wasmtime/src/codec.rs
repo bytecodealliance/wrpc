@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
 use bytes::{Buf as _, BufMut as _, BytesMut};
-use futures::{FutureExt as _, stream};
+use futures::stream;
 use tokio_util::codec::{Decoder, Encoder};
 use tracing::instrument;
 use wasm_tokio::cm::{BoolCodec, F32Codec, F64Codec, S8Codec, U8Codec};
@@ -23,12 +23,12 @@ use wasmtime::bail;
 use wasmtime::component::Type;
 use wasmtime::component::types::{Case, Field, FutureType, StreamType};
 use wasmtime::error::Context as _;
-use wrpc_transport::{
-    Decode, FutureDecoder, FutureEncoder, Receive, StreamDecoder, StreamEncoder, Transmit,
-    error_unknown_path,
-};
+use wrpc_transport::{FutureEncoder, Receive, StreamEncoder, Transmit, error_unknown_path};
 
+use crate::codec::payload::{Payload, pending_future, pending_stream};
 use crate::{FutureAny, StreamAny, Val};
+
+mod payload;
 
 /// Default `max_len` of [`TupleDecoder`]
 pub const DEFAULT_MAX_LEN: u32 = 1 << 24;
@@ -369,8 +369,8 @@ impl TupleDecoder {
         }
     }
 
-    /// Rejects strings and resource handles longer than `max_len` bytes and lists and maps longer
-    /// than `max_len` elements, [`DEFAULT_MAX_LEN`] by default.
+    /// Rejects strings and resource handles longer than `max_len` bytes and lists, maps and
+    /// `stream` chunks longer than `max_len` elements, [`DEFAULT_MAX_LEN`] by default.
     #[must_use]
     pub fn with_max_len(mut self, max_len: u32) -> Self {
         self.max_len = max_len;
@@ -611,6 +611,7 @@ impl TupleDecoder {
         state: &mut Vec<Partial>,
         ty: &FutureType,
     ) -> std::io::Result<Option<Val>> {
+        let max_len = self.max_len;
         with_payload!(
             ty.ty(),
             P => self.decode_async(
@@ -618,10 +619,10 @@ impl TupleDecoder {
                 path,
                 state,
                 "future",
-                <P as Decode>::Decoder::default(),
+                P::decoder(max_len),
                 || {
-                    let (r, v) = FutureDecoder::<P>::pending();
-                    (Val::Future(FutureAny::new(v.map(Ok))), Box::new(r))
+                    let (v, r) = pending_future::<P>(max_len);
+                    (Val::Future(v), r)
                 },
                 |v: P| Val::Future(FutureAny::new(future::ready(Ok(v)))),
             ),
@@ -645,6 +646,7 @@ impl TupleDecoder {
                 "`stream` without a payload type not supported",
             ));
         };
+        let max_len = self.max_len;
         with_payload!(
             @some payload,
             P => self.decode_async(
@@ -652,10 +654,10 @@ impl TupleDecoder {
                 path,
                 state,
                 "stream",
-                <P as Decode>::ListDecoder::default(),
+                P::list_decoder(max_len),
                 || {
-                    let (r, items) = StreamDecoder::<P>::pending();
-                    (Val::Stream(StreamAny::new(items)), Box::new(r))
+                    let (items, r) = pending_stream::<P>(max_len);
+                    (Val::Stream(items), r)
                 },
                 |vs: Vec<P>| {
                     Val::Stream(StreamAny::new(stream::iter((!vs.is_empty()).then_some(vs))))

@@ -1,10 +1,12 @@
+use core::task::{Context, Poll, Waker};
+
 use std::sync::Arc;
 
 use bytes::BytesMut;
 use tokio_util::codec::Decoder as _;
 use wasmtime::component::{self, Component, Type, types};
 use wasmtime::{Config, Engine, bail};
-use wrpc_transport::{pack, unpack};
+use wrpc_transport::{Receive as _, pack, unpack};
 use wrpc_wasmtime::{TupleDecoder, TupleEncoder, Val};
 
 #[test]
@@ -132,5 +134,47 @@ fn clean_eof() -> wasmtime::Result<()> {
     assert!(v.is_none());
     let v = dec.decode_eof(&mut buf)?;
     assert!(v.is_none());
+    Ok(())
+}
+
+#[test]
+fn async_max_len() -> wasmtime::Result<()> {
+    let mut config = Config::default();
+    config.wasm_component_model_async(true);
+    let engine = Engine::new(&config)?;
+    let component = Component::new(
+        &engine,
+        r#"(component
+            (type $f (future string))
+            (export "f" (type $f))
+            (type $s (stream u8))
+            (export "s" (type $s))
+        )"#,
+    )?;
+    let tys: Arc<[Type]> = component
+        .component_type()
+        .exports(&engine)
+        .filter_map(|(.., types::ComponentExtern { ty, .. })| match ty {
+            types::ComponentItem::Type(ty) => Some(ty),
+            _ => None,
+        })
+        .collect();
+
+    for buf in [&b"\x01\x03foo"[..], b"\x01\x00\x01\x03bar"] {
+        let mut dec = TupleDecoder::new(Arc::clone(&tys)).with_max_len(2);
+        let err = dec.decode(&mut buf.into()).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    let mut cx = Context::from_waker(Waker::noop());
+    for (path, buf) in [([0], &b"\x03foo"[..]), ([1], b"\x03bar")] {
+        let mut dec = TupleDecoder::new(Arc::clone(&tys)).with_max_len(2);
+        let vs = dec.decode(&mut b"\x00\x00"[..].into())?;
+        assert!(vs.is_some());
+        let Poll::Ready(res) = dec.poll_receive(&mut cx, &path, &mut buf.into()) else {
+            bail!("receive is pending")
+        };
+        assert_eq!(res.unwrap_err().kind(), std::io::ErrorKind::InvalidData);
+    }
     Ok(())
 }
