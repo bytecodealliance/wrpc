@@ -1,7 +1,7 @@
 use core::any::TypeId;
 use core::fmt::{self, Debug};
 use core::future::pending;
-use core::hash::{Hash, Hasher};
+use core::hash::{BuildHasher, Hash, Hasher};
 use core::marker::PhantomData;
 use core::mem;
 use core::ops::{Deref, DerefMut};
@@ -9,7 +9,7 @@ use core::pin::Pin;
 use core::str;
 use core::task::{Context, Poll, ready};
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use bytes::{Buf, BufMut as _, Bytes, BytesMut};
 use futures::stream;
@@ -614,18 +614,25 @@ pub trait Encode: Sized {
         I::IntoIter: ExactSizeIterator,
         Self::Encoder: tokio_util::codec::Encoder<I::Item, Error = std::io::Error>,
     {
-        let items = items.into_iter();
-        dst.reserve(items.len());
-        let mut enc = Self::Encoder::default();
-        let mut nested = BTreeMap::default();
-        for (i, item) in items.enumerate() {
-            tokio_util::codec::Encoder::<I::Item>::encode(&mut enc, item, dst)?;
-            if !enc.is_closed() {
-                nested.insert(i, mem::take(&mut enc));
-            }
-        }
-        Ok(nested)
+        encode_items(items.into_iter(), dst)
     }
+}
+
+fn encode_items<E, I>(items: I, dst: &mut BytesMut) -> std::io::Result<BTreeMap<usize, E>>
+where
+    E: tokio_util::codec::Encoder<I::Item, Error = std::io::Error> + Transmit + Default,
+    I: ExactSizeIterator,
+{
+    dst.reserve(items.len());
+    let mut enc = E::default();
+    let mut nested = BTreeMap::default();
+    for (i, item) in items.enumerate() {
+        enc.encode(item, dst)?;
+        if !enc.is_closed() {
+            nested.insert(i, mem::take(&mut enc));
+        }
+    }
+    Ok(nested)
 }
 
 #[instrument(level = "trace", skip(items), fields(ty = "list"))]
@@ -774,7 +781,7 @@ where
     type ListDecoder = ListDecoder<Self::Decoder>;
 }
 
-/// Encoder for `list<T>` and `list<T, N>`
+/// Encoder for `list<T>`, `list<T, N>` and `map<K, V>`
 pub struct ListEncoder<E> {
     nested: BTreeMap<usize, E>,
 }
@@ -1121,6 +1128,242 @@ where
     type ListDecoder = ListDecoder<Self::Decoder>;
 }
 
+#[instrument(level = "trace", skip(items), fields(ty = "map"))]
+fn encode_map<E, I>(items: I, dst: &mut BytesMut) -> std::io::Result<BTreeMap<usize, E>>
+where
+    E: tokio_util::codec::Encoder<I::Item, Error = std::io::Error> + Transmit + Default,
+    I: IntoIterator,
+    I::IntoIter: ExactSizeIterator,
+{
+    let items = items.into_iter();
+    let n = u32::try_from(items.len())
+        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+    dst.reserve(5);
+    Leb128Encoder.encode(n, dst)?;
+    encode_items(items, dst)
+}
+
+impl<K, V> tokio_util::codec::Encoder<BTreeMap<K, V>>
+    for ListEncoder<TupleEncoder<(K::Encoder, V::Encoder)>>
+where
+    K: Encode,
+    V: Encode,
+{
+    type Error = std::io::Error;
+
+    fn encode(&mut self, items: BTreeMap<K, V>, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        self.nested = encode_map(items, dst)?;
+        Ok(())
+    }
+}
+
+impl<'a, K, V> tokio_util::codec::Encoder<&'a BTreeMap<K, V>>
+    for ListEncoder<TupleEncoder<(K::Encoder, V::Encoder)>>
+where
+    K: Encode,
+    V: Encode,
+    K::Encoder: tokio_util::codec::Encoder<&'a K, Error = std::io::Error>,
+    V::Encoder: tokio_util::codec::Encoder<&'a V, Error = std::io::Error>,
+{
+    type Error = std::io::Error;
+
+    fn encode(&mut self, items: &'a BTreeMap<K, V>, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        self.nested = encode_map(items, dst)?;
+        Ok(())
+    }
+}
+
+impl<'a, 'b, K, V> tokio_util::codec::Encoder<&'a &'b BTreeMap<K, V>>
+    for ListEncoder<TupleEncoder<(K::Encoder, V::Encoder)>>
+where
+    K: Encode,
+    V: Encode,
+    K::Encoder: tokio_util::codec::Encoder<&'b K, Error = std::io::Error>,
+    V::Encoder: tokio_util::codec::Encoder<&'b V, Error = std::io::Error>,
+{
+    type Error = std::io::Error;
+
+    fn encode(
+        &mut self,
+        items: &'a &'b BTreeMap<K, V>,
+        dst: &mut BytesMut,
+    ) -> Result<(), Self::Error> {
+        self.nested = encode_map(*items, dst)?;
+        Ok(())
+    }
+}
+
+impl<K, V, S> tokio_util::codec::Encoder<HashMap<K, V, S>>
+    for ListEncoder<TupleEncoder<(K::Encoder, V::Encoder)>>
+where
+    K: Encode,
+    V: Encode,
+{
+    type Error = std::io::Error;
+
+    fn encode(&mut self, items: HashMap<K, V, S>, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        self.nested = encode_map(items, dst)?;
+        Ok(())
+    }
+}
+
+impl<'a, K, V, S> tokio_util::codec::Encoder<&'a HashMap<K, V, S>>
+    for ListEncoder<TupleEncoder<(K::Encoder, V::Encoder)>>
+where
+    K: Encode,
+    V: Encode,
+    K::Encoder: tokio_util::codec::Encoder<&'a K, Error = std::io::Error>,
+    V::Encoder: tokio_util::codec::Encoder<&'a V, Error = std::io::Error>,
+{
+    type Error = std::io::Error;
+
+    fn encode(
+        &mut self,
+        items: &'a HashMap<K, V, S>,
+        dst: &mut BytesMut,
+    ) -> Result<(), Self::Error> {
+        self.nested = encode_map(items, dst)?;
+        Ok(())
+    }
+}
+
+impl<'a, 'b, K, V, S> tokio_util::codec::Encoder<&'a &'b HashMap<K, V, S>>
+    for ListEncoder<TupleEncoder<(K::Encoder, V::Encoder)>>
+where
+    K: Encode,
+    V: Encode,
+    K::Encoder: tokio_util::codec::Encoder<&'b K, Error = std::io::Error>,
+    V::Encoder: tokio_util::codec::Encoder<&'b V, Error = std::io::Error>,
+{
+    type Error = std::io::Error;
+
+    fn encode(
+        &mut self,
+        items: &'a &'b HashMap<K, V, S>,
+        dst: &mut BytesMut,
+    ) -> Result<(), Self::Error> {
+        self.nested = encode_map(*items, dst)?;
+        Ok(())
+    }
+}
+
+impl<K, V> Encode for BTreeMap<K, V>
+where
+    K: Encode,
+    V: Encode,
+{
+    type Encoder = ListEncoder<TupleEncoder<(K::Encoder, V::Encoder)>>;
+}
+
+impl<'a, K, V> Encode for &'a BTreeMap<K, V>
+where
+    K: Encode,
+    V: Encode,
+    K::Encoder: tokio_util::codec::Encoder<&'a K, Error = std::io::Error>,
+    V::Encoder: tokio_util::codec::Encoder<&'a V, Error = std::io::Error>,
+{
+    type Encoder = ListEncoder<TupleEncoder<(K::Encoder, V::Encoder)>>;
+}
+
+impl<K, V, S> Encode for HashMap<K, V, S>
+where
+    K: Encode,
+    V: Encode,
+{
+    type Encoder = ListEncoder<TupleEncoder<(K::Encoder, V::Encoder)>>;
+}
+
+impl<'a, K, V, S> Encode for &'a HashMap<K, V, S>
+where
+    K: Encode,
+    V: Encode,
+    K::Encoder: tokio_util::codec::Encoder<&'a K, Error = std::io::Error>,
+    V::Encoder: tokio_util::codec::Encoder<&'a V, Error = std::io::Error>,
+{
+    type Encoder = ListEncoder<TupleEncoder<(K::Encoder, V::Encoder)>>;
+}
+
+/// Decoder for `map<K, V>`, which collects the entries decoded by `T` into `M`
+pub struct MapDecoder<T, M>
+where
+    T: tokio_util::codec::Decoder,
+{
+    list: ListDecoder<T>,
+    _ty: PhantomData<fn() -> M>,
+}
+
+impl<T, M> Default for MapDecoder<T, M>
+where
+    T: tokio_util::codec::Decoder + Default,
+{
+    fn default() -> Self {
+        Self {
+            list: ListDecoder::default(),
+            _ty: PhantomData,
+        }
+    }
+}
+
+impl<T, M> Receive for MapDecoder<T, M>
+where
+    T: tokio_util::codec::Decoder + Receive,
+{
+    fn poll_receive(
+        &mut self,
+        cx: &mut Context<'_>,
+        path: &[usize],
+        src: &mut BytesMut,
+    ) -> Poll<std::io::Result<()>> {
+        self.list.poll_receive(cx, path, src)
+    }
+
+    fn is_closed(&self) -> bool {
+        self.list.is_closed()
+    }
+}
+
+impl<T, M> tokio_util::codec::Decoder for MapDecoder<T, M>
+where
+    T: tokio_util::codec::Decoder + Receive + Default,
+    M: FromIterator<T::Item>,
+{
+    type Item = M;
+    type Error = T::Error;
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        let Some(items) = self.list.decode(src)? else {
+            return Ok(None);
+        };
+        Ok(Some(items.into_iter().collect()))
+    }
+
+    fn decode_eof(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        let Some(items) = self.list.decode_eof(src)? else {
+            return Ok(None);
+        };
+        Ok(Some(items.into_iter().collect()))
+    }
+}
+
+impl<K, V> Decode for BTreeMap<K, V>
+where
+    K: Decode + Ord + Send + 'static,
+    V: Decode + Send + 'static,
+{
+    type Decoder = MapDecoder<<(K, V) as Decode>::Decoder, Self>;
+    type ListDecoder = ListDecoder<Self::Decoder>;
+}
+
+impl<K, V, S> Decode for HashMap<K, V, S>
+where
+    K: Decode + Eq + Hash + Send + 'static,
+    V: Decode + Send + 'static,
+    S: BuildHasher + Default + 'static,
+{
+    type Decoder = MapDecoder<<(K, V) as Decode>::Decoder, Self>;
+    type ListDecoder = ListDecoder<Self::Decoder>;
+}
+
 macro_rules! impl_copy_codec {
     ($t:ty, $c:tt) => {
         impl Encode for $t {
@@ -1245,7 +1488,7 @@ impl Decode for String {
 }
 
 /// Bytes encoded as a `string`, validated to be UTF-8 when encoded
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[repr(transparent)]
 pub struct Utf8Bytes<T>(pub T);
 
@@ -2429,6 +2672,7 @@ mod tests {
             BoxFuture<'static, ()>,
             BoxStream<'static, Bytes>,
             Pin<Box<dyn AsyncRead + Send>>,
+            BTreeMap<String, BoxFuture<'static, u8>>,
         );
 
         fn delay<T: Send + 'static>(v: T) -> BoxFuture<'static, T> {
@@ -2449,6 +2693,7 @@ mod tests {
             delay(()),
             Box::pin(stream::iter(["foo", "", "bar"].map(Bytes::from)).then(delay)),
             Box::pin(std::io::Cursor::new(data.clone())),
+            BTreeMap::from([("a".into(), delay(4)), ("b".into(), delay(5))]),
         );
         let (tx, rx) = duplex(1024);
         let tx = transmit(
@@ -2457,7 +2702,7 @@ mod tests {
             v,
         )?;
         let tx = spawn(tx);
-        let ((a, b, c, d, e, mut f), rx) = receive(
+        let ((a, b, c, d, e, mut f, g), rx) = receive(
             <V as Decode>::Decoder::default(),
             FramedRead::new(rx, FrameDecoder::default()),
         )
@@ -2472,6 +2717,9 @@ mod tests {
         let mut buf = Vec::default();
         f.read_to_end(&mut buf).await?;
         assert_eq!(buf, data);
+        let (keys, values): (Vec<_>, Vec<_>) = g.into_iter().unzip();
+        assert_eq!(keys, ["a", "b"]);
+        assert_eq!(join_all(values).await, [4, 5]);
         tx.await??;
         rx.await??;
         Ok(())
@@ -2540,6 +2788,24 @@ mod tests {
         drop(fut);
         let err = rx.await.unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
+        Ok(())
+    }
+
+    #[test]
+    fn map_encodes_as_list() -> std::io::Result<()> {
+        let v: HashMap<String, u32> = HashMap::from([("a".into(), 1)]);
+        let mut buf = BytesMut::default();
+        crate::pack(
+            <HashMap<String, u32> as Encode>::Encoder::default(),
+            v,
+            &mut buf,
+        )?;
+        assert_eq!(buf, b"\x01\x01a\x01"[..]);
+        let v = crate::unpack(
+            <BTreeMap<String, u32> as Decode>::Decoder::default(),
+            &mut buf,
+        )?;
+        assert_eq!(v, BTreeMap::from([("a".into(), 1)]));
         Ok(())
     }
 
