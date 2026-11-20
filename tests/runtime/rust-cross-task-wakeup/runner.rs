@@ -8,16 +8,16 @@ use crate::client::my::test::i::*;
 pub async fn run(
     wrpc: &crate::Client,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
-    let (tx, rx) = wrpc.connect().await?;
-    try_join!(pending_import(tx, rx), async {
+    let clt = wrpc.connect().await?;
+    try_join!(pending_import(clt), async {
         // Ensure that the above future has hit its pending state by
         // spinning a few times here to guarantee that we've yielded to
         // it.
         for _ in 0..5 {
             yield_now().await;
         }
-        let (tx, rx) = wrpc.connect().await?;
-        resolve_pending_import(tx, rx).await
+        let clt = wrpc.connect().await?;
+        resolve_pending_import(clt).await
     })?;
     Ok(())
 }

@@ -212,12 +212,6 @@ pub struct Opts {
     #[cfg_attr(feature = "clap", arg(long, value_name = "PATH"))]
     pub futures_path: Option<String>,
 
-    /// The optional path to the `tokio` crate to use.
-    ///
-    /// This defaults to `wit_bindgen_wrpc::tokio`.
-    #[cfg_attr(feature = "clap", arg(long, value_name = "PATH"))]
-    pub tokio_path: Option<String>,
-
     /// The optional path to the `tokio-util` crate to use.
     ///
     /// This defaults to `wit_bindgen_wrpc::tokio_util`.
@@ -422,13 +416,6 @@ with: {{\n\t{with_name:?}: generate\n}}
             .unwrap_or("::wit_bindgen_wrpc::futures")
     }
 
-    fn tokio_path(&self) -> &str {
-        self.opts
-            .tokio_path
-            .as_deref()
-            .unwrap_or("::wit_bindgen_wrpc::tokio")
-    }
-
     fn tokio_util_path(&self) -> &str {
         self.opts
             .tokio_util_path
@@ -457,72 +444,78 @@ with: {{\n\t{with_name:?}: generate\n}}
             .unwrap_or("::wit_bindgen_wrpc::wrpc_transport")
     }
 
-    /// Generates the `handle` function for the `world_id` specified, which chains the
-    /// `handle_interface` functions collected in `self.export_paths` prior.
+    /// Generates the `handle` function for the `world_id` specified, which dispatches to the
+    /// `lookup__` and `serve__` functions collected in `self.export_paths` prior.
     fn finish_handle_function(&mut self) {
         if self.export_paths.is_empty() {
             return;
         }
-        let bound = self
+        let paths: Vec<_> = self
             .export_paths
             .iter()
             .map(|path| {
                 if path.is_empty() {
-                    "Handler".to_string()
+                    String::default()
                 } else {
-                    format!("{path}::Handler")
+                    format!("{path}::")
                 }
             })
+            .collect();
+        let bound = paths
+            .iter()
+            .map(|path| format!("{path}Handler"))
             .collect::<Vec<_>>()
             .join(" + ");
         let anyhow = self.anyhow_path().to_string();
-        let tokio = self.tokio_path().to_string();
-        let tokio_util = self.tokio_util_path().to_string();
         let wrpc_transport = self.wrpc_transport_path().to_string();
         uwrite!(
             self.src,
             r#"
-pub fn handle<'a, R, W, I, O, H>(
+pub fn handle<S, H>(
     handler: &H,
     instance: &str,
     func: &str,
-    tx: W,
-    rx: R,
+    srv: S,
 ) -> ::core::result::Result<
-    ::core::pin::Pin<
-        ::std::boxed::Box<
-            dyn ::core::future::Future<Output = {anyhow}::Result<()>> + ::core::marker::Send + 'a
-        >
-    >,
-    (W, R),
+    impl ::core::future::Future<Output = {anyhow}::Result<S::Output>> + ::core::marker::Send + use<S, H>,
+    S,
 >
 where
-    R: ::core::borrow::BorrowMut<{tokio_util}::codec::FramedRead<I, {wrpc_transport}::FrameDecoder>> + ::core::marker::Send + 'a,
-    W: ::core::borrow::BorrowMut<{tokio_util}::codec::FramedWrite<O, {wrpc_transport}::FrameEncoder>> + ::core::marker::Send + 'a,
-    I: {tokio}::io::AsyncRead + ::core::marker::Send + ::core::marker::Unpin + 'a,
-    O: {tokio}::io::AsyncWrite + ::core::marker::Send + ::core::marker::Unpin + 'a,
-    H: {bound} + ::core::marker::Send + ::core::marker::Sync + ::core::clone::Clone + 'static,
+    S: {wrpc_transport}::Serve + ::core::marker::Send,
+    H: {bound} + ::core::marker::Send + ::core::marker::Sync + ::core::clone::Clone,
 {{
-    ::core::result::Result::Err((tx, rx))"#
+    let (i, func) = "#
         );
-        for path in &self.export_paths {
-            self.src.push_str("\n        .or_else(|(tx, rx)| ");
-            if !path.is_empty() {
-                self.src.push_str(path);
-                self.src.push_str("::");
-            }
-            self.src
-                .push_str("handle_interface(handler, instance, func, tx, rx))");
+        for (i, path) in paths.iter().enumerate() {
+            uwrite!(
+                self.src,
+                r#"if let ::core::option::Option::Some(func) = {path}lookup__(instance, func) {{
+        ({i}, func)
+    }} else "#
+            );
+        }
+        uwrite!(
+            self.src,
+            r#"{{
+        return ::core::result::Result::Err(srv);
+    }};
+    let handler = ::core::clone::Clone::clone(handler);
+    ::core::result::Result::Ok(async move {{
+        match i {{"#
+        );
+        for (i, path) in paths.iter().enumerate() {
+            uwrite!(
+                self.src,
+                r#"
+            {i} => {path}serve__(handler, func, srv).await,"#
+            );
         }
         uwriteln!(
             self.src,
             r#"
-}}
-
-fn send__<T: ::core::future::Future + ::core::marker::Send>(
-    fut: T,
-) -> impl ::core::future::Future<Output = T::Output> + ::core::marker::Send {{
-    fut
+            _ => ::core::unreachable!(),
+        }}
+    }})
 }}"#
         );
     }

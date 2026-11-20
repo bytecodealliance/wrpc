@@ -19,8 +19,8 @@ use tokio::time::timeout;
 use tokio::try_join;
 use tokio_util::codec::{Encoder as _, FramedRead, FramedWrite};
 use wrpc_transport::{
-    Decode, FrameDecoder, FrameEncoder, FrameRef, Header, HeaderEncoder, HeaderRef, Listener,
-    invoke, receive, serve,
+    Codec, Decode, Encode, FrameDecoder, FrameEncoder, FrameRef, Framed, Header, HeaderEncoder,
+    HeaderRef, Listener, invoke, receive, serve,
 };
 
 /// Maximum number of connections [`serve_until`] serves concurrently
@@ -67,10 +67,7 @@ pub async fn next_invocation<'a, I, O>(
     lis: &'a mut Listener<I, O>,
     instance: &str,
     func: &str,
-) -> anyhow::Result<(
-    &'a mut FramedWrite<O, FrameEncoder>,
-    &'a mut FramedRead<I, FrameDecoder>,
-)>
+) -> anyhow::Result<&'a mut Framed<I, O>>
 where
     I: AsyncRead + Unpin,
 {
@@ -83,14 +80,13 @@ where
             instance: inst,
             name,
         },
-        tx,
-        rx,
+        srv,
     ) = next.context("byte stream ended")?;
     ensure!(
         inst == instance && name == func,
         "unexpected invocation of `{inst}.{name}`",
     );
-    Ok((tx, rx))
+    Ok(srv)
 }
 
 /// Reads `rx` to EOF, ensuring that no frames are left
@@ -207,7 +203,11 @@ pub async fn assert_single_invocation(
                 Box::pin(stream::iter([Bytes::from_static(b"client->server")]));
             let tx = FramedWrite::new(tx, FrameEncoder);
             let mut rx = FramedRead::new(rx, FrameDecoder::default());
-            let ((results, s), io) = invoke::<_, (Bytes, BoxStream<'static, Bytes>), _, _, _, _>(
+            let ((results, s), io) = Codec::<
+                <(Bytes, BoxStream<'static, Bytes>) as Encode>::Encoder,
+                <(Bytes, BoxStream<'static, Bytes>) as Decode>::Decoder,
+            >::default()
+            .invoke(
                 tx,
                 &mut rx,
                 "foo",
@@ -228,15 +228,14 @@ pub async fn assert_single_invocation(
         async {
             let (tx, rx) = accept.await.context("failed to accept")?;
             let mut lis = Listener::new(tx, rx);
-            let (tx, rx) = next_invocation(&mut lis, "foo", "bar").await?;
+            let srv = next_invocation(&mut lis, "foo", "bar").await?;
             serve::<
                 (Bytes, BoxStream<'static, Bytes>),
                 (Bytes, BoxStream<'static, Bytes>),
                 _,
                 _,
                 _,
-                _,
-            >(tx, rx, async |(testbar, s)| {
+            >(srv, async |(testbar, s)| {
                 assert_eq!(testbar, b"testbar".as_slice());
                 let buf = s.collect::<Vec<_>>().await.concat();
                 assert_eq!(buf, b"client->server");
@@ -307,7 +306,7 @@ where
             anyhow::Ok(Listener::new(tx, rx))
         },
     )?;
-    let (_, srv_rx) = next_invocation(&mut lis, "foo", "baz").await?;
+    let Framed { rx: srv_rx, .. } = next_invocation(&mut lis, "foo", "baz").await?;
     let res = receive(<() as Decode>::Decoder::default(), srv_rx).await;
     ensure!(res.is_err(), "invalid data must fail server ingress");
     drop(lis);
@@ -323,16 +322,17 @@ where
     try_join!(
         async {
             let (tx, rx) = connect().await.context("failed to connect")?;
-            let tx = FramedWrite::new(tx, FrameEncoder);
-            let rx = FramedRead::new(rx, FrameDecoder::default());
-            let res = invoke::<(), (), _, _, _, _>(tx, rx, "foo", "baz", ()).await;
+            let res = invoke::<(), (), _>(Framed::new(tx, rx), "foo", "baz", ()).await;
             ensure!(res.is_err(), "invalid data must fail client ingress");
             anyhow::Ok(())
         },
         async {
             let (tx, rx) = accept().await.context("failed to accept")?;
             let mut lis = Listener::new(tx, rx);
-            let (srv_tx, srv_rx) = next_invocation(&mut lis, "foo", "baz").await?;
+            let Framed {
+                tx: srv_tx,
+                rx: srv_rx,
+            } = next_invocation(&mut lis, "foo", "baz").await?;
             let srv_tx = srv_tx.get_mut();
             srv_tx
                 .write_all(&invalid)

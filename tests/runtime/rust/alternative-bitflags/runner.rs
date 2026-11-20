@@ -7,7 +7,7 @@ use crate::client::my::inline::t::{get_flag, Bar};
 pub async fn run(
     wrpc: &crate::Client,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
-    let (tx, rx) = wrpc.connect().await?;
-    assert_eq!(get_flag(tx, rx).await?, Bar::BAZ);
+    let clt = wrpc.connect().await?;
+    assert_eq!(get_flag(clt).await?, Bar::BAZ);
     Ok(())
 }

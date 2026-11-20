@@ -40,35 +40,35 @@ impl Handler for Component {
     async fn test_imports(&self) -> ::wit_bindgen_wrpc::anyhow::Result<Result<(), String>> {
         use crate::server::imports::*;
 
-        let (mut tx, mut rx) = self.0.connect().await?;
-        let y = Y::new(&mut tx, &mut rx, 10).await?;
-        let v = Y::get_a(&mut tx, &mut rx, &y.as_borrow()).await?;
+        let mut clt = self.0.connect().await?;
+        let y = Y::new(&mut clt, 10).await?;
+        let v = Y::get_a(&mut clt, &y.as_borrow()).await?;
         assert_eq!(v, 10);
-        Y::set_a(&mut tx, &mut rx, &y.as_borrow(), 20).await?;
-        let v = Y::get_a(&mut tx, &mut rx, &y.as_borrow()).await?;
+        Y::set_a(&mut clt, &y.as_borrow(), 20).await?;
+        let v = Y::get_a(&mut clt, &y.as_borrow()).await?;
         assert_eq!(v, 20);
-        let y2 = Y::add(&mut tx, &mut rx, &y, 20).await?;
-        let v = Y::get_a(&mut tx, &mut rx, &y2.as_borrow()).await?;
+        let y2 = Y::add(&mut clt, &y, 20).await?;
+        let v = Y::get_a(&mut clt, &y2.as_borrow()).await?;
         assert_eq!(v, 40);
 
         // test multiple instances
-        let y1 = Y::new(&mut tx, &mut rx, 1).await?;
-        let y2 = Y::new(&mut tx, &mut rx, 2).await?;
-        let v = Y::get_a(&mut tx, &mut rx, &y1.as_borrow()).await?;
+        let y1 = Y::new(&mut clt, 1).await?;
+        let y2 = Y::new(&mut clt, 2).await?;
+        let v = Y::get_a(&mut clt, &y1.as_borrow()).await?;
         assert_eq!(v, 1);
-        let v = Y::get_a(&mut tx, &mut rx, &y2.as_borrow()).await?;
+        let v = Y::get_a(&mut clt, &y2.as_borrow()).await?;
         assert_eq!(v, 2);
-        Y::set_a(&mut tx, &mut rx, &y1.as_borrow(), 10).await?;
-        Y::set_a(&mut tx, &mut rx, &y2.as_borrow(), 20).await?;
-        let v = Y::get_a(&mut tx, &mut rx, &y1.as_borrow()).await?;
+        Y::set_a(&mut clt, &y1.as_borrow(), 10).await?;
+        Y::set_a(&mut clt, &y2.as_borrow(), 20).await?;
+        let v = Y::get_a(&mut clt, &y1.as_borrow()).await?;
         assert_eq!(v, 10);
-        let v = Y::get_a(&mut tx, &mut rx, &y2.as_borrow()).await?;
+        let v = Y::get_a(&mut clt, &y2.as_borrow()).await?;
         assert_eq!(v, 20);
-        let y3 = Y::add(&mut tx, &mut rx, &y1, 20).await?;
-        let y4 = Y::add(&mut tx, &mut rx, &y2, 30).await?;
-        let v = Y::get_a(&mut tx, &mut rx, &y3.as_borrow()).await?;
+        let y3 = Y::add(&mut clt, &y1, 20).await?;
+        let y4 = Y::add(&mut clt, &y2, 30).await?;
+        let v = Y::get_a(&mut clt, &y3.as_borrow()).await?;
         assert_eq!(v, 30);
-        let v = Y::get_a(&mut tx, &mut rx, &y4.as_borrow()).await?;
+        let v = Y::get_a(&mut clt, &y4.as_borrow()).await?;
         assert_eq!(v, 50);
         Ok(Ok(()))
     }

@@ -23,8 +23,8 @@ impl HandlerInputStream for Component {
 
 impl Handler for Component {
     async fn f(&self, x: Kind1) -> ::wit_bindgen_wrpc::anyhow::Result<Kind1> {
-        let (tx, rx) = self.0.connect().await?;
-        blag::f(tx, rx, &x).await
+        let clt = self.0.connect().await?;
+        blag::f(clt, &x).await
     }
 
     async fn g(&self, _x: Kind3) -> ::wit_bindgen_wrpc::anyhow::Result<Kind4> {
@@ -36,8 +36,8 @@ impl Handler for Component {
             tree: x.tree,
             stream: None,
         };
-        let (tx, rx) = self.0.connect().await?;
-        blag::h(tx, rx, &x).await
+        let clt = self.0.connect().await?;
+        blag::h(clt, &x).await
     }
 }
 
@@ -48,8 +48,8 @@ use crate::server::test::equal_types::blah;
 
 impl HHandler for Component {
     async fn f(&self, x: Kind6) -> ::wit_bindgen_wrpc::anyhow::Result<Kind5> {
-        let (tx, rx) = self.0.connect().await?;
-        blah::f(tx, rx, &x).await
+        let clt = self.0.connect().await?;
+        blah::f(clt, &x).await
     }
 
     async fn g(&self, _x: Kind7) -> ::wit_bindgen_wrpc::anyhow::Result<Kind4> {
@@ -61,8 +61,8 @@ impl HHandler for Component {
             tree: x.tree,
             stream: None,
         };
-        let (tx, rx) = self.0.connect().await?;
-        blah::h(tx, rx, &x).await
+        let clt = self.0.connect().await?;
+        blah::h(clt, &x).await
     }
 
     async fn alias_type(&self, x: R2) -> ::wit_bindgen_wrpc::anyhow::Result<R1> {

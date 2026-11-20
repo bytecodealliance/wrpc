@@ -8,17 +8,17 @@ use crate::client::my::test::i::*;
 pub async fn run(
     wrpc: &crate::Client,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
-    let (mut wrpc_tx, mut wrpc_rx) = wrpc.connect().await?;
+    let mut wrpc_clt = wrpc.connect().await?;
     let (tx, rx) = oneshot::channel();
     let (res, ()) = join!(
-        read_future(&mut wrpc_tx, &mut wrpc_rx, Box::pin(async move { rx.await.unwrap() })),
+        read_future(&mut wrpc_clt, Box::pin(async move { rx.await.unwrap() })),
         async { tx.send(()).unwrap() },
     );
     res?;
 
     let (tx, rx) = oneshot::channel();
     let (res, ()) = join!(
-        drop_future(&mut wrpc_tx, &mut wrpc_rx, Box::pin(async move { rx.await.unwrap() })),
+        drop_future(&mut wrpc_clt, Box::pin(async move { rx.await.unwrap() })),
         async { tx.send(()).unwrap() },
     );
     res?;

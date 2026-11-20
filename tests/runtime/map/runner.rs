@@ -32,8 +32,8 @@ async fn test_named_roundtrip(
     input.insert(1, "one".to_string());
     input.insert(1, "uno".to_string());
     input.insert(2, "two".to_string());
-    let (tx, rx) = wrpc.connect().await?;
-    let ids_by_name = named_roundtrip(tx, rx, &input).await?;
+    let clt = wrpc.connect().await?;
+    let ids_by_name = named_roundtrip(clt, &input).await?;
     assert_eq!(ids_by_name.get("uno"), Some(&1));
     assert_eq!(ids_by_name.get("two"), Some(&2));
     assert_eq!(ids_by_name.get("one"), None);
@@ -46,8 +46,8 @@ async fn test_bytes_roundtrip(
     let mut bytes_input = BytesByName::new();
     bytes_input.insert("hello".to_string(), Bytes::from_static(b"world"));
     bytes_input.insert("bin".to_string(), Bytes::from_static(&[0, 1, 2]));
-    let (tx, rx) = wrpc.connect().await?;
-    let bytes_by_name = bytes_roundtrip(tx, rx, &bytes_input).await?;
+    let clt = wrpc.connect().await?;
+    let bytes_by_name = bytes_roundtrip(clt, &bytes_input).await?;
     assert_eq!(
         bytes_by_name.get("hello").map(|v| &v[..]),
         Some(b"world".as_slice())
@@ -63,8 +63,8 @@ async fn test_empty_roundtrip(
     wrpc: &crate::Client,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     let empty = NamesById::new();
-    let (tx, rx) = wrpc.connect().await?;
-    let result = empty_roundtrip(tx, rx, &empty).await?;
+    let clt = wrpc.connect().await?;
+    let result = empty_roundtrip(clt, &empty).await?;
     assert!(result.is_empty());
     Ok(())
 }
@@ -75,8 +75,8 @@ async fn test_option_roundtrip(
     let mut input = BTreeMap::new();
     input.insert("some".to_string(), Some(42));
     input.insert("none".to_string(), None);
-    let (tx, rx) = wrpc.connect().await?;
-    let result = option_roundtrip(tx, rx, &input).await?;
+    let clt = wrpc.connect().await?;
+    let result = option_roundtrip(clt, &input).await?;
     assert_eq!(result.len(), 2);
     assert_eq!(result.get("some"), Some(&Some(42)));
     assert_eq!(result.get("none"), Some(&None));
@@ -93,8 +93,8 @@ async fn test_record_roundtrip(
         label: "test-label".to_string(),
         values,
     };
-    let (tx, rx) = wrpc.connect().await?;
-    let result = record_roundtrip(tx, rx, &entry).await?;
+    let clt = wrpc.connect().await?;
+    let result = record_roundtrip(clt, &entry).await?;
     assert_eq!(result.label, "test-label");
     assert_eq!(result.values.len(), 2);
     assert_eq!(result.values.get(&10).map(String::as_str), Some("ten"));
@@ -108,8 +108,8 @@ async fn test_inline_roundtrip(
     let mut input = BTreeMap::new();
     input.insert(1, "one".to_string());
     input.insert(2, "two".to_string());
-    let (tx, rx) = wrpc.connect().await?;
-    let result = inline_roundtrip(tx, rx, &input).await?;
+    let clt = wrpc.connect().await?;
+    let result = inline_roundtrip(clt, &input).await?;
     assert_eq!(result.len(), 2);
     assert_eq!(result.get("one"), Some(&1));
     assert_eq!(result.get("two"), Some(&2));
@@ -123,8 +123,8 @@ async fn test_large_map(
     for i in 0..100 {
         input.insert(i, format!("value-{i}"));
     }
-    let (tx, rx) = wrpc.connect().await?;
-    let result = large_roundtrip(tx, rx, &input).await?;
+    let clt = wrpc.connect().await?;
+    let result = large_roundtrip(clt, &input).await?;
     assert_eq!(result.len(), 100);
     for i in 0..100 {
         assert_eq!(
@@ -143,8 +143,8 @@ async fn test_multi_param_roundtrip(
     names.insert(2, "two".to_string());
     let mut bytes = BytesByName::new();
     bytes.insert("key".to_string(), Bytes::from_static(&[42]));
-    let (tx, rx) = wrpc.connect().await?;
-    let (ids, bytes_out) = multi_param_roundtrip(tx, rx, &names, &bytes).await?;
+    let clt = wrpc.connect().await?;
+    let (ids, bytes_out) = multi_param_roundtrip(clt, &names, &bytes).await?;
     assert_eq!(ids.len(), 2);
     assert_eq!(ids.get("one"), Some(&1));
     assert_eq!(ids.get("two"), Some(&2));
@@ -167,8 +167,8 @@ async fn test_nested_roundtrip(
     let mut outer = BTreeMap::new();
     outer.insert("group-a".to_string(), inner_a);
     outer.insert("group-b".to_string(), inner_b);
-    let (tx, rx) = wrpc.connect().await?;
-    let result = nested_roundtrip(tx, rx, &outer).await?;
+    let clt = wrpc.connect().await?;
+    let result = nested_roundtrip(clt, &outer).await?;
     assert_eq!(result.len(), 2);
     let ra = result.get("group-a").unwrap();
     assert_eq!(ra.get(&1).map(String::as_str), Some("one"));
@@ -183,8 +183,8 @@ async fn test_variant_roundtrip(
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     let mut map = NamesById::new();
     map.insert(1, "one".to_string());
-    let (tx, rx) = wrpc.connect().await?;
-    let as_map = variant_roundtrip(tx, rx, &MapOrString::AsMap(map)).await?;
+    let clt = wrpc.connect().await?;
+    let as_map = variant_roundtrip(clt, &MapOrString::AsMap(map)).await?;
     match &as_map {
         MapOrString::AsMap(m) => {
             assert_eq!(m.get(&1).map(String::as_str), Some("one"));
@@ -192,8 +192,8 @@ async fn test_variant_roundtrip(
         MapOrString::AsString(_) => panic!("expected AsMap"),
     }
 
-    let (tx, rx) = wrpc.connect().await?;
-    let as_str = variant_roundtrip(tx, rx, &MapOrString::AsString("hello".to_string())).await?;
+    let clt = wrpc.connect().await?;
+    let as_str = variant_roundtrip(clt, &MapOrString::AsString("hello".to_string())).await?;
     match &as_str {
         MapOrString::AsString(s) => assert_eq!(s, "hello"),
         MapOrString::AsMap(_) => panic!("expected AsString"),
@@ -206,15 +206,15 @@ async fn test_result_roundtrip(
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     let mut map = NamesById::new();
     map.insert(5, "five".to_string());
-    let (tx, rx) = wrpc.connect().await?;
-    let ok_result = result_roundtrip(tx, rx, &Ok(map)).await?;
+    let clt = wrpc.connect().await?;
+    let ok_result = result_roundtrip(clt, &Ok(map)).await?;
     match &ok_result {
         Ok(m) => assert_eq!(m.get(&5).map(String::as_str), Some("five")),
         Err(_) => panic!("expected Ok"),
     }
 
-    let (tx, rx) = wrpc.connect().await?;
-    let err_result = result_roundtrip(tx, rx, &Err("bad input".to_string())).await?;
+    let clt = wrpc.connect().await?;
+    let err_result = result_roundtrip(clt, &Err("bad input".to_string())).await?;
     match &err_result {
         Err(e) => assert_eq!(e, "bad input"),
         Ok(_) => panic!("expected Err"),
@@ -227,8 +227,8 @@ async fn test_tuple_roundtrip(
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     let mut map = NamesById::new();
     map.insert(7, "seven".to_string());
-    let (tx, rx) = wrpc.connect().await?;
-    let (result_map, result_num) = tuple_roundtrip(tx, rx, (&map, 42)).await?;
+    let clt = wrpc.connect().await?;
+    let (result_map, result_num) = tuple_roundtrip(clt, (&map, 42)).await?;
     assert_eq!(result_map.len(), 1);
     assert_eq!(result_map.get(&7).map(String::as_str), Some("seven"));
     assert_eq!(result_num, 42);
@@ -240,8 +240,8 @@ async fn test_single_entry_roundtrip(
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     let mut input = NamesById::new();
     input.insert(99, "ninety-nine".to_string());
-    let (tx, rx) = wrpc.connect().await?;
-    let result = single_entry_roundtrip(tx, rx, &input).await?;
+    let clt = wrpc.connect().await?;
+    let result = single_entry_roundtrip(clt, &input).await?;
     assert_eq!(result.len(), 1);
     assert_eq!(result.get(&99).map(String::as_str), Some("ninety-nine"));
     Ok(())

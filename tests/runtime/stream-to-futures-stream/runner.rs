@@ -11,8 +11,8 @@ pub async fn run(
     wrpc: &crate::Client,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     let (mut tx, rx) = mpsc::channel(0);
-    let (wrpc_tx, wrpc_rx) = wrpc.connect().await?;
-    let (res, ()) = join!(read_stream(wrpc_tx, wrpc_rx, Box::pin(rx)), async {
+    let wrpc_clt = wrpc.connect().await?;
+    let (res, ()) = join!(read_stream(wrpc_clt, Box::pin(rx)), async {
         tx.send(Bytes::from_static(&[10, 20, 30])).await.unwrap();
         // Drop the writer so the reader sees the end of the stream.
         drop(tx);

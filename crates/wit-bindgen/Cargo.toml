@@ -19,7 +19,6 @@ anyhow = { workspace = true, features = ["std"] }
 bitflags = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt"] }
 tokio-util = { workspace = true, features = ["codec"] }
 tracing = { workspace = true }
 wasm-tokio = { workspace = true }
@@ -31,4 +30,4 @@ default = ["macro-string"]
 macro-string = ["wit-bindgen-wrpc-rust-macro/macro-string"]
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["net"] }
+tokio = { workspace = true, features = ["macros", "net", "rt"] }

@@ -10,9 +10,9 @@ use tokio::join;
 use tokio::net::TcpStream;
 use tokio::task::yield_now;
 use tokio::time::timeout;
-use tokio_util::codec::{Encoder as _, FramedRead, FramedWrite};
+use tokio_util::codec::Encoder as _;
 use wrpc_transport::{
-    FrameDecoder, FrameEncoder, Header, HeaderDecoder, HeaderEncoder, HeaderRef, Listener, invoke,
+    FrameDecoder, Framed, Header, HeaderDecoder, HeaderEncoder, HeaderRef, Listener, invoke,
 };
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -40,9 +40,7 @@ async fn unprocessed_stream() -> anyhow::Result<()> {
                         yield_now().await;
                         Some((Bytes::from_static(b"test"), ()))
                     }));
-                    let tx = FramedWrite::new(tx, FrameEncoder);
-                    let rx = FramedRead::new(rx, FrameDecoder::default());
-                    let res = invoke(tx, rx, "foo", "bar", (s,)).await;
+                    let res = invoke(Framed::new(tx, rx), "foo", "bar", (s,)).await;
                     if let Ok(((), io)) = res {
                         _ = io.await;
                     }

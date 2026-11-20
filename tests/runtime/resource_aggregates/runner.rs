@@ -5,8 +5,8 @@ use crate::client::test::resource_aggregates::to_test::{
 pub async fn run(
     wrpc: &crate::Client,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
-    let (mut tx, mut rx) = wrpc.connect().await?;
-    let mut thing = async |n| Thing::new(&mut tx, &mut rx, n).await;
+    let mut clt = wrpc.connect().await?;
+    let mut thing = async |n| Thing::new(&mut clt, n).await;
     let thing0 = thing(0).await?;
     let thing1 = thing(1).await?;
     let thing2 = thing(2).await?;
@@ -26,8 +26,7 @@ pub async fn run(
     let thing16 = thing(16).await?;
 
     let result = foo(
-        &mut tx,
-        &mut rx,
+        &mut clt,
         &R1 { thing: thing0 },
         &R2 {
             thing: thing1.as_borrow(),

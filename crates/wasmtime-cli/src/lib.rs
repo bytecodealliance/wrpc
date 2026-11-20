@@ -295,7 +295,7 @@ async fn serve_conn(
     guest: &[ResourceType],
 ) -> anyhow::Result<()> {
     while let Ok(next) = time::timeout(timeout, lis.accept()).await {
-        let Some((header, tx, rx)) = next.context("failed to read invocation header")? else {
+        let Some((header, srv)) = next.context("failed to read invocation header")? else {
             break;
         };
         let export = exports
@@ -317,7 +317,7 @@ async fn serve_conn(
                     dec: TupleDecoder::new(Arc::clone(&export.params)).with_max_len(max_len),
                 };
                 codec
-                    .serve(tx, rx, async |params| {
+                    .serve(&mut srv.tx, &mut srv.rx, async |params| {
                         call(store, func, export, guest, params).await
                     })
                     .await?;
@@ -341,7 +341,7 @@ async fn serve_conn_shared(
     guest: &[ResourceType],
 ) -> anyhow::Result<()> {
     while let Ok(next) = time::timeout(timeout, lis.accept()).await {
-        let Some((header, tx, rx)) = next.context("failed to read invocation header")? else {
+        let Some((header, srv)) = next.context("failed to read invocation header")? else {
             break;
         };
         let export = exports
@@ -355,7 +355,7 @@ async fn serve_conn_shared(
             dec: TupleDecoder::new(Arc::clone(&export.params)).with_max_len(max_len),
         };
         codec
-            .serve(tx, rx, async |params| {
+            .serve(&mut srv.tx, &mut srv.rx, async |params| {
                 call(store, func, export, guest, params).await
             })
             .await?;

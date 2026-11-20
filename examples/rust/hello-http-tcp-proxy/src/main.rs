@@ -6,8 +6,7 @@ use http::uri::PathAndQuery;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use tokio::net::{TcpListener, TcpStream};
 use tracing::{error, info};
-use wit_bindgen_wrpc::tokio_util::codec::{FramedRead, FramedWrite};
-use wit_bindgen_wrpc::wrpc_transport::{FrameDecoder, FrameEncoder};
+use wit_bindgen_wrpc::wrpc_transport::Framed;
 
 mod bindings {
     wit_bindgen_wrpc::generate!({
@@ -37,9 +36,7 @@ async fn hello(addr: &str) -> anyhow::Result<String> {
         .set_nodelay(true)
         .context("failed to set TCP_NODELAY")?;
     let (rx, tx) = stream.split();
-    let tx = FramedWrite::new(tx, FrameEncoder);
-    let rx = FramedRead::new(rx, FrameDecoder::default());
-    bindings::wrpc_examples::hello::handler::hello(tx, rx)
+    bindings::wrpc_examples::hello::handler::hello(Framed::new(tx, rx))
         .await
         .context("failed to invoke `wrpc-examples.hello/handler.hello`")
 }

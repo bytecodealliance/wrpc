@@ -16,10 +16,10 @@ impl Handler for Component {
         a: ResourceBorrow<Float>,
         b: ResourceBorrow<Float>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<Float>> {
-        let (mut tx, mut rx) = self.0.connect().await?;
-        let a = ImportFloat2::get(&mut tx, &mut rx, &a).await?;
-        let b = ImportFloat2::get(&mut tx, &mut rx, &b).await?;
-        ImportFloat2::new(&mut tx, &mut rx, a + b + 5.0).await
+        let mut clt = self.0.connect().await?;
+        let a = ImportFloat2::get(&mut clt, &a).await?;
+        let b = ImportFloat2::get(&mut clt, &b).await?;
+        ImportFloat2::new(&mut clt, a + b + 5.0).await
     }
 }
 
@@ -30,8 +30,8 @@ impl HandlerFloat for Component {
         &self,
         v: f64,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<FloatExport>> {
-        let (tx, rx) = self.0.connect().await?;
-        let val = ImportFloat1::new(tx, rx, v + 1.0).await?;
+        let clt = self.0.connect().await?;
+        let val = ImportFloat1::new(clt, v + 1.0).await?;
         Ok(ResourceOwn::from(Bytes::from(val)))
     }
 
@@ -40,8 +40,8 @@ impl HandlerFloat for Component {
         self_: ResourceBorrow<FloatExport>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<f64> {
         let val = ResourceBorrow::from(Bytes::from(self_));
-        let (tx, rx) = self.0.connect().await?;
-        let v = ImportFloat1::get(tx, rx, &val).await?;
+        let clt = self.0.connect().await?;
+        let v = ImportFloat1::get(clt, &val).await?;
         Ok(v + 3.0)
     }
 
@@ -51,9 +51,9 @@ impl HandlerFloat for Component {
         b: f64,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<FloatExport>> {
         let a = ResourceOwn::from(Bytes::from(a));
-        let (mut tx, mut rx) = self.0.connect().await?;
-        let a = ImportFloat1::add(&mut tx, &mut rx, &a, b).await?;
-        let v = ImportFloat1::get(&mut tx, &mut rx, &a.as_borrow()).await?;
+        let mut clt = self.0.connect().await?;
+        let a = ImportFloat1::add(&mut clt, &a, b).await?;
+        let v = ImportFloat1::get(&mut clt, &a.as_borrow()).await?;
         self.new(v + 5.0).await
     }
 }

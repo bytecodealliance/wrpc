@@ -159,21 +159,21 @@
 /// }
 ///
 /// use bindings::Celsius;
-/// use wit_bindgen_wrpc::tokio_util::codec::{FramedRead, FramedWrite};
-/// use wrpc_transport::{FrameDecoder, FrameEncoder};
+///
+/// use wrpc_transport::Framed;
 ///
 /// async fn test<I, O>(
-///     connect: impl AsyncFn() -> std::io::Result<(FramedWrite<O, FrameEncoder>, FramedRead<I, FrameDecoder>)>,
+///     connect: impl AsyncFn() -> std::io::Result<Framed<I, O>>,
 /// ) -> anyhow::Result<()>
 /// where
 ///     I: tokio::io::AsyncRead + Unpin,
 ///     O: tokio::io::AsyncWrite + Unpin,
 /// {
-///     let (tx, rx) = connect().await?;
-///     let current_temp = bindings::what_temperature_is_it(tx, rx).await?;
+///     let clt = connect().await?;
+///     let current_temp = bindings::what_temperature_is_it(clt).await?;
 ///     println!("current temp in fahrenheit is {}", current_temp.degrees);
-///     let (tx, rx) = connect().await?;
-///     let in_celsius: Celsius = bindings::convert_to_celsius(tx, rx, &current_temp).await?;
+///     let clt = connect().await?;
+///     let in_celsius: Celsius = bindings::convert_to_celsius(clt, &current_temp).await?;
 ///     println!("current temp in celsius is {}", in_celsius.degrees);
 ///     Ok(())
 /// }
@@ -215,24 +215,24 @@
 /// // `my` and `test` are from `package my:test;` and `logging` is for the
 /// // interface name.
 /// use my::test::logging::Level;
-/// use wit_bindgen_wrpc::tokio_util::codec::{FramedRead, FramedWrite};
-/// use wrpc_transport::{FrameDecoder, FrameEncoder};
+///
+/// use wrpc_transport::Framed;
 ///
 /// async fn test<I, O>(
-///     connect: impl AsyncFn() -> std::io::Result<(FramedWrite<O, FrameEncoder>, FramedRead<I, FrameDecoder>)>,
+///     connect: impl AsyncFn() -> std::io::Result<Framed<I, O>>,
 /// ) -> anyhow::Result<()>
 /// where
 ///     I: tokio::io::AsyncRead + Unpin,
 ///     O: tokio::io::AsyncWrite + Unpin,
 /// {
-///     let (tx, rx) = connect().await?;
-///     let current_level = global_logger::get_current_level(tx, rx).await?;
+///     let clt = connect().await?;
+///     let current_level = global_logger::get_current_level(clt).await?;
 ///     println!("current logging level is {current_level:?}");
-///     let (tx, rx) = connect().await?;
-///     global_logger::set_current_level(tx, rx, Level::Error).await?;
+///     let clt = connect().await?;
+///     global_logger::set_current_level(clt, Level::Error).await?;
 ///
-///     let (tx, rx) = connect().await?;
-///     my::test::logging::log(tx, rx, Level::Info, "Hello there!").await?;
+///     let clt = connect().await?;
+///     my::test::logging::log(clt, Level::Info, "Hello there!").await?;
 ///     Ok(())
 /// }
 /// #
@@ -246,8 +246,8 @@
 /// `ResourceOwn<T>` and `ResourceBorrow<T>` handle types from `wrpc_transport`,
 /// which represent owned and borrowed handles respectively. The resource's
 /// constructor, methods, and static functions are generated as associated
-/// functions on the marker type, each taking the frames written and read by an
-/// invocation as their first two arguments; methods additionally take a
+/// functions on the marker type, each taking the [`Invoke`](wrpc_transport::Invoke)
+/// client of an invocation as their first argument; methods additionally take a
 /// `&ResourceBorrow<T>` receiver, obtained from an owned handle via
 /// `ResourceOwn::as_borrow`.
 ///
@@ -283,25 +283,25 @@
 /// });
 ///
 /// use my::test::logger::{self, Level};
-/// use wit_bindgen_wrpc::tokio_util::codec::{FramedRead, FramedWrite};
-/// use wrpc_transport::{FrameDecoder, FrameEncoder};
+///
+/// use wrpc_transport::Framed;
 ///
 /// async fn test<I, O>(
-///     connect: impl AsyncFn() -> std::io::Result<(FramedWrite<O, FrameEncoder>, FramedRead<I, FrameDecoder>)>,
+///     connect: impl AsyncFn() -> std::io::Result<Framed<I, O>>,
 /// ) -> anyhow::Result<()>
 /// where
 ///     I: tokio::io::AsyncRead + Unpin,
 ///     O: tokio::io::AsyncWrite + Unpin,
 /// {
-///     let (tx, rx) = connect().await?;
-///     let logger = get_global_logger(tx, rx).await?;
-///     let (tx, rx) = connect().await?;
-///     Logger::log(tx, rx, &logger.as_borrow(), Level::Debug, "This is a global message").await?;
+///     let clt = connect().await?;
+///     let logger = get_global_logger(clt).await?;
+///     let clt = connect().await?;
+///     Logger::log(clt, &logger.as_borrow(), Level::Debug, "This is a global message").await?;
 ///
-///     let (tx, rx) = connect().await?;
-///     let logger2 = Logger::new(tx, rx, "/tmp/other.log").await?;
-///     let (tx, rx) = connect().await?;
-///     Logger::log(tx, rx, &logger2.as_borrow(), Level::Info, "This is not a global message").await?;
+///     let clt = connect().await?;
+///     let logger2 = Logger::new(clt, "/tmp/other.log").await?;
+///     let clt = connect().await?;
+///     Logger::log(clt, &logger2.as_borrow(), Level::Info, "This is not a global message").await?;
 ///     Ok(())
 /// }
 /// #
@@ -575,10 +575,11 @@
 /// Each call to `generate!` itself generates a `handle` function adjacent to
 /// the generated bindings. It takes a value that implements the generated
 /// `Handler` traits, the instance and function name of the invocation header
-/// and the frames to write and read returned by
-/// `wrpc_transport::Listener::accept`. It returns a future serving the invocation
-/// if the world exports the invoked function, and the frames back otherwise, so that the `handle` functions of several worlds can be chained
-/// to serve all of them on one connection. Nothing is spawned and the caller
+/// and a [`Serve`](wrpc_transport::Serve) server, such as the
+/// [`Framed`](wrpc_transport::Framed) returned by `wrpc_transport::Listener::accept`. It returns a
+/// future serving the invocation if the world exports the invoked function, and
+/// the server back otherwise, so that it can be passed to the `handle` function of another
+/// world to serve several of them on one connection. Nothing is spawned and the caller
 /// accepts the connections and drives them:
 ///
 /// ```
@@ -610,8 +611,8 @@
 ///     rx: impl AsyncRead + Send + Unpin,
 /// ) -> anyhow::Result<()> {
 ///     let mut lis = Listener::new(tx, rx);
-///     while let Some((Header { instance, name }, tx, rx)) = lis.accept().await? {
-///         let Ok(fut) = handle(&MyComponent, &instance, &name, tx, rx) else {
+///     while let Some((Header { instance, name }, srv)) = lis.accept().await? {
+///         let Ok(fut) = handle(&MyComponent, &instance, &name, srv) else {
 ///             anyhow::bail!("`{instance}#{name}` is not exported");
 ///         };
 ///         fut.await?;
@@ -658,8 +659,8 @@
 ///     rx: impl AsyncRead + Send + Unpin,
 /// ) -> anyhow::Result<()> {
 ///     let mut lis = Listener::new(tx, rx);
-///     while let Some((Header { instance, name }, tx, rx)) = lis.accept().await? {
-///         let Ok(fut) = bindings::handle(&MyComponent, &instance, &name, tx, rx) else {
+///     while let Some((Header { instance, name }, srv)) = lis.accept().await? {
+///         let Ok(fut) = bindings::handle(&MyComponent, &instance, &name, srv) else {
 ///             anyhow::bail!("`{instance}#{name}` is not exported");
 ///         };
 ///         fut.await?;
@@ -810,7 +811,6 @@
 ///     anyhow_path: "path::to::anyhow",
 ///     bytes_path: "path::to::bytes",
 ///     futures_path: "path::to::futures",
-///     tokio_path: "path::to::tokio",
 ///     tokio_util_path: "path::to::tokio_util",
 ///     tracing_path: "path::to::tracing",
 ///     wasm_tokio_path: "path::to::wasm_tokio",
@@ -1082,7 +1082,6 @@ pub use anyhow;
 pub use bitflags;
 pub use bytes;
 pub use futures;
-pub use tokio;
 pub use tokio_util;
 pub use tracing;
 pub use wasm_tokio;

@@ -5,12 +5,11 @@ use crate::client::test::fixed_length_lists::to_test::*;
 pub async fn run(
     wrpc: &crate::Client,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
-    let (mut tx, mut rx) = wrpc.connect().await?;
-    list_param(&mut tx, &mut rx, &[1, 2, 3, 4]).await?;
-    list_param2(&mut tx, &mut rx, &[[1, 2], [3, 4]]).await?;
+    let mut clt = wrpc.connect().await?;
+    list_param(&mut clt, &[1, 2, 3, 4]).await?;
+    list_param2(&mut clt, &[[1, 2], [3, 4]]).await?;
     list_param3(
-        &mut tx,
-        &mut rx,
+        &mut clt,
         &[
             -1, 2, -3, 4, -5, 6, -7, 8, -9, 10, -11, 12, -13, 14, -15, 16, -17, 18, -19, 20,
         ],
@@ -18,24 +17,23 @@ pub async fn run(
     .await?;
 
     assert_eq!(
-        list_result(&mut tx, &mut rx).await?,
+        list_result(&mut clt).await?,
         [b'0', b'1', b'A', b'B', b'a', b'b', 128, 255]
     );
 
     assert_eq!(
-        list_minmax16(&mut tx, &mut rx, &[0, 1024, 32768, 65535], &[1, 2048, -32767, -2]).await?,
+        list_minmax16(&mut clt, &[0, 1024, 32768, 65535], &[1, 2048, -32767, -2]).await?,
         ([0, 1024, 32768, 65535], [1, 2048, -32767, -2])
     );
 
     assert_eq!(
-        list_minmax_float(&mut tx, &mut rx, &[2.0, -42.0], &[0.25, -0.125]).await?,
+        list_minmax_float(&mut clt, &[2.0, -42.0], &[0.25, -0.125]).await?,
         ([2.0, -42.0], [0.25, -0.125])
     );
 
     assert_eq!(
         list_roundtrip(
-            &mut tx,
-            &mut rx,
+            &mut clt,
             &[b'a', b'b', b'c', b'd', 0, 1, 2, 3, b'A', b'B', b'Y', b'Z']
         )
         .await?,
@@ -44,8 +42,7 @@ pub async fn run(
 
     assert_eq!(
         nested_roundtrip(
-            &mut tx,
-            &mut rx,
+            &mut clt,
             &[[1, 5], [42, 1_000_000]],
             &[[-1, 3], [-2_000_000, 4711]]
         )
@@ -55,8 +52,7 @@ pub async fn run(
 
     assert_eq!(
         large_roundtrip(
-            &mut tx,
-            &mut rx,
+            &mut clt,
             &[[1, 5], [42, 1_000_000]],
             &[
                 [-1, 3, -2, 4],
@@ -78,7 +74,7 @@ pub async fn run(
     );
 
     let result =
-        nightmare_on_cpp(&mut tx, &mut rx, &[Nested { l: [1, -1] }, Nested { l: [2, -2] }]).await?;
+        nightmare_on_cpp(&mut clt, &[Nested { l: [1, -1] }, Nested { l: [2, -2] }]).await?;
     assert_eq!(result[0].l, [1, -1]);
     assert_eq!(result[1].l, [2, -2]);
     Ok(())

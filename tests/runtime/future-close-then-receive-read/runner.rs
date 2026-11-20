@@ -9,11 +9,10 @@ pub async fn run(
     wrpc: &crate::Client,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     let (tx, rx) = oneshot::channel::<()>();
-    let (mut wrpc_tx, mut wrpc_rx) = wrpc.connect().await?;
+    let mut wrpc_clt = wrpc.connect().await?;
     let (res, ()) = join!(
         set(
-            &mut wrpc_tx,
-            &mut wrpc_rx,
+            &mut wrpc_clt,
             Box::pin(async move {
                 let _ = rx.await;
             }),
@@ -21,7 +20,7 @@ pub async fn run(
         async { drop(tx) },
     );
     res?;
-    let (rx, io) = get(&mut wrpc_tx, &mut wrpc_rx).await?;
+    let (rx, io) = get(&mut wrpc_clt).await?;
     drop(rx);
     drop(io);
     Ok(())

@@ -12,8 +12,8 @@ pub async fn run(
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     let (tx, rx) = oneshot::channel();
     let a = future::ready(tx.send(()));
-    let (wrpc_tx, wrpc_rx) = wrpc.connect().await?;
-    let b = f(wrpc_tx, wrpc_rx, Box::pin(async move { rx.await.unwrap() }));
+    let wrpc_clt = wrpc.connect().await?;
+    let b = f(wrpc_clt, Box::pin(async move { rx.await.unwrap() }));
     let (a_result, b_result) = join!(a, b);
     a_result.unwrap();
     b_result

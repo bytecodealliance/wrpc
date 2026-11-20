@@ -31,8 +31,7 @@ use tracing_subscriber::util::SubscriberInitExt as _;
 use url::Url;
 use uuid::Uuid;
 use web_transport_quinn::Request;
-use wit_bindgen_wrpc::tokio_util::codec::{FramedRead, FramedWrite};
-use wrpc_transport::{FrameDecoder, FrameEncoder, Header, Listener, ResourceBorrow, ResourceOwn};
+use wrpc_transport::{Framed, Header, Listener, ResourceBorrow, ResourceOwn};
 use wrpc_wasi_keyvalue::exports::wasi::keyvalue::store;
 
 pub type Result<T, E = store::Error> = core::result::Result<T, E>;
@@ -89,10 +88,8 @@ enum Remote {
 impl Remote {
     async fn connect(
         &self,
-    ) -> anyhow::Result<(
-        FramedWrite<Box<dyn AsyncWrite + Send + Unpin>, FrameEncoder>,
-        FramedRead<Box<dyn AsyncRead + Send + Unpin>, FrameDecoder>,
-    )> {
+    ) -> anyhow::Result<Framed<Box<dyn AsyncRead + Send + Unpin>, Box<dyn AsyncWrite + Send + Unpin>>>
+    {
         let (tx, rx): (
             Box<dyn AsyncWrite + Send + Unpin>,
             Box<dyn AsyncRead + Send + Unpin>,
@@ -118,10 +115,7 @@ impl Remote {
                 (Box::new(tx), Box::new(rx))
             }
         };
-        Ok((
-            FramedWrite::new(tx, FrameEncoder),
-            FramedRead::new(rx, FrameDecoder::default()),
-        ))
+        Ok(Framed::new(tx, rx))
     }
 }
 
@@ -298,11 +292,11 @@ impl store::Handler for Handler {
                 ))));
             }
         };
-        let (tx, rx) = remote
+        let clt = remote
             .connect()
             .await
             .context("failed to connect to remote")?;
-        let bucket = match wrpc_wasi_keyvalue::wasi::keyvalue::store::open(tx, rx, suffix).await? {
+        let bucket = match wrpc_wasi_keyvalue::wasi::keyvalue::store::open(clt, suffix).await? {
             Ok(bucket) => bucket,
             Err(err) => return Ok(Err(err.into())),
         };
@@ -325,13 +319,12 @@ impl store::HandlerBucket for Handler {
             Bucket::Mem(bucket) => return self.mem.get(bucket.as_borrow(), key).await,
             Bucket::Redis(bucket) => return self.redis.get(bucket.as_borrow(), key).await,
             Bucket::Remote(bucket, remote) => {
-                let (tx, rx) = remote
+                let clt = remote
                     .connect()
                     .await
                     .context("failed to connect to remote")?;
                 wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket::get(
-                    tx,
-                    rx,
+                    clt,
                     &bucket.as_borrow(),
                     &key,
                 )
@@ -357,13 +350,12 @@ impl store::HandlerBucket for Handler {
                 return self.redis.set(bucket.as_borrow(), key, value).await;
             }
             Bucket::Remote(bucket, remote) => {
-                let (tx, rx) = remote
+                let clt = remote
                     .connect()
                     .await
                     .context("failed to connect to remote")?;
                 wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket::set(
-                    tx,
-                    rx,
+                    clt,
                     &bucket.as_borrow(),
                     &key,
                     &value,
@@ -387,13 +379,12 @@ impl store::HandlerBucket for Handler {
             Bucket::Mem(bucket) => return self.mem.delete(bucket.as_borrow(), key).await,
             Bucket::Redis(bucket) => return self.redis.delete(bucket.as_borrow(), key).await,
             Bucket::Remote(bucket, remote) => {
-                let (tx, rx) = remote
+                let clt = remote
                     .connect()
                     .await
                     .context("failed to connect to remote")?;
                 wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket::delete(
-                    tx,
-                    rx,
+                    clt,
                     &bucket.as_borrow(),
                     &key,
                 )
@@ -416,13 +407,12 @@ impl store::HandlerBucket for Handler {
             Bucket::Mem(bucket) => return self.mem.exists(bucket.as_borrow(), key).await,
             Bucket::Redis(bucket) => return self.redis.exists(bucket.as_borrow(), key).await,
             Bucket::Remote(bucket, remote) => {
-                let (tx, rx) = remote
+                let clt = remote
                     .connect()
                     .await
                     .context("failed to connect to remote")?;
                 wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket::exists(
-                    tx,
-                    rx,
+                    clt,
                     &bucket.as_borrow(),
                     &key,
                 )
@@ -447,13 +437,12 @@ impl store::HandlerBucket for Handler {
                 return self.redis.list_keys(bucket.as_borrow(), cursor).await;
             }
             Bucket::Remote(bucket, remote) => {
-                let (tx, rx) = remote
+                let clt = remote
                     .connect()
                     .await
                     .context("failed to connect to remote")?;
                 wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket::list_keys(
-                    tx,
-                    rx,
+                    clt,
                     &bucket.as_borrow(),
                     cursor.as_deref(),
                 )
@@ -490,7 +479,7 @@ async fn serve_conn(handler: Handler, conn: quinn::Incoming) -> anyhow::Result<(
         spawn(async move {
             let mut lis = Listener::new(tx, rx);
             loop {
-                let (Header { instance, name }, tx, rx) = match lis.accept().await {
+                let (Header { instance, name }, srv) = match lis.accept().await {
                     Ok(Some(next)) => next,
                     Ok(None) => return,
                     Err(err) => {
@@ -498,7 +487,7 @@ async fn serve_conn(handler: Handler, conn: quinn::Incoming) -> anyhow::Result<(
                         return;
                     }
                 };
-                let fut = match store::handle_interface(&handler, &instance, &name, tx, rx) {
+                let fut = match store::handle_interface(&handler, &instance, &name, srv) {
                     Ok(fut) => fut,
                     Err(..) => {
                         warn!(instance, func = name, "function is not exported");

@@ -10,7 +10,7 @@ use crate::client::foo::bar::component::UnusedVariant as _;
 pub async fn run(
     wrpc: &crate::Client,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
-    let (tx, rx) = wrpc.connect().await?;
-    crate::client::foo::bar::component::foo(tx, rx).await?;
+    let clt = wrpc.connect().await?;
+    crate::client::foo::bar::component::foo(clt).await?;
     Ok(())
 }

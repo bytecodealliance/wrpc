@@ -3,18 +3,18 @@ use crate::client::test::results::test::*;
 pub async fn run(
     wrpc: &crate::Client,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
-    let (mut tx, mut rx) = wrpc.connect().await?;
-    let v = string_error(&mut tx, &mut rx, 0.0).await?;
+    let mut clt = wrpc.connect().await?;
+    let v = string_error(&mut clt, 0.0).await?;
     assert_eq!(v, Err("zero".to_owned()));
-    let v = string_error(&mut tx, &mut rx, 1.0).await?;
+    let v = string_error(&mut clt, 1.0).await?;
     assert_eq!(v, Ok(1.0));
 
-    let v = enum_error(&mut tx, &mut rx, 0.0).await?;
+    let v = enum_error(&mut clt, 0.0).await?;
     assert_eq!(v, Err(E::A));
-    let v = enum_error(&mut tx, &mut rx, 1.0).await?;
+    let v = enum_error(&mut clt, 1.0).await?;
     assert_eq!(v, Ok(1.0));
 
-    let v = record_error(&mut tx, &mut rx, 0.0).await?;
+    let v = record_error(&mut clt, 0.0).await?;
     assert!(matches!(
         v,
         Err(E2 {
@@ -22,7 +22,7 @@ pub async fn run(
             column: 0
         })
     ));
-    let v = record_error(&mut tx, &mut rx, 1.0).await?;
+    let v = record_error(&mut clt, 1.0).await?;
     assert!(matches!(
         v,
         Err(E2 {
@@ -30,10 +30,10 @@ pub async fn run(
             column: 2
         })
     ));
-    let v = record_error(&mut tx, &mut rx, 2.0).await?;
+    let v = record_error(&mut clt, 2.0).await?;
     assert!(v.is_ok());
 
-    let v = variant_error(&mut tx, &mut rx, 0.0).await?;
+    let v = variant_error(&mut clt, 0.0).await?;
     assert!(matches!(
         v,
         Err(E3::E2(E2 {
@@ -41,23 +41,23 @@ pub async fn run(
             column: 0
         }))
     ));
-    let v = variant_error(&mut tx, &mut rx, 1.0).await?;
+    let v = variant_error(&mut clt, 1.0).await?;
     assert!(matches!(v, Err(E3::E1(E::B))));
-    let v = variant_error(&mut tx, &mut rx, 2.0).await?;
+    let v = variant_error(&mut clt, 2.0).await?;
     assert!(matches!(v, Err(E3::E1(E::C))));
 
-    let v = empty_error(&mut tx, &mut rx, 0).await?;
+    let v = empty_error(&mut clt, 0).await?;
     assert_eq!(v, Err(()));
-    let v = empty_error(&mut tx, &mut rx, 1).await?;
+    let v = empty_error(&mut clt, 1).await?;
     assert_eq!(v, Ok(42));
-    let v = empty_error(&mut tx, &mut rx, 2).await?;
+    let v = empty_error(&mut clt, 2).await?;
     assert_eq!(v, Ok(2));
 
-    let v = double_error(&mut tx, &mut rx, 0).await?;
+    let v = double_error(&mut clt, 0).await?;
     assert_eq!(v, Ok(Ok(())));
-    let v = double_error(&mut tx, &mut rx, 1).await?;
+    let v = double_error(&mut clt, 1).await?;
     assert_eq!(v, Ok(Err("one".into())));
-    let v = double_error(&mut tx, &mut rx, 2).await?;
+    let v = double_error(&mut clt, 2).await?;
     assert_eq!(v, Err("two".into()));
     Ok(())
 }

@@ -11,8 +11,76 @@ use tokio_util::codec::{Decoder, Encoder, FramedRead, FramedWrite};
 use tracing::{Instrument as _, debug, trace};
 
 use crate::{
-    Codec, Decode, Encode, FrameDecoder, FrameEncoder, Receive, Transmit, receive, transmit,
+    Codec, Decode, Encode, FrameDecoder, FrameEncoder, Framed, Receive, Transmit, receive, transmit,
 };
+
+/// Server serving invocations with [`Send`] futures, such as [`Framed`], see [`Codec::serve`]
+pub trait Serve {
+    /// Value an invocation is served with
+    type Output;
+
+    /// Serves an invocation using `codec` by calling `f` with its parameters, see
+    /// [`Codec::serve`]
+    fn serve<E, D, T, Fut, Err>(
+        self,
+        codec: Codec<E, D>,
+        f: impl FnOnce(D::Item) -> Fut + Send,
+    ) -> impl Future<Output = Result<Self::Output, Err>> + Send
+    where
+        E: Transmit + Encoder<T, Error = std::io::Error> + Send + 'static,
+        D: Decoder<Error = std::io::Error> + Receive + Send + 'static,
+        D::Item: Send,
+        Fut: Future<Output = Result<T, Err>> + Send,
+        Err: From<std::io::Error>;
+}
+
+impl<I, O> Serve for Framed<I, O>
+where
+    I: AsyncRead + Unpin + Send,
+    O: AsyncWrite + Unpin + Send,
+{
+    type Output = ();
+
+    fn serve<E, D, T, Fut, Err>(
+        self,
+        codec: Codec<E, D>,
+        f: impl FnOnce(D::Item) -> Fut + Send,
+    ) -> impl Future<Output = Result<Self::Output, Err>> + Send
+    where
+        E: Transmit + Encoder<T, Error = std::io::Error> + Send + 'static,
+        D: Decoder<Error = std::io::Error> + Receive + Send + 'static,
+        D::Item: Send,
+        Fut: Future<Output = Result<T, Err>> + Send,
+        Err: From<std::io::Error>,
+    {
+        let Self { tx, rx } = self;
+        codec.serve(tx, rx, f)
+    }
+}
+
+impl<I, O> Serve for &mut Framed<I, O>
+where
+    I: AsyncRead + Unpin + Send,
+    O: AsyncWrite + Unpin + Send,
+{
+    type Output = ();
+
+    fn serve<E, D, T, Fut, Err>(
+        self,
+        codec: Codec<E, D>,
+        f: impl FnOnce(D::Item) -> Fut + Send,
+    ) -> impl Future<Output = Result<Self::Output, Err>> + Send
+    where
+        E: Transmit + Encoder<T, Error = std::io::Error> + Send + 'static,
+        D: Decoder<Error = std::io::Error> + Receive + Send + 'static,
+        D::Item: Send,
+        Fut: Future<Output = Result<T, Err>> + Send,
+        Err: From<std::io::Error>,
+    {
+        let Framed { tx, rx } = self;
+        codec.serve(tx, rx, f)
+    }
+}
 
 impl<E, D> Codec<E, D>
 where
@@ -66,22 +134,18 @@ where
     }
 }
 
-/// Serves an invocation over the frames written by `tx` and read by `rx` using the default codecs
-/// of parameters `P` and results `R`, see [`Codec::serve`]
-pub async fn serve<P, R, I, O, Fut, Err>(
-    tx: impl BorrowMut<FramedWrite<O, FrameEncoder>>,
-    rx: impl BorrowMut<FramedRead<I, FrameDecoder>>,
-    f: impl FnOnce(P) -> Fut,
-) -> Result<(), Err>
+/// Serves an invocation using `srv` and the default codecs of parameters `P` and results `R`, see
+/// [`Codec::serve`]
+pub fn serve<P, R, S, Fut, Err>(
+    srv: S,
+    f: impl FnOnce(P) -> Fut + Send,
+) -> impl Future<Output = Result<S::Output, Err>> + Send
 where
-    I: AsyncRead + Unpin,
-    O: AsyncWrite + Unpin,
-    P: Decode,
-    R: Encode,
-    Fut: Future<Output = Result<R, Err>>,
+    S: Serve,
+    P: Decode<Decoder: Send + 'static> + Send,
+    R: Encode<Encoder: Send + 'static>,
+    Fut: Future<Output = Result<R, Err>> + Send,
     Err: From<std::io::Error>,
 {
-    Codec::<R::Encoder, P::Decoder>::default()
-        .serve(tx, rx, f)
-        .await
+    srv.serve(Codec::<R::Encoder, P::Decoder>::default(), f)
 }

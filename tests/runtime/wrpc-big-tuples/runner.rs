@@ -23,16 +23,15 @@ pub async fn run(wrpc: &crate::Client) -> ::wit_bindgen_wrpc::anyhow::Result<()>
         15,
         "foo".to_string(),
     );
-    let (tx, rx) = wrpc.connect().await?;
-    let a = roundtrip(tx, rx, &[expected.clone()]).await?;
+    let clt = wrpc.connect().await?;
+    let a = roundtrip(clt, &[expected.clone()]).await?;
     assert_eq!(a, [expected.clone()]);
 
     let (tx, rx) = oneshot::channel();
-    let (wrpc_tx, wrpc_rx) = wrpc.connect().await?;
+    let clt = wrpc.connect().await?;
     let ((), v) = join!(async { tx.send(16).unwrap() }, async {
         let (fut, io) = nested_future(
-            wrpc_tx,
-            wrpc_rx,
+            clt,
             Tuple17(
                 0,
                 1,
@@ -60,9 +59,9 @@ pub async fn run(wrpc: &crate::Client) -> ::wit_bindgen_wrpc::anyhow::Result<()>
     let v = v?;
     assert_eq!(v, 16);
 
-    let (tx, rx) = wrpc.connect().await?;
+    let clt = wrpc.connect().await?;
     let a = many_params(
-        tx, rx, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, "foo",
+        clt, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, "foo",
     )
     .await?;
     assert_eq!(a, "foo");
