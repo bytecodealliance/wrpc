@@ -512,12 +512,16 @@ impl Gen<'_> {
             TypeDefKind::FixedLengthList(ty, n) => {
                 format!("$t.list({}, {n})", self.js_ty(resolve, ty))
             }
+            TypeDefKind::Map(key, value) => {
+                let key = self.js_ty(resolve, key);
+                let value = self.js_ty(resolve, value);
+                format!("$t.map({key}, {value})")
+            }
             TypeDefKind::Future(Some(ty)) => format!("$t.future({})", self.js_ty(resolve, ty)),
             TypeDefKind::Future(None) => "$t.future()".to_string(),
             TypeDefKind::Stream(Some(ty)) => format!("$t.stream({})", self.js_ty(resolve, ty)),
             TypeDefKind::Stream(None) => "$t.stream($t.tuple())".to_string(),
             TypeDefKind::Type(..) | TypeDefKind::Unknown => unreachable!(),
-            TypeDefKind::Map(..) => panic!("unsupported type: map"),
         }
     }
 
@@ -633,6 +637,11 @@ impl Gen<'_> {
             TypeDefKind::List(ty) | TypeDefKind::FixedLengthList(ty, ..) => {
                 self.ts_list(resolve, ty)
             }
+            TypeDefKind::Map(key, value) => {
+                let key = self.ts_ty(resolve, key);
+                let value = self.ts_ty(resolve, value);
+                format!("globalThis.Map<{key}, {value}>")
+            }
             TypeDefKind::Future(ty) => format!(
                 "globalThis.Promise<{}>",
                 self.ts_opt_ty(resolve, ty.as_ref())
@@ -644,7 +653,6 @@ impl Gen<'_> {
                 "globalThis.AsyncIterable<globalThis.Array<[]>>".to_string()
             }
             TypeDefKind::Type(ty) => self.ts_ty(resolve, ty),
-            TypeDefKind::Map(..) => panic!("unsupported type: map"),
             TypeDefKind::Unknown => unreachable!(),
         }
     }
@@ -690,6 +698,10 @@ impl Gen<'_> {
                 for ty in r.ok.iter().chain(&r.err) {
                     Self::local_deps(resolve, owner, ty, deps);
                 }
+            }
+            TypeDefKind::Map(key, value) => {
+                Self::local_deps(resolve, owner, key, deps);
+                Self::local_deps(resolve, owner, value, deps);
             }
             TypeDefKind::Option(ty)
             | TypeDefKind::List(ty)

@@ -175,6 +175,20 @@ test("values echo end to end", async () => {
     ],
     [t.list(t.future(t.u8)), [Promise.resolve(5), 6], (v) => Promise.all(v), [5, 6]],
     [
+      t.map(t.string, t.future(t.u8)),
+      new Map(
+        /** @type {[string, InputValue][]} */ ([
+          ["a", Promise.resolve(5)],
+          ["b", 6],
+        ]),
+      ),
+      (v) => Promise.all([...v].map(async ([k, f]) => [k, await f])),
+      [
+        ["a", 5],
+        ["b", 6],
+      ],
+    ],
+    [
       t.stream(t.stream(t.u8)),
       [[Uint8Array.of(7)], [Uint8Array.of(8)]],
       async (v) => Promise.all((await collect(v)).map(collect)),

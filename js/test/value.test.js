@@ -158,6 +158,7 @@ test("decoding rejects invalid input", () => {
     [t.char, [0x80, 0x80], /encoded data was not valid/],
     [t.flags(["a", "b", "c"]), [0b1000], /invalid flags bits/],
     [t.flags(Array.from({ length: 9 }, (_, i) => `f${i}`)), [0, 2], /invalid flags bits/],
+    [t.map(t.u8, t.u8), [2, 1, 0, 1, 1], /duplicate map key/],
   ])) {
     assert.throws(() => decode(ty, Uint8Array.from(bytes)), error, `${ty.kind} ${bytes}`);
   }
@@ -220,6 +221,26 @@ test("numeric lists round-trip as typed arrays", () => {
   const detached = Uint8Array.of(1);
   structuredClone(detached.buffer, { transfer: [detached.buffer] });
   assert.throws(() => encode(t.list(t.u8), detached), /attached buffer/);
+});
+
+test("maps", () => {
+  const ty = t.map(t.string, t.u32);
+  const entries = /** @type {[string, number][]} */ ([
+    ["a", 1],
+    ["b", 300],
+  ]);
+  const want = Uint8Array.of(2, 1, 0x61, 1, 1, 0x62, 0xac, 0x02);
+  assert.deepEqual(encode(ty, new Map(entries)), want);
+  assert.deepEqual(encode(ty, runInNewContext("new Map(entries)", { entries })), want);
+  assert.throws(() => encode(ty, entries), { name: "TypeError", message: /expected a `Map`/ });
+  roundtrip(ty, new Map(entries));
+  roundtrip(
+    t.map(t.u64, t.map(t.char, t.list(t.u8))),
+    new Map([
+      [1n, new Map([["x", Uint8Array.of(1)]])],
+      [2n, new Map()],
+    ]),
+  );
 });
 
 test("lists, tuples, records", () => {

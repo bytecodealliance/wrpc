@@ -244,7 +244,7 @@ The world module's `served` lists the `[instance, function]` pairs `serve`
 dispatches.
 
 Names follow the [JS-API draft], so functions are camel case and types are
-Pascal case. `map` types are not supported yet.
+Pascal case.
 
 ## Value mapping
 
@@ -266,6 +266,7 @@ native WebAssembly component support in browsers implements:
 | `list<f32>`, `list<f64>` | `Float32Array`, `Float64Array`                                |
 | `list<T>`                | `Array`                                                       |
 | `list<T, N>`             | like `list<T>`, with exactly `N` elements                     |
+| `map<K, V>`              | `Map`                                                         |
 | `tuple<...>`             | `Array`                                                       |
 | `record`                 | null-prototype object keyed by the camel case field names     |
 | `option<T>`              | `T \| undefined`                                              |
@@ -295,6 +296,7 @@ When sending, values are converted like the draft does, too:
   typed array constructors convert them for lists of floats; a `tuple`'s
   missing elements are `undefined`. An `ArrayBuffer` is not
   iterable, so it is not a byte list.
+- A `map` must be a `Map`.
 - Record fields and flags are read as properties, also from the prototype, so
   a missing field is `undefined`, and flags are their truthiness.
 - `null` is also `none`, but only for an `option` not nested in another one.
