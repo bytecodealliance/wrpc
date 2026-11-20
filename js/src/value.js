@@ -19,6 +19,7 @@
 //   list<f32>/list<f64> -> Float32Array/Float64Array
 //   list<T>             -> Array
 //   list<T, N>          -> as list<T>
+//   map<K, V>           -> Map
 //   tuple               -> Array
 //   record              -> null-prototype object keyed by camel case field name
 //   option<T>           -> T | undefined (none is `undefined`/`null`), or
@@ -161,6 +162,7 @@ const f32Bytes = floatBytes.subarray(0, 4);
 /** The kinds of the types whose values contain other values. */
 const COMPOSITE = new Set([
   "list",
+  "map",
   "tuple",
   "record",
   "option",
@@ -289,6 +291,15 @@ export function encodeValue(w, ty, v, sink, path) {
         encodeValue(w, elem, elems[i], sink, childPath(sink, path, i));
       return;
     }
+    case "map": {
+      const entries = mapEntries(v);
+      if (!entries) throw new TypeError("expected a `Map` for a `map`");
+      w.varU(entries.length);
+      const entry = mapEntry(ty);
+      for (let i = 0; i < entries.length; i++)
+        encodeValue(w, entry, entries[i], sink, childPath(sink, path, i));
+      return;
+    }
     case "tuple": {
       const elems = iterableToValues(v);
       if (!elems) throw new TypeError(`expected an iterable for a \`tuple\``);
@@ -400,6 +411,12 @@ export function* decodeSteps(r, ty, sink, path) {
   switch (ty.kind) {
     case "list":
       return yield* readChunk(r, ty.elem, ty.length ?? (yield* atomic(r, readVarU32)), sink, path);
+    case "map": {
+      const n = yield* atomic(r, readVarU32);
+      const m = new Map(yield* readChunk(r, mapEntry(ty), n, sink, path));
+      if (m.size !== n) throw new RangeError("duplicate map key");
+      return m;
+    }
     case "tuple": {
       const out = [];
       for (let i = 0; i < ty.elems.length; i++) {
@@ -554,6 +571,8 @@ export function asyncDepth(ty) {
       return Math.max(0, indexed([ty.elem]));
     case "list":
       return indexed([ty.elem]);
+    case "map":
+      return indexed([mapEntry(ty)]);
     case "option":
       return nested(ty.some);
     case "result":
@@ -592,6 +611,18 @@ function iterableToValues(v) {
 }
 
 /**
+ * The entries of `v`, or `undefined` if `v` is not a `Map` from any realm.
+ * @param {unknown} v @returns {[unknown, unknown][] | undefined}
+ */
+function mapEntries(v) {
+  try {
+    return [...Map.prototype.entries.call(v)];
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * The elements of the `list<elem>` value or `stream<elem>` chunk `v`: the
  * typed array of a numeric `elem`, copying any other iterable into one, or the
  * values `v` iterates.
@@ -612,6 +643,12 @@ export function toList(v, elem) {
 }
 
 const u8 = /** @type {Type} */ ({ kind: "u8" });
+
+/**
+ * The `tuple<key, value>` entry type of the `map<key, value>` type `ty`.
+ * @param {Extract<Type, { kind: "map" }>} ty @returns {Type}
+ */
+const mapEntry = (ty) => ({ kind: "tuple", elems: [ty.key, ty.value] });
 const OPTION_CASES = ["none", "some"];
 const RESULT_CASES = ["ok", "error"];
 

@@ -19,6 +19,7 @@ export type Type =
         | "string";
     }
   | { kind: "list"; elem: Type; length?: number }
+  | { kind: "map"; key: Type; value: Type }
   | { kind: "option"; some: Type }
   | { kind: "result"; ok: Type | null; err: Type | null }
   | { kind: "tuple"; elems: Type[] }
@@ -57,6 +58,7 @@ export type Value =
   | string
   | TypedArray
   | Value[]
+  | Map<Value, Value>
   | { [field: string]: Value }
   | { kind: string; value?: Value }
   | Promise<Value>
@@ -78,6 +80,7 @@ export type InputValue =
   | string
   | TypedArray
   | Iterable<InputValue>
+  | Map<InputValue, InputValue>
   | { [field: string]: InputValue }
   | { kind: string; value?: InputValue }
   | Promise<InputValue>
@@ -119,6 +122,7 @@ export namespace types {
   export const char: Type;
   export const string: Type;
   export function list(elem: Type, length?: number): Type;
+  export function map(key: Type, value: Type): Type;
   export function option(some: Type): Type;
   export function future(some?: Type | null): Type;
   export function stream(elem: Type): Type;

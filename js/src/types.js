@@ -4,6 +4,7 @@
 //   { kind: "bool" | "s8" | "u8" | "s16" | "u16" | "s32" | "u32" | "s64"
 //          | "u64" | "f32" | "f64" | "char" | "string" }
 //   | { kind: "list", elem: Type, length?: number }
+//   | { kind: "map", key: Type, value: Type }
 //   | { kind: "option", some: Type }
 //   | { kind: "result", ok: Type | null, err: Type | null }
 //   | { kind: "tuple", elems: Type[] }
@@ -53,6 +54,9 @@ export const string = { kind: "string" };
  */
 export const list = (elem, length) =>
   length === undefined ? { kind: "list", elem } : { kind: "list", elem, length };
+
+/** `map<key, value>` @param {Type} key @param {Type} value @returns {Type} */
+export const map = (key, value) => ({ kind: "map", key, value });
 
 /** `option<some>` @param {Type} some @returns {Type} */
 export const option = (some) => ({ kind: "option", some });
