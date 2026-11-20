@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 use tracing::{debug, warn};
+use wasmparser::names::split_canonical_version;
 use wasmtime::component::{Component, ComponentExportIndex, Type, types};
 
 // this returns the RPC name for a wasmtime function name.
@@ -17,6 +18,16 @@ fn rpc_func_name(name: &str) -> &str {
         name
     } else {
         name
+    }
+}
+
+fn instance_name(name: &str) -> String {
+    if let Some((id, version)) = name.split_once('@')
+        && let Some((version, ..)) = split_canonical_version(version)
+    {
+        format!("{id}@{version}")
+    } else {
+        name.into()
     }
 }
 
@@ -73,14 +84,15 @@ impl Exports {
                     let idx = component
                         .get_export_index(None, name)
                         .with_context(|| format!("export `{name}` not found"))?;
+                    let instance = instance_name(name);
                     for (func, types::ComponentExtern { ty, .. }) in ty.exports(engine) {
                         match ty {
                             types::ComponentItem::ComponentFunc(ty) => {
-                                insert(name, Some(&idx), func, ty)?;
+                                insert(&instance, Some(&idx), func, ty)?;
                             }
                             types::ComponentItem::Type(..) | types::ComponentItem::Resource(..) => {
                             }
-                            _ => warn!(instance = name, name = func, "export kind not supported"),
+                            _ => warn!(%instance, name = func, "export kind not supported"),
                         }
                     }
                 }
