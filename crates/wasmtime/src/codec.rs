@@ -228,6 +228,41 @@ fn encode_value(
             Leb128Encoder.encode(n, dst)?;
             encode_seq(iter::repeat(ty.ty()), vs, dst)
         }
+        (Val::Map(vs), Type::Map(ty)) => {
+            let n = u32::try_from(vs.len()).context("map length does not fit in u32")?;
+            Leb128Encoder.encode(n, dst)?;
+            let (key, value) = (ty.key(), ty.value());
+            let mut keys = HashSet::<Vec<u8>>::default();
+            let mut nested = BTreeMap::<usize, Box<dyn Transmit + Send>>::default();
+            for (i, (k, v)) in vs.into_iter().enumerate() {
+                let off = dst.len();
+                let k = encode_value(&key, k, dst)
+                    .with_context(|| format!("failed to encode key {i}"))?;
+                if !keys.insert(dst[off..].to_vec()) {
+                    bail!("duplicate key {i}");
+                }
+                let v = encode_value(&value, v, dst)
+                    .with_context(|| format!("failed to encode value {i}"))?;
+                let entry: BTreeMap<_, _> = [k, v]
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(|(i, t)| t.map(|t| (i, t)))
+                    .collect();
+                if !entry.is_empty() {
+                    nested.insert(i, Box::new(entry));
+                }
+            }
+            if nested.is_empty() {
+                return Ok(None);
+            }
+            Ok(Some(Box::new(nested)))
+        }
+        (Val::FixedLengthList(vs), Type::FixedLengthList(ty)) => {
+            if u32::try_from(vs.len()) != Ok(ty.len()) {
+                bail!("list has {} elements, expected {}", vs.len(), ty.len());
+            }
+            encode_seq(iter::repeat(ty.ty()), vs, dst)
+        }
         (Val::Record(vs), Type::Record(ty)) => {
             if vs.len() != ty.fields().len() {
                 bail!(
@@ -325,8 +360,10 @@ fn encode_value(
 /// Resume point of a [`TupleDecoder`] within a partially-received value
 enum Partial {
     Decoder(Box<dyn Any + Send>),
-    /// Decoded elements of a `list`, `record` or `tuple` of `n` elements
+    /// Decoded elements of a sequence of `n` elements
     Seq(usize, Vec<Val>),
+    /// Decoded entries of a `map` of `n` entries
+    Map(usize, Vec<(Val, Val)>),
     /// `variant`, `option` or `result` case awaiting its payload of type `Type`
     Case(Val, Type),
     /// `future` or `stream`, whose `ready` status was decoded
@@ -356,8 +393,8 @@ impl TupleDecoder {
         }
     }
 
-    /// Rejects strings and resource handles longer than `max_len` bytes and lists and `stream`
-    /// chunks longer than `max_len` elements, [`DEFAULT_MAX_LEN`] by default.
+    /// Rejects strings and resource handles longer than `max_len` bytes and lists, maps and
+    /// `stream` chunks longer than `max_len` elements, [`DEFAULT_MAX_LEN`] by default.
     #[must_use]
     pub fn with_max_len(mut self, max_len: u32) -> Self {
         self.max_len = max_len;
@@ -470,6 +507,37 @@ impl TupleDecoder {
         let v = self.decode_ty(src, ty, &mut Vec::default(), &mut state)?;
         self.state = state;
         Ok(v)
+    }
+
+    fn decode_map(
+        &mut self,
+        src: &mut BytesMut,
+        path: &mut Vec<usize>,
+        state: &mut Vec<Partial>,
+        key: &Type,
+        value: &Type,
+    ) -> std::io::Result<Option<Vec<(Val, Val)>>> {
+        let (n, mut vs) = match state.pop() {
+            Some(Partial::Map(n, vs)) => (n, vs),
+            _ => {
+                let Some(n) = self.decode_len(src)? else {
+                    return Ok(None);
+                };
+                let cap = DEFAULT_MAX_INITIAL_CAPACITY / mem::size_of::<(Val, Val)>();
+                (n, Vec::with_capacity(n.min(cap)))
+            }
+        };
+        while vs.len() < n {
+            path.push(vs.len());
+            let kv = self.decode_seq(src, path, state, Some(2), [key, value])?;
+            path.pop();
+            let Some(Ok([k, v])) = kv.map(<[Val; 2]>::try_from) else {
+                state.push(Partial::Map(n, vs));
+                return Ok(None);
+            };
+            vs.push((k, v));
+        }
+        Ok(Some(vs))
     }
 
     fn decode_seq(
@@ -632,6 +700,16 @@ impl TupleDecoder {
                 let vs = self.decode_seq(src, path, state, None, iter::repeat(&ty))?;
                 Ok(vs.map(Val::List))
             }
+            Type::Map(ty) => {
+                let vs = self.decode_map(src, path, state, &ty.key(), &ty.value())?;
+                Ok(vs.map(Val::Map))
+            }
+            Type::FixedLengthList(ty) => {
+                let n = usize::try_from(ty.len()).unwrap_or(usize::MAX);
+                let ty = ty.ty();
+                let vs = self.decode_seq(src, path, state, Some(n), iter::repeat(&ty))?;
+                Ok(vs.map(Val::FixedLengthList))
+            }
             Type::Record(ty) => {
                 let n = ty.fields().len();
                 let tys = ty.fields().map(|Field { ty, .. }| ty);
@@ -720,14 +798,6 @@ impl TupleDecoder {
             Type::ErrorContext => Err(std::io::Error::new(
                 std::io::ErrorKind::Unsupported,
                 "`error-context` not supported",
-            )),
-            Type::Map(..) => Err(std::io::Error::new(
-                std::io::ErrorKind::Unsupported,
-                "maps not supported",
-            )),
-            Type::FixedLengthList(..) => Err(std::io::Error::new(
-                std::io::ErrorKind::Unsupported,
-                "fixed-length lists not supported",
             )),
         }
     }
