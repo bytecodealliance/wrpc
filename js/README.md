@@ -244,7 +244,7 @@ The world module's `served` lists the `[instance, function]` pairs `serve`
 dispatches.
 
 Names follow the [JS-API draft], so functions are camel case and types are
-Pascal case. `map` types and fixed-length lists are not supported yet.
+Pascal case. `map` types are not supported yet.
 
 ## Value mapping
 
@@ -265,6 +265,7 @@ native WebAssembly component support in browsers implements:
 | `list<s64>`, `list<u64>` | `BigInt64Array`, `BigUint64Array`                             |
 | `list<f32>`, `list<f64>` | `Float32Array`, `Float64Array`                                |
 | `list<T>`                | `Array`                                                       |
+| `list<T, N>`             | like `list<T>`, with exactly `N` elements                     |
 | `tuple<...>`             | `Array`                                                       |
 | `record`                 | null-prototype object keyed by the camel case field names     |
 | `option<T>`              | `T \| undefined`                                              |

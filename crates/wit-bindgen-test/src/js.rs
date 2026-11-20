@@ -33,21 +33,13 @@ impl LanguageMethods for Js {
         _config: &crate::config::WitConfig,
         _args: &[String],
     ) -> bool {
-        // The wRPC JavaScript generator does not yet support fixed-length
-        // lists or `map`.
-        matches!(
-            name,
-            "named-fixed-length-list.wit" | "fixed-length-list-in-list.wit" | "map.wit"
-        )
+        // The wRPC JavaScript generator does not yet support `map`.
+        name == "map.wit"
     }
 
     fn should_fail_runtime(&self, name: &str) -> bool {
-        matches!(
-            name,
-            // The wRPC JavaScript generator does not yet support fixed-length
-            // lists or `map`.
-            "fixed-length-lists" | "map"
-        )
+        // The wRPC JavaScript generator does not yet support `map`.
+        name == "map"
     }
 
     fn prepare(&self, _runner: &mut Runner<'_>) -> Result<()> {

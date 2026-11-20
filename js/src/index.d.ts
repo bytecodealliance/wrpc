@@ -18,7 +18,7 @@ export type Type =
         | "char"
         | "string";
     }
-  | { kind: "list"; elem: Type }
+  | { kind: "list"; elem: Type; length?: number }
   | { kind: "option"; some: Type }
   | { kind: "result"; ok: Type | null; err: Type | null }
   | { kind: "tuple"; elems: Type[] }
@@ -118,7 +118,7 @@ export namespace types {
   export const f64: Type;
   export const char: Type;
   export const string: Type;
-  export function list(elem: Type): Type;
+  export function list(elem: Type, length?: number): Type;
   export function option(some: Type): Type;
   export function future(some?: Type | null): Type;
   export function stream(elem: Type): Type;

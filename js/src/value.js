@@ -18,6 +18,7 @@
 //   list<s64>/list<u64> -> BigInt64Array/BigUint64Array
 //   list<f32>/list<f64> -> Float32Array/Float64Array
 //   list<T>             -> Array
+//   list<T, N>          -> as list<T>
 //   tuple               -> Array
 //   record              -> null-prototype object keyed by camel case field name
 //   option<T>           -> T | undefined (none is `undefined`/`null`), or
@@ -274,7 +275,12 @@ export function encodeValue(w, ty, v, sink, path) {
     case "borrow": {
       const elem = ty.kind === "list" ? ty.elem : u8;
       const elems = toList(v, elem);
-      w.varU(elems.length);
+      const length = ty.kind === "list" ? ty.length : undefined;
+      if (length === undefined) w.varU(elems.length);
+      else if (elems.length !== length)
+        throw new RangeError(
+          `expected ${length} elements for a fixed-length list, got ${elems.length}`,
+        );
       if (elem.kind === "u8") {
         w.bytes(/** @type {Uint8Array} */ (elems));
         return;
@@ -393,7 +399,7 @@ export function decodeValue(r, ty, sink, path) {
 export function* decodeSteps(r, ty, sink, path) {
   switch (ty.kind) {
     case "list":
-      return yield* readChunk(r, ty.elem, yield* atomic(r, readVarU32), sink, path);
+      return yield* readChunk(r, ty.elem, ty.length ?? (yield* atomic(r, readVarU32)), sink, path);
     case "tuple": {
       const out = [];
       for (let i = 0; i < ty.elems.length; i++) {
