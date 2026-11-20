@@ -127,6 +127,17 @@ pub struct Opts {
     #[cfg_attr(feature = "clap", arg(long))]
     pub stubs: bool,
 
+    /// The optional path to the map type to use for WIT `map<K, V>`.
+    ///
+    /// The specified type must accept two type parameters `<K, V>`, implement
+    /// `wrpc_transport::Encode` and `wrpc_transport::Decode` and provide the
+    /// `BTreeMap` API used by the generated code (e.g. `Debug`, `iter` and
+    /// `FromIterator`).
+    ///
+    /// Defaults to `::std::collections::BTreeMap`.
+    #[cfg_attr(feature = "clap", arg(long, value_name = "PATH"))]
+    pub map_type: Option<String>,
+
     /// The optional path to the bitflags crate to use.
     ///
     /// This defaults to `wit_bindgen_wrpc::bitflags`.
@@ -380,6 +391,13 @@ with: {{\n\t{with_name:?}: generate\n}}
             .unwrap_or("::wit_bindgen_wrpc::anyhow")
     }
 
+    fn map_type_path(&self) -> &str {
+        self.opts
+            .map_type
+            .as_deref()
+            .unwrap_or("::std::collections::BTreeMap")
+    }
+
     fn bitflags_path(&self) -> &str {
         self.opts
             .bitflags_path
@@ -522,6 +540,9 @@ impl WorldGenerator for RustWrpc {
         }
         if self.opts.stubs {
             uwriteln!(self.src_preamble, "//   * stubs");
+        }
+        if let Some(map_type) = &self.opts.map_type {
+            uwriteln!(self.src_preamble, "//   * map_type: {:?}", map_type);
         }
         if !self.opts.additional_derive_attributes.is_empty() {
             uwriteln!(

@@ -1,6 +1,8 @@
 //@ wasmtime-flags = '-Wcomponent-model-map'
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
+
+use ::wit_bindgen_wrpc::bytes::Bytes;
 
 use crate::client::test::maps::to_test::*;
 
@@ -42,16 +44,16 @@ async fn test_bytes_roundtrip(
     wrpc: &crate::Client,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     let mut bytes_input = BytesByName::new();
-    bytes_input.insert("hello".to_string(), b"world".to_vec());
-    bytes_input.insert("bin".to_string(), vec![0u8, 1, 2]);
+    bytes_input.insert("hello".to_string(), Bytes::from_static(b"world"));
+    bytes_input.insert("bin".to_string(), Bytes::from_static(&[0, 1, 2]));
     let (tx, rx) = wrpc.connect().await?;
     let bytes_by_name = bytes_roundtrip(tx, rx, &bytes_input).await?;
     assert_eq!(
-        bytes_by_name.get("hello").map(Vec::as_slice),
+        bytes_by_name.get("hello").map(|v| &v[..]),
         Some(b"world".as_slice())
     );
     assert_eq!(
-        bytes_by_name.get("bin").map(Vec::as_slice),
+        bytes_by_name.get("bin").map(|v| &v[..]),
         Some([0u8, 1, 2].as_slice())
     );
     Ok(())
@@ -70,7 +72,7 @@ async fn test_empty_roundtrip(
 async fn test_option_roundtrip(
     wrpc: &crate::Client,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
-    let mut input = HashMap::new();
+    let mut input = BTreeMap::new();
     input.insert("some".to_string(), Some(42));
     input.insert("none".to_string(), None);
     let (tx, rx) = wrpc.connect().await?;
@@ -103,7 +105,7 @@ async fn test_record_roundtrip(
 async fn test_inline_roundtrip(
     wrpc: &crate::Client,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
-    let mut input = HashMap::new();
+    let mut input = BTreeMap::new();
     input.insert(1, "one".to_string());
     input.insert(2, "two".to_string());
     let (tx, rx) = wrpc.connect().await?;
@@ -140,7 +142,7 @@ async fn test_multi_param_roundtrip(
     names.insert(1, "one".to_string());
     names.insert(2, "two".to_string());
     let mut bytes = BytesByName::new();
-    bytes.insert("key".to_string(), vec![42u8]);
+    bytes.insert("key".to_string(), Bytes::from_static(&[42]));
     let (tx, rx) = wrpc.connect().await?;
     let (ids, bytes_out) = multi_param_roundtrip(tx, rx, &names, &bytes).await?;
     assert_eq!(ids.len(), 2);
@@ -148,7 +150,7 @@ async fn test_multi_param_roundtrip(
     assert_eq!(ids.get("two"), Some(&2));
     assert_eq!(bytes_out.len(), 1);
     assert_eq!(
-        bytes_out.get("key").map(Vec::as_slice),
+        bytes_out.get("key").map(|v| &v[..]),
         Some([42u8].as_slice()),
     );
     Ok(())
@@ -157,12 +159,12 @@ async fn test_multi_param_roundtrip(
 async fn test_nested_roundtrip(
     wrpc: &crate::Client,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
-    let mut inner_a = HashMap::new();
+    let mut inner_a = BTreeMap::new();
     inner_a.insert(1, "one".to_string());
     inner_a.insert(2, "two".to_string());
-    let mut inner_b = HashMap::new();
+    let mut inner_b = BTreeMap::new();
     inner_b.insert(10, "ten".to_string());
-    let mut outer = HashMap::new();
+    let mut outer = BTreeMap::new();
     outer.insert("group-a".to_string(), inner_a);
     outer.insert("group-b".to_string(), inner_b);
     let (tx, rx) = wrpc.connect().await?;
@@ -205,14 +207,14 @@ async fn test_result_roundtrip(
     let mut map = NamesById::new();
     map.insert(5, "five".to_string());
     let (tx, rx) = wrpc.connect().await?;
-    let ok_result = result_roundtrip(tx, rx, Ok(&map)).await?;
+    let ok_result = result_roundtrip(tx, rx, &Ok(map)).await?;
     match &ok_result {
         Ok(m) => assert_eq!(m.get(&5).map(String::as_str), Some("five")),
         Err(_) => panic!("expected Ok"),
     }
 
     let (tx, rx) = wrpc.connect().await?;
-    let err_result = result_roundtrip(tx, rx, Err("bad input")).await?;
+    let err_result = result_roundtrip(tx, rx, &Err("bad input".to_string())).await?;
     match &err_result {
         Err(e) => assert_eq!(e, "bad input"),
         Ok(_) => panic!("expected Err"),

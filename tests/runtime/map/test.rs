@@ -1,6 +1,6 @@
 //@ wasmtime-flags = '-Wcomponent-model-map'
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use crate::server::exports::test::maps::to_test::{
     BytesByName, Handler, IdsByName, LabeledEntry, MapOrString, NamesById,
@@ -28,8 +28,8 @@ impl Handler for Component {
         &self,
         a: BytesByName,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<BytesByName> {
-        assert_eq!(a.get("hello").map(Vec::as_slice), Some(b"world".as_slice()));
-        assert_eq!(a.get("bin").map(Vec::as_slice), Some([0u8, 1, 2].as_slice()));
+        assert_eq!(a.get("hello").map(|v| &v[..]), Some(b"world".as_slice()));
+        assert_eq!(a.get("bin").map(|v| &v[..]), Some([0u8, 1, 2].as_slice()));
         Ok(a)
     }
 
@@ -43,8 +43,8 @@ impl Handler for Component {
 
     async fn option_roundtrip(
         &self,
-        a: HashMap<String, Option<u32>>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<HashMap<String, Option<u32>>> {
+        a: BTreeMap<String, Option<u32>>,
+    ) -> ::wit_bindgen_wrpc::anyhow::Result<BTreeMap<String, Option<u32>>> {
         assert_eq!(a.get("some"), Some(&Some(42)));
         assert_eq!(a.get("none"), Some(&None));
         Ok(a)
@@ -63,9 +63,9 @@ impl Handler for Component {
 
     async fn inline_roundtrip(
         &self,
-        a: HashMap<u32, String>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<HashMap<String, u32>> {
-        let mut result = HashMap::new();
+        a: BTreeMap<u32, String>,
+    ) -> ::wit_bindgen_wrpc::anyhow::Result<BTreeMap<String, u32>> {
+        let mut result = BTreeMap::new();
         for (k, v) in a {
             result.insert(v, k);
         }
@@ -95,8 +95,8 @@ impl Handler for Component {
 
     async fn nested_roundtrip(
         &self,
-        a: HashMap<String, HashMap<u32, String>>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<HashMap<String, HashMap<u32, String>>> {
+        a: BTreeMap<String, BTreeMap<u32, String>>,
+    ) -> ::wit_bindgen_wrpc::anyhow::Result<BTreeMap<String, BTreeMap<u32, String>>> {
         assert_eq!(a.len(), 2);
         let inner = a.get("group-a").unwrap();
         assert_eq!(inner.get(&1).map(String::as_str), Some("one"));

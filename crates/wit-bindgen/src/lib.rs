@@ -859,51 +859,6 @@ pub use wit_bindgen_wrpc_rust_macro::generate;
 /// becomes supported — at which point the corresponding doctest will start
 /// failing because the code now compiles.
 ///
-/// The `map_type` option is not supported:
-///
-/// ```compile_fail
-/// wit_bindgen_wrpc::generate!({
-///     inline: r#"
-///     package test:map-type;
-///
-///     interface maps {
-///         type names-by-id = map<u32, string>;
-///
-///         roundtrip: func(a: names-by-id) -> names-by-id;
-///         inline-roundtrip: func(a: map<string, u32>) -> map<string, u32>;
-///     }
-///
-///     world test {
-///         import maps;
-///         export maps;
-///     }
-///     "#,
-///     map_type: "std::collections::HashMap",
-///     generate_all,
-/// });
-/// ```
-///
-/// `map` types are not supported even with the default map type:
-///
-/// ```compile_fail
-/// wit_bindgen_wrpc::generate!({
-///     inline: r#"
-///     package test:map-default;
-///
-///     interface maps {
-///         type names-by-id = map<u32, string>;
-///         nested: func(a: map<string, map<u32, string>>) -> map<string, map<u32, string>>;
-///     }
-///
-///     world test {
-///         import maps;
-///         export maps;
-///     }
-///     "#,
-///     generate_all,
-/// });
-/// ```
-///
 /// The `enable_method_chaining` option is not supported (upstream #1586; wRPC
 /// resource methods take the transport and handle explicitly and return
 /// futures, so there is no `self` to chain on):
