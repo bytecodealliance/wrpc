@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
 use bytes::{Buf as _, BufMut as _, BytesMut};
-use futures::{StreamExt as _, TryFutureExt as _, stream};
+use futures::{FutureExt as _, StreamExt as _, stream};
 use tokio_util::codec::{Decoder, Encoder};
 use tracing::instrument;
 use wasm_tokio::cm::{BoolCodec, F32Codec, F64Codec, S8Codec, U8Codec};
@@ -120,8 +120,8 @@ fn encode_payload(
     }
 }
 
-/// Payload of a `future` or an element of a `stream` along with its type, if any
-struct Payload(Option<Type>, Option<Val>);
+/// Payload of a `future`, which may fail, or an element of a `stream` along with its type, if any
+struct Payload(Option<Type>, std::io::Result<Option<Val>>);
 
 #[derive(Default)]
 struct PayloadEncoder(Option<Box<dyn Transmit + Send>>);
@@ -130,6 +130,7 @@ impl Encoder<Payload> for PayloadEncoder {
     type Error = std::io::Error;
 
     fn encode(&mut self, Payload(ty, v): Payload, dst: &mut BytesMut) -> std::io::Result<()> {
+        let v = v?;
         let nested = match (ty, v) {
             (Some(ty), Some(v)) => encode_value(&ty, v, dst),
             (None, None) => Ok(None),
@@ -337,7 +338,7 @@ fn encode_value(
         }
         (Val::Future(v), Type::Future(ty)) => {
             let ty = ty.ty();
-            let v = v.map_ok(|v| Payload(ty, v));
+            let v = v.map(|v| Payload(ty, v));
             dst.put_u8(0);
             Ok(Some(Box::new(FutureEncoder::pending(v))))
         }
@@ -347,7 +348,7 @@ fn encode_value(
             };
             let vs = vs.map(move |vs| {
                 vs.into_iter()
-                    .map(|v| Payload(Some(ty.clone()), Some(v)))
+                    .map(|v| Payload(Some(ty.clone()), Ok(Some(v))))
                     .collect::<Vec<_>>()
             });
             dst.put_u8(0);

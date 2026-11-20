@@ -10,15 +10,16 @@ use core::str;
 use core::task::{Context, Poll, ready};
 
 use std::collections::{BTreeMap, HashMap};
+use std::vec;
 
 use bytes::{Buf, BufMut as _, Bytes, BytesMut};
+use futures::channel::mpsc;
 use futures::stream;
 use futures::{FutureExt as _, Stream, StreamExt as _};
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::oneshot;
 use tokio_util::codec::{Decoder as _, Encoder as _};
 use tokio_util::io::{StreamReader, poll_read_buf};
-use tokio_util::sync::PollSender;
 use tracing::{error, instrument};
 use wasm_tokio::cm::{
     BoolCodec, F32Codec, F64Codec, OptionDecoder, OptionEncoder, PrimValEncoder, ResultDecoder,
@@ -1845,14 +1846,14 @@ impl_tuple_codec!(
     (V11 C11 c11 11)
 );
 
-/// Encoder for `future<T>`, whose value is transmitted on its path and the values nested in it
-/// below `0`
-pub struct FutureEncoder<T: Encode> {
-    fut: Option<Pin<Box<dyn Future<Output = std::io::Result<T>> + Send>>>,
+/// Encoder for `future<T>` of type `F`, whose value is transmitted on its path and the values
+/// nested in it below `0`
+pub struct FutureEncoder<T: Encode, F> {
+    fut: Option<F>,
     nested: T::Encoder,
 }
 
-impl<T: Encode> Default for FutureEncoder<T> {
+impl<T: Encode, F> Default for FutureEncoder<T, F> {
     fn default() -> Self {
         Self {
             fut: None,
@@ -1861,20 +1862,24 @@ impl<T: Encode> Default for FutureEncoder<T> {
     }
 }
 
-impl<T: Encode> FutureEncoder<T> {
-    /// Returns the encoder of the pending `fut`, whose encoding was written by the caller, failing
-    /// the transmission if it fails
-    pub fn pending(fut: impl Future<Output = std::io::Result<T>> + Send + 'static) -> Self {
+impl<T, F> FutureEncoder<T, F>
+where
+    T: Encode,
+    F: Future<Output = T> + Unpin,
+{
+    /// Returns the encoder of the pending `fut`, whose encoding was written by the caller
+    pub fn pending(fut: F) -> Self {
         Self {
-            fut: Some(Box::pin(fut)),
+            fut: Some(fut),
             nested: T::Encoder::default(),
         }
     }
 }
 
-impl<T> Transmit for FutureEncoder<T>
+impl<T, F> Transmit for FutureEncoder<T, F>
 where
     T: Encode,
+    F: Future<Output = T> + Unpin,
 {
     fn poll_transmit(
         &mut self,
@@ -1883,7 +1888,7 @@ where
         dst: &mut BytesMut,
     ) -> Poll<std::io::Result<()>> {
         if let Some(fut) = &mut self.fut {
-            let v = ready!(fut.as_mut().poll(cx))?;
+            let v = ready!(fut.poll_unpin(cx));
             self.fut = None;
             let mut buf = BytesMut::default();
             self.nested.encode(v, &mut buf)?;
@@ -1901,15 +1906,15 @@ where
     }
 }
 
-impl<T, Fut> tokio_util::codec::Encoder<Fut> for FutureEncoder<T>
+impl<T, F> tokio_util::codec::Encoder<F> for FutureEncoder<T, F>
 where
-    T: Encode + 'static,
-    Fut: Future<Output = T> + Send + Unpin + 'static,
+    T: Encode,
+    F: Future<Output = T> + Unpin,
 {
     type Error = std::io::Error;
 
     #[instrument(level = "trace", skip(self, item), fields(ty = "future"))]
-    fn encode(&mut self, mut item: Fut, dst: &mut BytesMut) -> std::io::Result<()> {
+    fn encode(&mut self, mut item: F, dst: &mut BytesMut) -> std::io::Result<()> {
         if let Some(item) = (&mut item).now_or_never() {
             dst.reserve(1);
             dst.put_u8(0x01);
@@ -1919,7 +1924,7 @@ where
         }
         dst.reserve(1);
         dst.put_u8(0x00);
-        self.fut = Some(Box::pin(item.map(Ok)));
+        self.fut = Some(item);
         Ok(())
     }
 }
@@ -1928,12 +1933,19 @@ impl<T> Encode for Pin<Box<dyn Future<Output = T> + Send>>
 where
     T: Encode + 'static,
 {
-    type Encoder = FutureEncoder<T>;
+    type Encoder = FutureEncoder<T, Self>;
 }
 
-/// Decoder for `future<T>`, whose value is received on its path and the values nested in it
-/// below `0`
-pub struct FutureDecoder<T>
+impl<T> Encode for Pin<Box<dyn Future<Output = T>>>
+where
+    T: Encode + 'static,
+{
+    type Encoder = FutureEncoder<T, Self>;
+}
+
+/// Decoder for `future<T>` of type `F`, whose value is received on its path and the values nested
+/// in it below `0`
+pub struct FutureDecoder<T, F = Pin<Box<dyn Future<Output = T> + Send>>>
 where
     T: Decode,
 {
@@ -1942,9 +1954,10 @@ where
     tx: Option<oneshot::Sender<T>>,
     buf: BytesMut,
     closed: bool,
+    _fut: PhantomData<fn() -> F>,
 }
 
-impl<T> Default for FutureDecoder<T>
+impl<T, F> Default for FutureDecoder<T, F>
 where
     T: Decode,
 {
@@ -1954,23 +1967,23 @@ where
             tx: None,
             buf: BytesMut::default(),
             closed: true,
+            _fut: PhantomData,
         }
     }
 }
 
-impl<T> FutureDecoder<T>
+impl<T, F> FutureDecoder<T, F>
 where
-    T: Decode + Send + 'static,
+    T: Decode + 'static,
 {
     /// Returns the decoder of a pending `future<T>`, whose encoding was read by the caller, along
     /// with a future, which resolves to its value once it is received
-    pub fn pending() -> (Self, impl Future<Output = T> + Send + 'static) {
+    pub fn pending() -> (Self, impl Future<Output = T> + 'static) {
         let (tx, rx) = oneshot::channel();
         let dec = Self {
-            dec: OptionDecoder::default(),
             tx: Some(tx),
-            buf: BytesMut::default(),
             closed: false,
+            ..Self::default()
         };
         (dec, async {
             let Ok(v) = rx.await else {
@@ -1982,7 +1995,7 @@ where
     }
 }
 
-impl<T> Receive for FutureDecoder<T>
+impl<T, F> Receive for FutureDecoder<T, F>
 where
     T: Decode,
 {
@@ -2057,6 +2070,27 @@ where
     }
 }
 
+impl<T> tokio_util::codec::Decoder for FutureDecoder<T, Pin<Box<dyn Future<Output = T>>>>
+where
+    T: Decode + 'static,
+{
+    type Item = Pin<Box<dyn Future<Output = T>>>;
+    type Error = std::io::Error;
+
+    #[instrument(level = "trace", skip(self), fields(ty = "future"))]
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        let Some(item) = self.dec.decode(src)? else {
+            return Ok(None);
+        };
+        if let Some(item) = item {
+            return Ok(Some(Box::pin(async { item })));
+        }
+        let (dec, rx) = Self::pending();
+        *self = dec;
+        Ok(Some(Box::pin(rx)))
+    }
+}
+
 impl<T> Decode for Pin<Box<dyn Future<Output = T> + Send>>
 where
     T: Decode + Send + 'static,
@@ -2065,39 +2099,54 @@ where
     type ListDecoder = ListDecoder<Self::Decoder>;
 }
 
-/// Encoder for `stream<T>`, whose chunks are transmitted on its path and the values nested in
-/// its elements below their indices
-pub struct StreamEncoder<T: Encode> {
-    items: Option<Pin<Box<dyn Stream<Item = Vec<T>> + Send>>>,
+impl<T> Decode for Pin<Box<dyn Future<Output = T>>>
+where
+    T: Decode + 'static,
+{
+    type Decoder = FutureDecoder<T, Self>;
+    type ListDecoder = ListDecoder<Self::Decoder>;
+}
+
+/// Encoder for `stream<T>` of type `S`, whose chunks are transmitted on its path and the values
+/// nested in its elements below their indices
+pub struct StreamEncoder<T: Encode, S> {
+    items: Option<S>,
+    /// Elements read, but not transmitted yet
+    ready: Vec<T>,
     /// Index of the next element
     offset: usize,
     nested: BTreeMap<usize, T::Encoder>,
 }
 
-impl<T: Encode> Default for StreamEncoder<T> {
+impl<T: Encode, S> Default for StreamEncoder<T, S> {
     fn default() -> Self {
         Self {
             items: None,
+            ready: Vec::default(),
             offset: 0,
             nested: BTreeMap::default(),
         }
     }
 }
 
-impl<T: Encode> StreamEncoder<T> {
-    /// Returns the encoder of the pending `items`, whose encoding was written by the caller
-    pub fn pending(items: impl Stream<Item = Vec<T>> + Send + 'static) -> Self {
-        Self {
-            items: Some(Box::pin(items)),
-            offset: 0,
-            nested: BTreeMap::default(),
-        }
-    }
-}
-
-impl<T> Transmit for StreamEncoder<T>
+impl<T, S> StreamEncoder<T, S>
 where
     T: Encode,
+    S: Stream<Item = Vec<T>> + Unpin,
+{
+    /// Returns the encoder of the pending `items`, whose encoding was written by the caller
+    pub fn pending(items: S) -> Self {
+        Self {
+            items: Some(items),
+            ..Self::default()
+        }
+    }
+}
+
+impl<T, S> Transmit for StreamEncoder<T, S>
+where
+    T: Encode,
+    S: Stream<Item = Vec<T>> + Unpin,
 {
     fn poll_transmit(
         &mut self,
@@ -2106,7 +2155,12 @@ where
         dst: &mut BytesMut,
     ) -> Poll<std::io::Result<()>> {
         while let Some(items) = &mut self.items {
-            match items.as_mut().poll_next(cx) {
+            let next = if self.ready.is_empty() {
+                items.poll_next_unpin(cx)
+            } else {
+                Poll::Ready(Some(mem::take(&mut self.ready)))
+            };
+            match next {
                 Poll::Ready(Some(chunk)) if chunk.is_empty() => {}
                 Poll::Ready(Some(chunk)) => {
                     let offset = self.offset;
@@ -2144,10 +2198,10 @@ where
     }
 }
 
-impl<T, S> tokio_util::codec::Encoder<S> for StreamEncoder<T>
+impl<T, S> tokio_util::codec::Encoder<S> for StreamEncoder<T, S>
 where
-    T: Encode + Send + 'static,
-    S: Stream<Item = Vec<T>> + Send + Unpin + 'static,
+    T: Encode,
+    S: Stream<Item = Vec<T>> + Unpin,
 {
     type Error = std::io::Error;
 
@@ -2173,25 +2227,48 @@ where
         }
         dst.reserve(1);
         dst.put_u8(0x00);
-        *self = Self::pending(stream::iter([ready]).chain(items));
+        *self = Self {
+            ready,
+            ..Self::pending(items)
+        };
         Ok(())
     }
 }
 
 impl<T> Encode for Pin<Box<dyn Stream<Item = Vec<T>> + Send>>
 where
-    T: Encode + Send + 'static,
+    T: Encode + 'static,
 {
-    type Encoder = StreamEncoder<T>;
+    type Encoder = StreamEncoder<T, Self>;
 }
 
-/// Encoder for `stream<list<u8>>`, whose chunks are transmitted on its path
-#[derive(Default)]
-pub struct StreamEncoderBytes {
-    items: Option<Pin<Box<dyn Stream<Item = Bytes> + Send>>>,
+impl<T> Encode for Pin<Box<dyn Stream<Item = Vec<T>>>>
+where
+    T: Encode + 'static,
+{
+    type Encoder = StreamEncoder<T, Self>;
 }
 
-impl Transmit for StreamEncoderBytes {
+/// Encoder for `stream<list<u8>>` of type `T`, whose chunks are transmitted on its path
+pub struct StreamEncoderBytes<T> {
+    items: Option<T>,
+    /// Chunks read, but not transmitted yet
+    ready: vec::IntoIter<Bytes>,
+}
+
+impl<T> Default for StreamEncoderBytes<T> {
+    fn default() -> Self {
+        Self {
+            items: None,
+            ready: vec::IntoIter::default(),
+        }
+    }
+}
+
+impl<T> Transmit for StreamEncoderBytes<T>
+where
+    T: Stream<Item = Bytes> + Unpin,
+{
     fn poll_transmit(
         &mut self,
         cx: &mut Context<'_>,
@@ -2199,7 +2276,11 @@ impl Transmit for StreamEncoderBytes {
         dst: &mut BytesMut,
     ) -> Poll<std::io::Result<()>> {
         while let Some(items) = &mut self.items {
-            match ready!(items.as_mut().poll_next(cx)) {
+            let next = match self.ready.next() {
+                Some(chunk) => Some(chunk),
+                None => ready!(items.poll_next_unpin(cx)),
+            };
+            match next {
                 Some(chunk) if chunk.is_empty() => {}
                 Some(chunk) => {
                     encode_bytes_frames(path, &chunk, dst)?;
@@ -2219,14 +2300,14 @@ impl Transmit for StreamEncoderBytes {
     }
 }
 
-impl<S> tokio_util::codec::Encoder<S> for StreamEncoderBytes
+impl<T> tokio_util::codec::Encoder<T> for StreamEncoderBytes<T>
 where
-    S: Stream<Item = Bytes> + Send + Unpin + 'static,
+    T: Stream<Item = Bytes> + Unpin,
 {
     type Error = std::io::Error;
 
     #[instrument(level = "trace", skip(self, items), fields(ty = "stream<u8>"))]
-    fn encode(&mut self, mut items: S, dst: &mut BytesMut) -> std::io::Result<()> {
+    fn encode(&mut self, mut items: T, dst: &mut BytesMut) -> std::io::Result<()> {
         self.items = None;
         let mut ready = Vec::default();
         loop {
@@ -2238,28 +2319,44 @@ where
         }
         dst.reserve(1);
         dst.put_u8(0x00);
-        self.items = Some(Box::pin(stream::iter(ready).chain(items)));
+        self.items = Some(items);
+        self.ready = ready.into_iter();
         Ok(())
     }
 }
 
 impl Encode for Pin<Box<dyn Stream<Item = Bytes> + Send>> {
-    type Encoder = StreamEncoderBytes;
+    type Encoder = StreamEncoderBytes<Self>;
 }
 
-/// Encoder for `stream<list<u8>>` with [`AsyncRead`] support, whose chunks are transmitted on
-/// its path
+impl Encode for Pin<Box<dyn Stream<Item = Bytes>>> {
+    type Encoder = StreamEncoderBytes<Self>;
+}
+
+/// Encoder for `stream<list<u8>>` with [`AsyncRead`] support of type `T`, whose chunks are
+/// transmitted on its path
 ///
 /// At most `MAX_READY` bytes are read from the stream on encode, any remaining
 /// bytes are transmitted asynchronously.
-#[derive(Default)]
-pub struct StreamEncoderRead<const MAX_READY: usize = { usize::MAX }> {
-    items: Option<Pin<Box<dyn AsyncRead + Send>>>,
+pub struct StreamEncoderRead<T, const MAX_READY: usize = { usize::MAX }> {
+    items: Option<T>,
     /// Data read, but not transmitted yet
     buf: BytesMut,
 }
 
-impl<const MAX_READY: usize> Transmit for StreamEncoderRead<MAX_READY> {
+impl<T, const MAX_READY: usize> Default for StreamEncoderRead<T, MAX_READY> {
+    fn default() -> Self {
+        Self {
+            items: None,
+            buf: BytesMut::default(),
+        }
+    }
+}
+
+impl<T, const MAX_READY: usize> Transmit for StreamEncoderRead<T, MAX_READY>
+where
+    T: AsyncRead + Unpin,
+{
     fn poll_transmit(
         &mut self,
         cx: &mut Context<'_>,
@@ -2272,7 +2369,7 @@ impl<const MAX_READY: usize> Transmit for StreamEncoderRead<MAX_READY> {
         if self.buf.is_empty() {
             self.buf.reserve(READ_CHUNK_SIZE);
             let n = ready!(poll_read_buf(
-                items.as_mut(),
+                Pin::new(items),
                 cx,
                 &mut (&mut self.buf).limit(READ_CHUNK_SIZE)
             ))?;
@@ -2292,14 +2389,14 @@ impl<const MAX_READY: usize> Transmit for StreamEncoderRead<MAX_READY> {
     }
 }
 
-impl<S, const MAX_READY: usize> tokio_util::codec::Encoder<S> for StreamEncoderRead<MAX_READY>
+impl<T, const MAX_READY: usize> tokio_util::codec::Encoder<T> for StreamEncoderRead<T, MAX_READY>
 where
-    S: AsyncRead + Send + Unpin + 'static,
+    T: AsyncRead + Unpin,
 {
     type Error = std::io::Error;
 
     #[instrument(level = "trace", skip(self, items), fields(ty = "stream<u8>"))]
-    fn encode(&mut self, mut items: S, dst: &mut BytesMut) -> std::io::Result<()> {
+    fn encode(&mut self, mut items: T, dst: &mut BytesMut) -> std::io::Result<()> {
         self.items = None;
         let mut ready = BytesMut::default();
         loop {
@@ -2317,58 +2414,62 @@ where
         }
         dst.reserve(1);
         dst.put_u8(0x00);
-        self.items = Some(Box::pin(items));
+        self.items = Some(items);
         self.buf = ready;
         Ok(())
     }
 }
 
 impl Encode for Pin<Box<dyn AsyncRead + Send>> {
-    type Encoder = StreamEncoderRead;
+    type Encoder = StreamEncoderRead<Self>;
+}
+
+impl Encode for Pin<Box<dyn AsyncRead>> {
+    type Encoder = StreamEncoderRead<Self>;
 }
 
 impl<T> Encode for std::io::Cursor<T>
 where
-    T: AsRef<[u8]> + Send + Unpin + 'static,
+    T: AsRef<[u8]> + Unpin,
 {
-    type Encoder = StreamEncoderRead;
+    type Encoder = StreamEncoderRead<Self>;
 }
 
 impl Encode for tokio::io::Empty {
-    type Encoder = StreamEncoderRead;
+    type Encoder = StreamEncoderRead<Self>;
 }
 
 #[cfg(feature = "io-std")]
 impl Encode for tokio::io::Stdin {
-    type Encoder = StreamEncoderRead;
+    type Encoder = StreamEncoderRead<Self>;
 }
 
 #[cfg(feature = "fs")]
 impl Encode for tokio::fs::File {
-    type Encoder = StreamEncoderRead;
+    type Encoder = StreamEncoderRead<Self>;
 }
 
 #[cfg(feature = "net")]
 impl Encode for tokio::net::TcpStream {
-    type Encoder = StreamEncoderRead;
+    type Encoder = StreamEncoderRead<Self>;
 }
 
 #[cfg(all(unix, feature = "net"))]
 impl Encode for tokio::net::UnixStream {
-    type Encoder = StreamEncoderRead;
+    type Encoder = StreamEncoderRead<Self>;
 }
 
 #[cfg(all(unix, feature = "net"))]
 impl Encode for tokio::net::unix::pipe::Receiver {
-    type Encoder = StreamEncoderRead;
+    type Encoder = StreamEncoderRead<Self>;
 }
 
-fn receive_pending_stream<T: Send + 'static>(
+fn receive_pending_stream<T>(
     rx: mpsc::Receiver<T>,
     end: oneshot::Receiver<()>,
-) -> impl Stream<Item = T> + Send {
+) -> impl Stream<Item = T> {
     stream::unfold((rx, end), |(mut rx, end)| async move {
-        if let Some(item) = rx.recv().await {
+        if let Some(item) = rx.next().await {
             return Some((item, (rx, end)));
         }
         if end.await.is_err() {
@@ -2381,7 +2482,7 @@ fn receive_pending_stream<T: Send + 'static>(
 
 fn poll_receive_stream<D, T>(
     cx: &mut Context<'_>,
-    tx: &mut Option<(PollSender<T>, oneshot::Sender<()>)>,
+    tx: &mut Option<(mpsc::Sender<T>, oneshot::Sender<()>)>,
     dec: &mut D,
     buf: &mut BytesMut,
     src: &mut BytesMut,
@@ -2389,7 +2490,6 @@ fn poll_receive_stream<D, T>(
 ) -> Poll<std::io::Result<()>>
 where
     D: tokio_util::codec::Decoder<Error = std::io::Error>,
-    T: Send,
 {
     if src.is_empty() {
         let Some((.., end)) = tx.take() else {
@@ -2402,30 +2502,31 @@ where
     let Some((tx, ..)) = tx else {
         return Poll::Ready(Err(error_data_after_end()));
     };
-    ready!(tx.poll_reserve(cx)).map_err(|_| error_receiver_closed())?;
+    ready!(tx.poll_ready(cx)).map_err(|_| error_receiver_closed())?;
     buf.unsplit(src.split());
     if let Some(chunk) = decode(dec, buf)? {
-        tx.send_item(chunk).map_err(|_| error_receiver_closed())?;
+        tx.start_send(chunk).map_err(|_| error_receiver_closed())?;
     }
     Poll::Ready(Ok(()))
 }
 
-/// Decoder for `stream<T>`, whose chunks are received on its path and the values nested in its
-/// elements below their indices
-pub struct StreamDecoder<T>
+/// Decoder for `stream<T>` of type `S`, whose chunks are received on its path and the values
+/// nested in its elements below their indices
+pub struct StreamDecoder<T, S = Pin<Box<dyn Stream<Item = Vec<T>> + Send>>>
 where
     T: Decode,
 {
     dec: OptionDecoder<ListDecoder<T::Decoder>>,
     /// Sender of the chunks and of the end of a pending stream, until it is closed
-    tx: Option<(PollSender<Vec<T>>, oneshot::Sender<()>)>,
+    tx: Option<(mpsc::Sender<Vec<T>>, oneshot::Sender<()>)>,
     buf: BytesMut,
     /// Index of the next element
     offset: usize,
     nested: BTreeMap<usize, T::Decoder>,
+    _items: PhantomData<fn() -> S>,
 }
 
-impl<T> Default for StreamDecoder<T>
+impl<T, S> Default for StreamDecoder<T, S>
 where
     T: Decode,
 {
@@ -2436,30 +2537,31 @@ where
             buf: BytesMut::default(),
             offset: 0,
             nested: BTreeMap::default(),
+            _items: PhantomData,
         }
     }
 }
 
-impl<T> StreamDecoder<T>
+impl<T, S> StreamDecoder<T, S>
 where
-    T: Decode + Send + 'static,
+    T: Decode + 'static,
 {
     /// Returns the decoder of a pending `stream<T>`, whose encoding was read by the caller, along
     /// with a [Stream] of its chunks
-    pub fn pending() -> (Self, impl Stream<Item = Vec<T>> + Send + 'static) {
-        let (tx, rx) = mpsc::channel(128);
+    pub fn pending() -> (Self, impl Stream<Item = Vec<T>> + 'static) {
+        let (tx, rx) = mpsc::channel(127);
         let (end_tx, end_rx) = oneshot::channel();
         let dec = Self {
-            tx: Some((PollSender::new(tx), end_tx)),
+            tx: Some((tx, end_tx)),
             ..Self::default()
         };
         (dec, receive_pending_stream(rx, end_rx))
     }
 }
 
-impl<T> Receive for StreamDecoder<T>
+impl<T, S> Receive for StreamDecoder<T, S>
 where
-    T: Decode + Send + 'static,
+    T: Decode,
 {
     fn poll_receive(
         &mut self,
@@ -2527,6 +2629,31 @@ where
     }
 }
 
+impl<T> tokio_util::codec::Decoder for StreamDecoder<T, Pin<Box<dyn Stream<Item = Vec<T>>>>>
+where
+    T: Decode + 'static,
+{
+    type Item = Pin<Box<dyn Stream<Item = Vec<T>>>>;
+    type Error = std::io::Error;
+
+    #[instrument(level = "trace", skip(self), fields(ty = "stream"))]
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        let Some(chunk) = self.dec.decode(src)? else {
+            return Ok(None);
+        };
+        if let Some(chunk) = chunk {
+            self.nested = mem::take(&mut self.dec.get_mut().nested);
+            if chunk.is_empty() {
+                return Ok(Some(Box::pin(stream::empty())));
+            }
+            return Ok(Some(Box::pin(stream::iter([chunk]))));
+        }
+        let (dec, rx) = Self::pending();
+        *self = dec;
+        Ok(Some(Box::pin(rx)))
+    }
+}
+
 impl<T> Decode for Pin<Box<dyn Stream<Item = Vec<T>> + Send>>
 where
     T: Decode + Send + 'static,
@@ -2535,30 +2662,49 @@ where
     type ListDecoder = ListDecoder<Self::Decoder>;
 }
 
-/// Decoder for `stream<list<u8>>`, whose chunks are received on its path
-#[derive(Default)]
-pub struct StreamDecoderBytes {
-    dec: OptionDecoder<CoreVecDecoderBytes>,
-    /// Sender of the chunks and of the end of a pending stream, until it is closed
-    tx: Option<(PollSender<Bytes>, oneshot::Sender<()>)>,
-    buf: BytesMut,
+impl<T> Decode for Pin<Box<dyn Stream<Item = Vec<T>>>>
+where
+    T: Decode + 'static,
+{
+    type Decoder = StreamDecoder<T, Self>;
+    type ListDecoder = ListDecoder<Self::Decoder>;
 }
 
-impl StreamDecoderBytes {
+/// Decoder for `stream<list<u8>>` of type `T`, whose chunks are received on its path
+pub struct StreamDecoderBytes<T = Pin<Box<dyn Stream<Item = Bytes> + Send>>> {
+    dec: OptionDecoder<CoreVecDecoderBytes>,
+    /// Sender of the chunks and of the end of a pending stream, until it is closed
+    tx: Option<(mpsc::Sender<Bytes>, oneshot::Sender<()>)>,
+    buf: BytesMut,
+    _items: PhantomData<fn() -> T>,
+}
+
+impl<T> Default for StreamDecoderBytes<T> {
+    fn default() -> Self {
+        Self {
+            dec: OptionDecoder::default(),
+            tx: None,
+            buf: BytesMut::default(),
+            _items: PhantomData,
+        }
+    }
+}
+
+impl<T> StreamDecoderBytes<T> {
     /// Returns the decoder of a pending `stream<u8>`, whose encoding was read by the caller, along
     /// with a [Stream] of its chunks
-    pub fn pending() -> (Self, impl Stream<Item = Bytes> + Send + 'static) {
-        let (tx, rx) = mpsc::channel(128);
+    pub fn pending() -> (Self, impl Stream<Item = Bytes> + 'static) {
+        let (tx, rx) = mpsc::channel(127);
         let (end_tx, end_rx) = oneshot::channel();
         let dec = Self {
-            tx: Some((PollSender::new(tx), end_tx)),
+            tx: Some((tx, end_tx)),
             ..Self::default()
         };
         (dec, receive_pending_stream(rx, end_rx))
     }
 }
 
-impl Receive for StreamDecoderBytes {
+impl<T> Receive for StreamDecoderBytes<T> {
     fn poll_receive(
         &mut self,
         cx: &mut Context<'_>,
@@ -2612,18 +2758,53 @@ impl tokio_util::codec::Decoder for StreamDecoderBytes {
     }
 }
 
+impl tokio_util::codec::Decoder for StreamDecoderBytes<Pin<Box<dyn Stream<Item = Bytes>>>> {
+    type Item = Pin<Box<dyn Stream<Item = Bytes>>>;
+    type Error = std::io::Error;
+
+    #[instrument(level = "trace", skip(self), fields(ty = "stream<u8>"))]
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        let Some(chunk) = self.dec.decode(src)? else {
+            return Ok(None);
+        };
+        if let Some(chunk) = chunk {
+            if chunk.is_empty() {
+                return Ok(Some(Box::pin(stream::empty())));
+            }
+            return Ok(Some(Box::pin(stream::iter([chunk]))));
+        }
+        let (dec, rx) = Self::pending();
+        *self = dec;
+        Ok(Some(Box::pin(rx)))
+    }
+}
+
 impl Decode for Pin<Box<dyn Stream<Item = Bytes> + Send>> {
     type Decoder = StreamDecoderBytes;
     type ListDecoder = ListDecoder<Self::Decoder>;
 }
 
-/// Decoder for `stream<list<u8>>` with [`AsyncRead`] support
-#[derive(Default)]
-pub struct StreamDecoderRead {
-    dec: StreamDecoderBytes,
+impl Decode for Pin<Box<dyn Stream<Item = Bytes>>> {
+    type Decoder = StreamDecoderBytes<Self>;
+    type ListDecoder = ListDecoder<Self::Decoder>;
 }
 
-impl Receive for StreamDecoderRead {
+/// Decoder for `stream<list<u8>>` with [`AsyncRead`] support of type `T`
+pub struct StreamDecoderRead<T = Pin<Box<dyn AsyncRead + Send>>> {
+    dec: StreamDecoderBytes,
+    _items: PhantomData<fn() -> T>,
+}
+
+impl<T> Default for StreamDecoderRead<T> {
+    fn default() -> Self {
+        Self {
+            dec: StreamDecoderBytes::default(),
+            _items: PhantomData,
+        }
+    }
+}
+
+impl<T> Receive for StreamDecoderRead<T> {
     fn poll_receive(
         &mut self,
         cx: &mut Context<'_>,
@@ -2652,8 +2833,27 @@ impl tokio_util::codec::Decoder for StreamDecoderRead {
     }
 }
 
+impl tokio_util::codec::Decoder for StreamDecoderRead<Pin<Box<dyn AsyncRead>>> {
+    type Item = Pin<Box<dyn AsyncRead>>;
+    type Error = std::io::Error;
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        let Some(s) = self.dec.decode(src)? else {
+            return Ok(None);
+        };
+        Ok(Some(Box::pin(StreamReader::new(
+            s.map(Ok::<_, std::io::Error>).fuse(),
+        ))))
+    }
+}
+
 impl Decode for Pin<Box<dyn AsyncRead + Send>> {
     type Decoder = StreamDecoderRead;
+    type ListDecoder = ListDecoder<Self::Decoder>;
+}
+
+impl Decode for Pin<Box<dyn AsyncRead>> {
+    type Decoder = StreamDecoderRead<Self>;
     type ListDecoder = ListDecoder<Self::Decoder>;
 }
 
@@ -2661,13 +2861,14 @@ impl Decode for Pin<Box<dyn AsyncRead + Send>> {
 mod tests {
     use core::time::Duration;
 
+    use std::rc::Rc;
+
     use anyhow::bail;
-    use futures::future::{BoxFuture, join_all};
-    use futures::stream::BoxStream;
-    use tokio::io::duplex;
-    use tokio::select;
+    use futures::future::{BoxFuture, LocalBoxFuture, join_all};
+    use futures::stream::{BoxStream, LocalBoxStream};
     use tokio::task::{spawn, yield_now};
     use tokio::time;
+    use tokio::{select, try_join};
     use tokio_util::codec::{FramedRead, FramedWrite};
 
     use super::*;
@@ -2706,7 +2907,7 @@ mod tests {
             Box::pin(std::io::Cursor::new(data.clone())),
             BTreeMap::from([("a".into(), delay(4)), ("b".into(), delay(5))]),
         );
-        let (tx, rx) = duplex(1024);
+        let (tx, rx) = tokio::io::duplex(1024);
         let tx = transmit(
             <V as Encode>::Encoder::default(),
             FramedWrite::new(tx, FrameEncoder),
@@ -2737,12 +2938,71 @@ mod tests {
     }
 
     #[test_log::test(tokio::test)]
+    async fn local_roundtrip() -> anyhow::Result<()> {
+        type V = (
+            LocalBoxFuture<'static, u8>,
+            LocalBoxStream<'static, Vec<LocalBoxFuture<'static, u8>>>,
+            LocalBoxStream<'static, Bytes>,
+            Pin<Box<dyn AsyncRead>>,
+        );
+
+        fn delay(v: Rc<u8>) -> LocalBoxFuture<'static, u8> {
+            Box::pin(async move {
+                yield_now().await;
+                *v
+            })
+        }
+
+        let v: V = (
+            delay(Rc::new(1)),
+            Box::pin(stream::iter([2, 3]).then(async |v| {
+                yield_now().await;
+                vec![delay(Rc::new(v))]
+            })),
+            Box::pin(stream::iter([Rc::new(Bytes::from("foo"))]).then(async |v| {
+                yield_now().await;
+                Bytes::clone(&v)
+            })),
+            Box::pin(std::io::Cursor::new(Rc::<[u8]>::from(&b"bar"[..]))),
+        );
+        let (tx, rx) = tokio::io::duplex(1024);
+        let tx = transmit(
+            <V as Encode>::Encoder::default(),
+            FramedWrite::new(tx, FrameEncoder),
+            v,
+        )?;
+        let rx = async {
+            let ((a, b, c, mut d), rx) = receive(
+                <V as Decode>::Decoder::default(),
+                FramedRead::new(rx, FrameDecoder::default()),
+            )
+            .await?;
+            let (v, ()) = try_join!(
+                async {
+                    let mut buf = Vec::default();
+                    d.read_to_end(&mut buf).await?;
+                    let c: Vec<Bytes> = c.collect().await;
+                    Ok((a.await, join_all(b.concat().await).await, c.concat(), buf))
+                },
+                rx
+            )?;
+            std::io::Result::Ok(v)
+        };
+        let ((), (a, b, c, d)) = try_join!(tx, rx)?;
+        assert_eq!(a, 1);
+        assert_eq!(b, [2, 3]);
+        assert_eq!(c, b"foo");
+        assert_eq!(d, b"bar");
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
     async fn future_flushes_before_nested_value() -> anyhow::Result<()> {
         type V = (BoxFuture<'static, BoxFuture<'static, u8>>,);
 
         let outer: BoxFuture<'static, BoxFuture<'static, u8>> =
             Box::pin(yield_now().map(|()| Box::pin(pending()) as BoxFuture<'static, u8>));
-        let (tx, rx) = duplex(1024);
+        let (tx, rx) = tokio::io::duplex(1024);
         let tx = transmit(
             <V as Encode>::Encoder::default(),
             FramedWrite::new(tx, FrameEncoder),
