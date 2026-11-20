@@ -1,19 +1,8 @@
 use std::collections::{BTreeSet, VecDeque};
 
 use wit_parser::{
-    Case, Field, Flags, Function, FunctionKind, Handle, Int, Record, Resolve, Type, TypeDefKind,
-    TypeId,
+    Case, Field, Function, FunctionKind, Handle, Record, Resolve, Type, TypeDefKind, TypeId,
 };
-
-#[must_use]
-pub fn flag_repr(ty: &Flags) -> Int {
-    match ty.flags.len() {
-        ..=8 => Int::U8,
-        9..=16 => Int::U16,
-        17..=32 => Int::U32,
-        33.. => Int::U64,
-    }
-}
 
 #[must_use]
 pub fn rpc_func_name(func: &Function) -> &str {
