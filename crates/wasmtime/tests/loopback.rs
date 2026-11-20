@@ -1,10 +1,11 @@
 use core::net::SocketAddr;
+use core::task::{Context, Poll, Waker};
 use core::time::Duration;
 
 use std::sync::Arc;
 
-use anyhow::{Context as _, bail};
-use bytes::BytesMut;
+use anyhow::{anyhow, bail};
+use bytes::{Bytes, BytesMut};
 use futures::future::BoxFuture;
 use futures::stream::{self, BoxStream};
 use futures::{StreamExt as _, TryStreamExt as _};
@@ -15,29 +16,48 @@ use tokio::sync::oneshot;
 use tokio::task::yield_now;
 use tokio::time::sleep;
 use tokio::{join, try_join};
-use tokio_util::codec::{Encoder as _, FramedRead, FramedWrite};
-use wasmtime::component::{Accessor, Component, Instance, InstancePre, Linker};
+use tokio_util::codec::{Decoder as _, Encoder as _, FramedRead, FramedWrite};
+use wasmtime::component::{
+    self, Accessor, Component, Func, Instance, InstancePre, Linker, ResourceAny, Type, types,
+};
+use wasmtime::error::Context as _;
 use wrpc_test::serve_until;
 use wrpc_transport::{
-    Codec, FrameDecoder, FrameEncoder, FrameRef, HeaderEncoder, HeaderRef, Listener, invoke,
-    invoke_blocking,
+    Codec, FrameDecoder, FrameEncoder, FrameRef, HeaderEncoder, HeaderRef, Listener, Receive as _,
+    invoke, invoke_blocking,
 };
-use wrpc_wasmtime::{
-    Exports, ResourceTypes, SharedResourceTable, TupleDecoder, TupleEncoder, WrpcCtxView, WrpcView,
-    call,
-};
+use wrpc_wasmtime::{Export, Exports, TupleDecoder, TupleEncoder, Val, lift, lower};
 
-#[derive(Default)]
-struct Ctx {
-    shared_resources: SharedResourceTable,
+/// Resources by the index their handles carry
+type Ctx = Vec<ResourceAny>;
+
+fn lift_resource(cx: &mut Ctx, _: &Type, id: Bytes) -> wasmtime::Result<ResourceAny> {
+    let [i] = *id else {
+        wasmtime::bail!("invalid resource handle")
+    };
+    cx.get(usize::from(i))
+        .copied()
+        .context("resource not found")
 }
 
-impl WrpcView for Ctx {
-    fn wrpc(&mut self) -> WrpcCtxView<'_> {
-        WrpcCtxView {
-            shared_resources: &mut self.shared_resources,
-        }
-    }
+fn lower_resource(cx: &mut Ctx, _: &Type, resource: ResourceAny) -> wasmtime::Result<Bytes> {
+    let i = u8::try_from(cx.len())?;
+    cx.push(resource);
+    Ok(Bytes::copy_from_slice(&[i]))
+}
+
+async fn call(
+    store: &Accessor<Ctx>,
+    func: Func,
+    export: &Export,
+    params: Vec<Val>,
+) -> wasmtime::Result<Vec<Val>> {
+    let params = store.with(|store| lift(store, export.params.iter(), params, lift_resource))?;
+    let mut results = vec![component::Val::Bool(false); export.results.len()];
+    func.call_concurrent(store, &params, &mut results)
+        .await
+        .context("failed to call function")?;
+    store.with(|store| lower(store, export.results.iter(), results, lower_resource))
 }
 
 struct Guest<'a> {
@@ -88,24 +108,20 @@ async fn serve_conn_shared(
         let export = guest
             .exports
             .get(&header.instance, &header.name)
-            .context("function not exported")?;
+            .ok_or_else(|| anyhow!("function not exported"))?;
         let func = guest
             .store
             .with(|store| guest.instance.get_func(store, export.idx))
-            .context("function export not found")?;
+            .ok_or_else(|| anyhow!("function export not found"))?;
         let codec = Codec {
-            enc: TupleEncoder::new(
-                guest.store,
-                Arc::clone(&export.results),
-                ResourceTypes::default(),
-            ),
-            dec: TupleDecoder::new(
-                guest.store,
-                Arc::clone(&export.params),
-                ResourceTypes::default(),
-            ),
+            enc: TupleEncoder::new(Arc::clone(&export.results)),
+            dec: TupleDecoder::new(Arc::clone(&export.params)),
         };
-        call(guest.store, codec, tx, rx, func).await?;
+        codec
+            .serve(tx, rx, async |params| {
+                call(guest.store, func, export, params).await
+            })
+            .await?;
     }
     Ok(())
 }
@@ -136,7 +152,7 @@ async fn serve_conn(
     while let Some((header, tx, rx)) = lis.accept().await? {
         let export = exports
             .get(&header.instance, &header.name)
-            .context("function not exported")?;
+            .ok_or_else(|| anyhow!("function not exported"))?;
         let mut store = wasmtime::Store::new(pre.engine(), Ctx::default());
         let instance = pre
             .instantiate_async(&mut store)
@@ -144,22 +160,18 @@ async fn serve_conn(
             .map_err(anyhow::Error::from)?;
         let func = instance
             .get_func(&mut store, export.idx)
-            .context("function export not found")?;
+            .ok_or_else(|| anyhow!("function export not found"))?;
         store
             .run_concurrent(async |store| {
                 let codec = Codec {
-                    enc: TupleEncoder::new(
-                        store,
-                        Arc::clone(&export.results),
-                        ResourceTypes::default(),
-                    ),
-                    dec: TupleDecoder::new(
-                        store,
-                        Arc::clone(&export.params),
-                        ResourceTypes::default(),
-                    ),
+                    enc: TupleEncoder::new(Arc::clone(&export.results)),
+                    dec: TupleDecoder::new(Arc::clone(&export.params)),
                 };
-                call(store, codec, tx, rx, func).await
+                codec
+                    .serve(tx, rx, async |params| {
+                        call(store, func, export, params).await
+                    })
+                    .await
             })
             .await
             .map_err(anyhow::Error::from)??;
@@ -211,6 +223,70 @@ async fn shared_store_trap() -> anyhow::Result<()> {
     let err = res.expect_err("event loop succeeded");
     assert!(format!("{err:#}").contains("unreachable"), "{err:#}");
     Ok(())
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn shared_resources() -> anyhow::Result<()> {
+    with_store(
+        r#"
+(component
+  (type $r (resource (rep i32)))
+  (core func $new (canon resource.new $r))
+  (core module $m
+    (import "" "new" (func $new (param i32) (result i32)))
+    (func (export "new") (param i32) (result i32)
+      (call $new (local.get 0)))
+    (func (export "get") (param i32) (result i32)
+      local.get 0))
+  (core instance $i (instantiate $m (with "" (instance (export "new" (func $new))))))
+  (export $r' "r" (type $r))
+  (func (export "[constructor]r") (param "v" u32) (result (own $r'))
+    (canon lift (core func $i "new")))
+  (func (export "[method]r.get") (param "self" (borrow $r')) (result u32)
+    (canon lift (core func $i "get")))
+)"#,
+        async |addr, srv, guest| {
+            serve_until(
+                srv,
+                async {
+                    let (tx, rx) = wrpc_test::tcp_streams(addr).await?;
+                    let mut tx = FramedWrite::new(tx, FrameEncoder);
+                    let mut rx = FramedRead::new(rx, FrameDecoder::default());
+                    let (r,) =
+                        invoke_blocking::<(u32,), (Bytes,), _, _>(&mut tx, &mut rx, "", "r", (42,))
+                            .await?;
+                    let (v,) = invoke_blocking::<(Bytes,), (u32,), _, _>(
+                        &mut tx,
+                        &mut rx,
+                        "",
+                        "r.get",
+                        (r,),
+                    )
+                    .await?;
+                    assert_eq!(v, 42);
+                    invoke_blocking::<(Bytes,), (u32,), _, _>(
+                        tx,
+                        rx,
+                        "",
+                        "r.get",
+                        (Bytes::from_static(b"\x01"),),
+                    )
+                    .await
+                    .expect_err("unknown resource accepted");
+                    Ok(())
+                },
+                |tx, rx| async {
+                    let err = serve_conn_shared(guest, tx, rx)
+                        .await
+                        .expect_err("unknown resource accepted");
+                    assert!(format!("{err:#}").contains("resource not found"), "{err:#}");
+                    Ok(())
+                },
+            )
+            .await
+        },
+    )
+    .await
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -596,4 +672,47 @@ async fn unread_param() -> anyhow::Result<()> {
         },
     )
     .await
+}
+
+#[test]
+fn async_max_len() -> wasmtime::Result<()> {
+    let mut config = wasmtime::Config::default();
+    config.wasm_component_model_async(true);
+    let engine = wasmtime::Engine::new(&config)?;
+    let component = Component::new(
+        &engine,
+        r#"(component
+            (type $f (future string))
+            (export "f" (type $f))
+            (type $s (stream u8))
+            (export "s" (type $s))
+        )"#,
+    )?;
+    let tys: Arc<[Type]> = component
+        .component_type()
+        .exports(&engine)
+        .filter_map(|(.., types::ComponentExtern { ty, .. })| match ty {
+            types::ComponentItem::Type(ty) => Some(ty),
+            _ => None,
+        })
+        .collect();
+
+    for buf in [&b"\x01\x03foo"[..], b"\x01\x00\x01\x03bar"] {
+        let mut dec = TupleDecoder::new(Arc::clone(&tys)).with_max_len(2);
+        let err = dec.decode(&mut buf.into()).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    let mut cx = Context::from_waker(Waker::noop());
+    for (path, buf) in [([0], &b"\x03foo"[..]), ([1], b"\x03bar")] {
+        let mut dec = TupleDecoder::new(Arc::clone(&tys)).with_max_len(2);
+        let vs = dec.decode(&mut b"\x00\x00"[..].into())?;
+        assert!(vs.is_some());
+        let res = dec.poll_receive(&mut cx, &path, &mut buf.into());
+        assert!(
+            matches!(&res, Poll::Ready(Err(err)) if err.kind() == std::io::ErrorKind::InvalidData),
+            "{res:?}"
+        );
+    }
+    Ok(())
 }
