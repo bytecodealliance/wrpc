@@ -2549,7 +2549,7 @@ where
     /// Returns the decoder of a pending `stream<T>`, whose encoding was read by the caller, along
     /// with a [Stream] of its chunks
     pub fn pending() -> (Self, impl Stream<Item = Vec<T>> + 'static) {
-        let (tx, rx) = mpsc::channel(127);
+        let (tx, rx) = mpsc::channel(0);
         let (end_tx, end_rx) = oneshot::channel();
         let dec = Self {
             tx: Some((tx, end_tx)),
@@ -2694,7 +2694,7 @@ impl<T> StreamDecoderBytes<T> {
     /// Returns the decoder of a pending `stream<u8>`, whose encoding was read by the caller, along
     /// with a [Stream] of its chunks
     pub fn pending() -> (Self, impl Stream<Item = Bytes> + 'static) {
-        let (tx, rx) = mpsc::channel(127);
+        let (tx, rx) = mpsc::channel(0);
         let (end_tx, end_rx) = oneshot::channel();
         let dec = Self {
             tx: Some((tx, end_tx)),
@@ -2868,7 +2868,7 @@ mod tests {
     use futures::stream::{BoxStream, LocalBoxStream};
     use tokio::task::{spawn, yield_now};
     use tokio::time;
-    use tokio::{select, try_join};
+    use tokio::{join, select, try_join};
     use tokio_util::codec::{FramedRead, FramedWrite};
 
     use super::*;
@@ -2980,9 +2980,14 @@ mod tests {
             let (v, ()) = try_join!(
                 async {
                     let mut buf = Vec::default();
-                    d.read_to_end(&mut buf).await?;
-                    let c: Vec<Bytes> = c.collect().await;
-                    Ok((a.await, join_all(b.concat().await).await, c.concat(), buf))
+                    let (a, b, c, n) = join!(
+                        a,
+                        b.concat(),
+                        c.collect::<Vec<Bytes>>(),
+                        d.read_to_end(&mut buf)
+                    );
+                    n?;
+                    Ok((a, join_all(b).await, c.concat(), buf))
                 },
                 rx
             )?;
