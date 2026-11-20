@@ -598,10 +598,7 @@ impl tokio_util::codec::Decoder for RawCodec {
 /// Defines value encoding
 pub trait Encode: Sized {
     /// Encoder used to encode the value
-    type Encoder: tokio_util::codec::Encoder<Self, Error = std::io::Error>
-        + Transmit
-        + Default
-        + Send;
+    type Encoder: tokio_util::codec::Encoder<Self, Error = std::io::Error> + Transmit + Default;
 
     /// Encodes `items`, returning the encoders of the pending ones keyed by their indices
     #[instrument(level = "trace", skip(items))]
@@ -656,7 +653,6 @@ pub trait Decode: Sized {
     type Decoder: tokio_util::codec::Decoder<Item = Self, Error = std::io::Error>
         + Receive
         + Default
-        + Send
         + 'static;
     /// Decoder used to decode lists of value
     type ListDecoder: tokio_util::codec::Decoder<Item = Vec<Self>, Error = std::io::Error>
@@ -986,8 +982,8 @@ where
 
 impl<T> Decode for Vec<T>
 where
-    T: Decode + Send,
-    T::ListDecoder: Receive + Send,
+    T: Decode,
+    T::ListDecoder: Receive,
 {
     type Decoder = T::ListDecoder;
     type ListDecoder = ListDecoder<Self::Decoder>;
@@ -1122,7 +1118,7 @@ where
 
 impl<T, const N: usize> Decode for [T; N]
 where
-    T: Decode + Send,
+    T: Decode,
 {
     type Decoder = ArrayDecoder<T::Decoder, N>;
     type ListDecoder = ListDecoder<Self::Decoder>;
@@ -1366,8 +1362,8 @@ where
 
 impl<K, V> Decode for BTreeMap<K, V>
 where
-    K: Decode + Ord + Send + 'static,
-    V: Decode + Send + 'static,
+    K: Decode + Ord + 'static,
+    V: Decode + 'static,
 {
     type Decoder = MapDecoder<<(K, V) as Decode>::Decoder, Self>;
     type ListDecoder = ListDecoder<Self::Decoder>;
@@ -1375,8 +1371,8 @@ where
 
 impl<K, V, S> Decode for HashMap<K, V, S>
 where
-    K: Decode + Eq + Hash + Send + 'static,
-    V: Decode + Send + 'static,
+    K: Decode + Eq + Hash + 'static,
+    V: Decode + 'static,
     S: BuildHasher + Default + 'static,
 {
     type Decoder = MapDecoder<<(K, V) as Decode>::Decoder, Self>;
@@ -1641,7 +1637,7 @@ impl<T: ?Sized> Receive for CoreVecDecoder<ResourceBorrowDecoder<T>> {
     sync_receive!();
 }
 
-impl<T: ?Sized + Send + 'static> Decode for ResourceBorrow<T> {
+impl<T: ?Sized + 'static> Decode for ResourceBorrow<T> {
     type Decoder = ResourceBorrowDecoder<T>;
     type ListDecoder = CoreVecDecoder<Self::Decoder>;
 }
@@ -1682,7 +1678,7 @@ impl<T: ?Sized> Receive for CoreVecDecoder<ResourceOwnDecoder<T>> {
     sync_receive!();
 }
 
-impl<T: ?Sized + Send + 'static> Decode for ResourceOwn<T> {
+impl<T: ?Sized + 'static> Decode for ResourceOwn<T> {
     type Decoder = ResourceOwnDecoder<T>;
     type ListDecoder = CoreVecDecoder<Self::Decoder>;
 }
@@ -1819,7 +1815,7 @@ macro_rules! impl_tuple_codec {
         impl<$($vt),+> Decode for ($($vt),+,)
         where
             $(
-                $vt: Decode + Send + 'static,
+                $vt: Decode + 'static,
             )+
         {
             type Decoder = TupleDecoder::<($($vt::Decoder),+,), ($(Option<$vt>),+,)>;
