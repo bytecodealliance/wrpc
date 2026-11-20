@@ -155,6 +155,19 @@ pub fn async_paths_tyid(resolve: &Resolve, id: TypeId) -> (BTreeSet<VecDeque<Opt
             }
             (paths, false)
         }
+        TypeDefKind::Map(_, ty) => {
+            let mut paths = BTreeSet::default();
+            let (nested, fut) = async_paths_ty(resolve, ty);
+            for mut path in nested {
+                path.push_front(Some(1));
+                path.push_front(None);
+                paths.insert(path);
+            }
+            if fut {
+                paths.insert(vec![None, Some(1)].into());
+            }
+            (paths, false)
+        }
         TypeDefKind::Option(ty) => async_paths_ty(resolve, ty),
         TypeDefKind::Result(ty) => {
             let mut paths = BTreeSet::default();
@@ -257,8 +270,37 @@ pub fn async_paths_tyid(resolve: &Resolve, id: TypeId) -> (BTreeSet<VecDeque<Opt
         TypeDefKind::Resource
         | TypeDefKind::Flags(..)
         | TypeDefKind::Enum(..)
-        | TypeDefKind::Map(..)
         | TypeDefKind::Handle(Handle::Own(..) | Handle::Borrow(..)) => (BTreeSet::default(), false),
         TypeDefKind::Unknown => unreachable!(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn map_async_paths() {
+        let mut resolve = Resolve::default();
+        let pkg = resolve
+            .push_source(
+                "test.wit",
+                "package test:test;
+                interface i {
+                    type m = map<string, tuple<u8, future<map<u32, stream<u8>>>>>;
+                }",
+            )
+            .unwrap();
+        let (_, iface) = resolve.packages[pkg].interfaces.first().unwrap();
+        let id = resolve.interfaces[*iface].types["m"];
+        let (paths, fut) = async_paths_tyid(&resolve, id);
+        assert!(!fut);
+        assert_eq!(
+            paths,
+            BTreeSet::from([
+                VecDeque::from([None, Some(1), Some(1)]),
+                VecDeque::from([None, Some(1), Some(1), Some(0), None, Some(1)]),
+            ])
+        );
     }
 }
