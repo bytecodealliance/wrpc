@@ -95,6 +95,7 @@ pub enum Val {
     Char(char),
     String(String),
     List(Vec<Val>),
+    Map(Vec<(Val, Val)>),
     Record(Vec<(String, Val)>),
     Tuple(Vec<Val>),
     Variant(String, Option<Box<Val>>),
@@ -102,6 +103,7 @@ pub enum Val {
     Option(Option<Box<Val>>),
     Result(Result<Option<Box<Val>>, Option<Box<Val>>>),
     Flags(Vec<String>),
+    FixedLengthList(Vec<Val>),
     /// Resource handle, an opaque blob defined by the application
     Resource(Bytes),
     Future(FutureAny),
@@ -114,6 +116,12 @@ fn convert_payload<T, U: TryFrom<T>>(v: Option<Box<T>>) -> Result<Option<Box<U>>
     };
     let v = U::try_from(*v)?;
     Ok(Some(Box::new(v)))
+}
+
+fn convert_entry<T, U: TryFrom<T>>((k, v): (T, T)) -> Result<(U, U), U::Error> {
+    let k = U::try_from(k)?;
+    let v = U::try_from(v)?;
+    Ok((k, v))
 }
 
 fn convert_field<T, U: TryFrom<T>>((name, v): (String, T)) -> Result<(String, U), U::Error> {
@@ -145,6 +153,13 @@ impl TryFrom<Val> for component::Val {
                     .map(Self::try_from)
                     .collect::<Result<_, _>>()?;
                 Ok(Self::List(vs))
+            }
+            Val::Map(vs) => {
+                let vs = vs
+                    .into_iter()
+                    .map(convert_entry)
+                    .collect::<Result<_, _>>()?;
+                Ok(Self::Map(vs))
             }
             Val::Record(vs) => {
                 let vs = vs
@@ -178,6 +193,13 @@ impl TryFrom<Val> for component::Val {
                 Ok(Self::Result(Err(v)))
             }
             Val::Flags(vs) => Ok(Self::Flags(vs)),
+            Val::FixedLengthList(vs) => {
+                let vs = vs
+                    .into_iter()
+                    .map(Self::try_from)
+                    .collect::<Result<_, _>>()?;
+                Ok(Self::FixedLengthList(vs))
+            }
             Val::Resource(..) => bail!("resources require a store"),
             Val::Future(..) => bail!("`future`s require a store"),
             Val::Stream(..) => bail!("`stream`s require a store"),
@@ -209,6 +231,13 @@ impl TryFrom<component::Val> for Val {
                     .map(Self::try_from)
                     .collect::<Result<_, _>>()?;
                 Ok(Self::List(vs))
+            }
+            component::Val::Map(vs) => {
+                let vs = vs
+                    .into_iter()
+                    .map(convert_entry)
+                    .collect::<Result<_, _>>()?;
+                Ok(Self::Map(vs))
             }
             component::Val::Record(vs) => {
                 let vs = vs
@@ -242,12 +271,17 @@ impl TryFrom<component::Val> for Val {
                 Ok(Self::Result(Err(v)))
             }
             component::Val::Flags(vs) => Ok(Self::Flags(vs)),
+            component::Val::FixedLengthList(vs) => {
+                let vs = vs
+                    .into_iter()
+                    .map(Self::try_from)
+                    .collect::<Result<_, _>>()?;
+                Ok(Self::FixedLengthList(vs))
+            }
             component::Val::Resource(..) => bail!("resources require a store"),
             component::Val::Future(..) => bail!("`future`s require a store"),
             component::Val::Stream(..) => bail!("`stream`s require a store"),
             component::Val::ErrorContext(..) => bail!("`error-context` not supported"),
-            component::Val::Map(..) => bail!("maps not supported"),
-            component::Val::FixedLengthList(..) => bail!("fixed-length lists not supported"),
         }
     }
 }
@@ -288,6 +322,26 @@ fn lift_val<T: 'static>(
                 .map(|v| lift_val(store, &ty, v, resource, handles))
                 .collect::<wasmtime::Result<_>>()?;
             Ok(component::Val::List(vs))
+        }
+        (Val::Map(vs), Type::Map(ty)) => {
+            let (key, value) = (ty.key(), ty.value());
+            let vs = vs
+                .into_iter()
+                .map(|(k, v)| {
+                    let k = lift_val(store, &key, k, resource, handles)?;
+                    let v = lift_val(store, &value, v, resource, handles)?;
+                    Ok((k, v))
+                })
+                .collect::<wasmtime::Result<_>>()?;
+            Ok(component::Val::Map(vs))
+        }
+        (Val::FixedLengthList(vs), Type::FixedLengthList(ty)) => {
+            let ty = ty.ty();
+            let vs = vs
+                .into_iter()
+                .map(|v| lift_val(store, &ty, v, resource, handles))
+                .collect::<wasmtime::Result<_>>()?;
+            Ok(component::Val::FixedLengthList(vs))
         }
         (Val::Record(vs), Type::Record(ty)) => {
             let vs = zip(vs, ty.fields())
@@ -401,6 +455,21 @@ fn lower_val<T: 'static>(
             let ty = ty.ty();
             let vs = collect_all(vs.into_iter().map(|v| lower_val(store, &ty, v, resource)))?;
             Ok(Val::List(vs))
+        }
+        (component::Val::Map(vs), Type::Map(ty)) => {
+            let (key, value) = (ty.key(), ty.value());
+            let vs = collect_all(vs.into_iter().map(|(k, v)| {
+                let k = lower_val(store, &key, k, resource);
+                let v = lower_val(store, &value, v, resource)?;
+                let k = k?;
+                Ok((k, v))
+            }))?;
+            Ok(Val::Map(vs))
+        }
+        (component::Val::FixedLengthList(vs), Type::FixedLengthList(ty)) => {
+            let ty = ty.ty();
+            let vs = collect_all(vs.into_iter().map(|v| lower_val(store, &ty, v, resource)))?;
+            Ok(Val::FixedLengthList(vs))
         }
         (component::Val::Record(vs), Type::Record(ty)) => {
             let vs = collect_all(zip(vs, ty.fields()).map(|((name, v), Field { ty, .. })| {
