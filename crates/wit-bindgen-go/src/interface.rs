@@ -3303,6 +3303,15 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
         match types.as_slice() {
             [] => self.push_str("struct{}"),
             [ty] => self.print_opt_ty(ty, decl),
+            _ if types.len() > 16 => {
+                self.push_str("struct {");
+                for (i, ty) in types.iter().enumerate() {
+                    uwrite!(self.src, "V{i} ");
+                    self.print_opt_ty(ty, true);
+                    self.push_str("; ");
+                }
+                self.push_str("}");
+            }
             _ => {
                 let wrpc = self.deps.wrpc();
                 self.push_str(wrpc);
