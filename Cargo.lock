@@ -4669,7 +4669,6 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
- "uuid",
  "wasm-tokio",
  "wasmtime",
  "wrpc-test",
@@ -4681,6 +4680,7 @@ name = "wrpc-wasmtime-cli"
 version = "0.11.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "clap",
  "futures",
  "humantime",
@@ -4688,6 +4688,7 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+ "uuid",
  "wasi-preview1-component-adapter-provider",
  "wasmparser 0.263.0",
  "wasmtime",
