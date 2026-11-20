@@ -10,9 +10,7 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-default = ["client", "http2", "server"]
-client = ["dep:hyper", "hyper/client"]
-http2 = ["hyper?/http2"]
+default = ["server"]
 server = [
     "dep:hyper",
     "dep:hyper-util",
@@ -29,10 +27,9 @@ http-body = { workspace = true }
 http-body-util = { workspace = true }
 hyper = { workspace = true, optional = true }
 hyper-util = { workspace = true, optional = true }
-pin-project-lite = { workspace = true }
-tokio = { workspace = true, features = ["io-util"] }
-tokio-util = { workspace = true, features = ["io"] }
-tracing = { workspace = true, features = ["attributes"] }
+tokio = { workspace = true }
+tokio-util = { workspace = true, features = ["codec", "io"] }
+wrpc-transport = { workspace = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
@@ -46,4 +43,3 @@ hyper-util = { workspace = true, features = [
 test-log = { workspace = true, features = ["color", "log", "trace"] }
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "sync"] }
 wrpc-test = { workspace = true, features = ["http"] }
-wrpc-transport = { workspace = true }

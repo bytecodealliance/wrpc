@@ -10,16 +10,14 @@ use bytes::BytesMut;
 use hyper::client::conn::http2;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use tempfile::{TempDir, tempdir};
-use tokio::io::{
-    AsyncBufReadExt as _, AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _, BufReader,
-};
+use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::net::TcpListener;
 use tokio::process::{Child, Command};
-use tokio::sync::mpsc;
 use tokio::time::timeout;
 use tokio::{select, spawn};
 use tokio_util::codec::Encoder as _;
 use tracing::{info, instrument};
+use wrpc_http::Server;
 use wrpc_transport::{FrameEncoder, FrameRef, Framed, Header, HeaderEncoder, HeaderRef, Listener};
 
 pub mod common;
@@ -67,17 +65,7 @@ async fn start_server(addr: &str, bindings: &Path) -> anyhow::Result<Child> {
     Ok(server)
 }
 
-/// Serve the `echo-server` world of `tests/js/wit` on the connections accepted using `accept`
-/// until `tests/js/client.js`, run against `addr`, exits.
-async fn serve_echo<I, O, E>(
-    mut accept: impl AsyncFnMut() -> Result<(O, I), E>,
-    addr: &str,
-) -> anyhow::Result<()>
-where
-    I: AsyncRead + Send + Unpin + 'static,
-    O: AsyncWrite + Send + Unpin + 'static,
-    E: core::error::Error + Send + Sync + 'static,
-{
+mod echo {
     mod bindings {
         wit_bindgen_wrpc::generate!({
             world: "echo-server",
@@ -85,10 +73,12 @@ where
         });
     }
 
+    pub use bindings::handle;
+
     use bindings::exports::wrpc_test::js::echo::{Asyncs, Handler, Values};
 
     #[derive(Clone, Copy)]
-    struct Echo;
+    pub struct Echo;
 
     impl Handler for Echo {
         async fn echo(&self, v: Values) -> anyhow::Result<Values> {
@@ -99,7 +89,19 @@ where
             Ok(v)
         }
     }
+}
 
+/// Serve the `echo-server` world of `tests/js/wit` on the connections accepted using `accept`
+/// with `serve` until `tests/js/client.js`, run against `addr`, exits.
+async fn serve_echo<T, E, Fut>(
+    mut accept: impl AsyncFnMut() -> Result<T, E>,
+    serve: impl Fn(T) -> Fut,
+    addr: &str,
+) -> anyhow::Result<()>
+where
+    E: core::error::Error + Send + Sync + 'static,
+    Fut: Future<Output = anyhow::Result<()>> + Send + 'static,
+{
     let bindings = bindgen("tests/js/wit", &["echo-client"]).await?;
     info!("running `tests/js/client.js`");
     let mut client = pin!(
@@ -117,20 +119,8 @@ where
                 return Ok(());
             }
             res = accept() => {
-                let (tx, rx) = res.expect("failed to accept connection");
-                spawn(async move {
-                    let mut lis = Listener::new(tx, rx);
-                    while let Some((Header { instance, name }, srv)) = lis
-                        .accept()
-                        .await
-                        .expect("failed to read invocation header")
-                    {
-                        let Ok(fut) = bindings::handle(&Echo, &instance, &name, srv) else {
-                            panic!("`{instance}#{name}` is not exported");
-                        };
-                        fut.await.expect("failed to serve invocation");
-                    }
-                });
+                let fut = serve(res.expect("failed to accept connection"));
+                spawn(async move { fut.await.expect("failed to serve connection") });
             }
         }
     }
@@ -203,11 +193,9 @@ async fn js_http_server() -> anyhow::Result<()> {
     parts.uri = format!("http://{addr}/")
         .parse()
         .context("failed to parse request URI")?;
-    let (tx, rx) = wrpc_test::http_open(sender, parts).await?;
-    let mut clt = Framed::new(tx, rx);
+    let mut clt = (sender, parts);
     common::assert_sync(&mut clt).await?;
     common::assert_async(&mut clt).await?;
-    common::assert_eof(clt).await?;
 
     server.start_kill().context("failed to kill `node`")?;
     server.wait().await.context("failed to wait for `node`")?;
@@ -223,6 +211,16 @@ async fn js_client() -> anyhow::Result<()> {
     let addr = lis.local_addr().context("failed to get server address")?;
     serve_echo(
         async || wrpc_test::tcp_accept(&lis).await,
+        |(tx, rx)| async move {
+            let mut lis = Listener::new(tx, rx);
+            while let Some((Header { instance, name }, srv)) = lis.accept().await? {
+                let Ok(fut) = echo::handle(&echo::Echo, &instance, &name, srv) else {
+                    bail!("`{instance}#{name}` is not exported");
+                };
+                fut.await?;
+            }
+            Ok(())
+        },
         &addr.to_string(),
     )
     .await
@@ -235,23 +233,17 @@ async fn js_http_client() -> anyhow::Result<()> {
         .await
         .context("failed to start TCP listener")?;
     let addr = lis.local_addr().context("failed to get server address")?;
-    let (tx, mut rx) = mpsc::channel(16);
-    let conns = spawn(async move {
-        loop {
-            let (stream, ..) = lis.accept().await.expect("failed to accept connection");
-            let tx = tx.clone();
-            spawn(async move {
-                wrpc_test::serve_http1(stream, tx)
-                    .await
-                    .expect("failed to serve HTTP connection");
-            });
-        }
-    });
-    let res = serve_echo(
-        async || wrpc_test::http_accept(&mut rx).await,
+    serve_echo(
+        async || lis.accept().await.map(|(stream, ..)| stream),
+        |stream| {
+            wrpc_test::serve_http1(stream, |_, Header { instance, name }, rx| async move {
+                let Ok(fut) = echo::handle(&echo::Echo, &instance, &name, Server(rx)) else {
+                    bail!("`{instance}#{name}` is not exported");
+                };
+                fut.await
+            })
+        },
         &format!("http://{addr}"),
     )
-    .await;
-    conns.abort();
-    res
+    .await
 }

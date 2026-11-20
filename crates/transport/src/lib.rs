@@ -109,7 +109,7 @@ pub fn error_unknown_path(path: &[usize]) -> std::io::Error {
 }
 
 /// Returns the error for data received after the end of a value
-fn error_data_after_end() -> std::io::Error {
+pub fn error_data_after_end() -> std::io::Error {
     std::io::Error::new(
         std::io::ErrorKind::InvalidData,
         "received data after value end",

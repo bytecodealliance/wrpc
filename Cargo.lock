@@ -4569,11 +4569,9 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
- "pin-project-lite",
  "test-log",
  "tokio",
  "tokio-util",
- "tracing",
  "wrpc-test",
  "wrpc-transport",
 ]
