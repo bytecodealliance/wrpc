@@ -752,6 +752,105 @@ impl InterfaceGenerator<'_> {
         self.src.push_str(")");
     }
 
+    fn print_read_map(&mut self, key: &Type, value: &Type, reader: &str, path: &str) {
+        let fmt = self.deps.fmt();
+        let io = self.deps.io();
+        let errors = self.deps.errors();
+        let slog = self.deps.slog();
+        let wrpc = self.deps.wrpc();
+        let deferred = self.is_async(value);
+        let d = if deferred { "nil, " } else { "" };
+        uwrite!(self.src, "func(r {wrpc}.IndexReadCloser, path ...uint32) (");
+        self.print_map(key, value);
+        self.print_deferred_ret(deferred);
+        uwrite!(
+            self.src,
+            r#", error) {{
+    var x uint32
+    var s uint
+    for i := 0; i < 5; i++ {{
+        {slog}.Debug("reading map length byte", "i", i)
+        b, err := r.ReadByte()
+        if err != nil {{
+            if i > 0 && err == {io}.EOF {{
+                err = {io}.ErrUnexpectedEOF
+            }}
+            return nil, {d}{fmt}.Errorf("failed to read map length byte: %w", err)
+        }}
+        if s == 28 && b > 0x0f {{
+            return nil, {d}{errors}.New("map length overflows a 32-bit integer")
+        }}
+        if b < 0x80 {{
+            x = x | uint32(b)<<s
+            vs := make("#,
+        );
+        self.print_map(key, value);
+        self.push_str(")\n");
+        if deferred {
+            let context = self.deps.context();
+            uwrite!(self.src, "var ds []func({context}.Context) error\n");
+        }
+        uwrite!(
+            self.src,
+            r#"for i := range x {{
+                {slog}.Debug("reading map entry key", "i", i)
+                k, err := "#,
+        );
+        self.print_read_ty(key, "r", "");
+        uwrite!(
+            self.src,
+            r#"
+                if err != nil {{
+                    return nil, {d}{fmt}.Errorf("failed to read map entry %d key: %w", i, err)
+                }}
+                if _, ok := vs[k]; ok {{
+                    return nil, {d}{fmt}.Errorf("duplicate map entry %d key", i)
+                }}
+                {slog}.Debug("reading map entry value", "i", i)
+                v, "#,
+        );
+        if deferred {
+            self.push_str("d, ");
+        }
+        self.push_str("err := ");
+        self.print_read_ty(value, "r", "append(path, uint32(i), 1)");
+        self.push_str("\n");
+        uwrite!(
+            self.src,
+            r#"if err != nil {{
+                    return nil, {d}{fmt}.Errorf("failed to read map entry %d value: %w", i, err)
+                }}
+                vs[k] = v
+"#,
+        );
+        if deferred {
+            uwrite!(
+                self.src,
+                r#"ds = append(ds, d)
+            }}
+            return vs, {wrpc}.JoinDeferred(ds...), nil
+"#
+            );
+        } else {
+            self.push_str("}\nreturn vs, nil\n");
+        }
+        uwrite!(
+            self.src,
+            r#"}}
+        x |= uint32(b&0x7f) << s
+        s += 7
+    }}
+    return nil, {d}{errors}.New("map length overflows a 32-bit integer")
+}}({reader}"#,
+        );
+        if !path.is_empty() {
+            self.src.push_str(", ");
+            self.src.push_str(path);
+            self.src.push_str("...");
+        }
+        self.src.push_str(")");
+    }
+
     fn print_read_option(&mut self, ty: &Type, reader: &str, path: &str) {
         let fmt = self.deps.fmt();
         let slog = self.deps.slog();
@@ -1342,7 +1441,7 @@ impl InterfaceGenerator<'_> {
             TypeDefKind::FixedLengthList(ty, size) => {
                 self.print_read_fixed_length_list(ty, *size, reader, path)
             }
-            TypeDefKind::Map(..) => panic!("unsupported type: map"),
+            TypeDefKind::Map(key, value) => self.print_read_map(key, value, reader, path),
             TypeDefKind::Future(ty) => self.print_read_future(ty, reader, path),
             TypeDefKind::Stream(ty) => self.print_read_stream(ty, reader, path),
             TypeDefKind::Type(ty) => {
@@ -1738,6 +1837,65 @@ impl InterfaceGenerator<'_> {
         );
     }
 
+    fn print_write_map(&mut self, key: &Type, value: &Type, name: &str, writer: &str) {
+        let binary = self.deps.binary();
+        let context = self.deps.context();
+        let fmt = self.deps.fmt();
+        let io = self.deps.io();
+        let math = self.deps.math();
+        let slog = self.deps.slog();
+        let wrpc = self.deps.wrpc();
+
+        self.push_str("func(v ");
+        self.print_map(key, value);
+        uwrite!(
+            self.src,
+            r#", w interface {{ {io}.ByteWriter; {io}.Writer }}) (write func({context}.Context, {wrpc}.IndexWriter) error, err error) {{
+        n := len(v)
+        if n > {math}.MaxUint32 {{
+            return nil, {fmt}.Errorf("map length of %d overflows a 32-bit integer", n)
+        }}
+        if err = func(v int, w {io}.Writer) error {{
+            b := make([]byte, {binary}.MaxVarintLen32)
+            i := {binary}.PutUvarint(b, uint64(v))
+            {slog}.Debug("writing map length", "len", n)
+            _, err = w.Write(b[:i])
+            return err
+        }}(n, w); err != nil {{
+            return nil, {fmt}.Errorf("failed to write map length of %d: %w", n, err)
+        }}
+        {slog}.Debug("writing map entries")
+        writes := make(map[uint32]func({context}.Context, {wrpc}.IndexWriter) error, n)
+        var i uint32
+        for k, e := range v {{
+            _, err := "#
+        );
+        self.print_write_ty(key, "k", "w");
+        uwrite!(
+            self.src,
+            r#"
+            if err != nil {{
+                return nil, {fmt}.Errorf("failed to write map entry %d key: %w", i, err)
+            }}
+            write, err := "#
+        );
+        self.print_write_ty(value, "e", "w");
+        uwrite!(
+            self.src,
+            r#"
+            if err != nil {{
+                return nil, {fmt}.Errorf("failed to write map entry %d value: %w", i, err)
+            }}
+            if write != nil {{
+                writes[i] = {wrpc}.IndexWrite(write, 1)
+            }}
+            i++
+        }}
+        return {wrpc}.JoinWrites(writes), nil
+    }}({name}, {writer})"#
+        );
+    }
+
     fn print_write_option(&mut self, ty: &Type, name: &str, writer: &str) {
         let context = self.deps.context();
         let fmt = self.deps.fmt();
@@ -2060,6 +2218,7 @@ impl InterfaceGenerator<'_> {
             TypeDefKind::FixedLengthList(ty, size) => {
                 self.print_write_fixed_length_list(ty, *size, name, writer)
             }
+            TypeDefKind::Map(key, value) => self.print_write_map(key, value, name, writer),
             TypeDefKind::Future(ty) => self.print_write_future(ty, name, writer),
             TypeDefKind::Stream(ty) => self.print_write_stream(ty, name, writer),
             TypeDefKind::Type(ty) => self.print_write_ty(ty, name, writer),
@@ -3005,7 +3164,10 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
                 | TypeDefKind::Resource
                 | TypeDefKind::Handle(..)
                 | TypeDefKind::FixedLengthList(..) => {}
-                TypeDefKind::List(..) | TypeDefKind::Future(..) | TypeDefKind::Stream(..)
+                TypeDefKind::List(..)
+                | TypeDefKind::Map(..)
+                | TypeDefKind::Future(..)
+                | TypeDefKind::Stream(..)
                     if result => {}
                 TypeDefKind::Tuple(Tuple { types }) if types.len() == 1 => {
                     return self.nillable_ptr(&types[0], result, decl);
@@ -3071,6 +3233,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
                     TypeDefKind::FixedLengthList(ty, size) => {
                         self.print_fixed_length_list(ty, *size)
                     }
+                    TypeDefKind::Map(key, value) => self.print_map(key, value),
                     TypeDefKind::Future(ty) => self.print_future(ty),
                     TypeDefKind::Stream(ty) => self.print_stream(ty),
                     TypeDefKind::Type(ty) => self.print_opt_ty(ty, decl),
@@ -3109,10 +3272,12 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
             inner = ty;
         }
         if let Type::Id(id) = inner
-            && let TypeDefKind::List(..) | TypeDefKind::Future(..) | TypeDefKind::Stream(..) =
-                self.resolve.types[*id].kind
+            && let TypeDefKind::List(..)
+            | TypeDefKind::Map(..)
+            | TypeDefKind::Future(..)
+            | TypeDefKind::Stream(..) = self.resolve.types[*id].kind
         {
-            // Go slices and channels are nillable
+            // Go slices, maps and channels are nillable
             self.print_ty(ty, true);
             return;
         }
@@ -3162,6 +3327,13 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
         self.print_opt_ty(ty, true);
     }
 
+    fn print_map(&mut self, key: &Type, value: &Type) {
+        self.push_str("map[");
+        self.print_opt_ty(key, true);
+        self.push_str("]");
+        self.print_opt_ty(value, true);
+    }
+
     fn print_future(&mut self, ty: &Option<Type>) {
         self.push_str("<-chan ");
         if let Some(ty) = ty {
@@ -3205,7 +3377,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
         match &ty.kind {
             TypeDefKind::List(ty) => self.print_list(ty),
             TypeDefKind::FixedLengthList(ty, size) => self.print_fixed_length_list(ty, *size),
-            TypeDefKind::Map(..) => panic!("unsupported anonymous type reference: map"),
+            TypeDefKind::Map(key, value) => self.print_map(key, value),
             TypeDefKind::Option(ty) => self.print_option(ty, decl),
             TypeDefKind::Result(ty) => self.print_result(ty),
             TypeDefKind::Variant(_) => panic!("unsupported anonymous variant"),
@@ -3757,8 +3929,13 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({context}.Context, {wrp
         }
     }
 
-    fn type_map(&mut self, _id: TypeId, _name: &str, _key: &Type, _value: &Type, _docs: &Docs) {
-        panic!("unsupported type: map")
+    fn type_map(&mut self, id: TypeId, _name: &str, key: &Type, value: &Type, docs: &Docs) {
+        if let Some(name) = self.name_of(id) {
+            self.godoc(docs);
+            uwrite!(self.src, "type {name} = ");
+            self.print_map(key, value);
+            self.push_str("\n");
+        }
     }
 
     fn type_builtin(&mut self, _id: TypeId, name: &str, ty: &Type, docs: &Docs) {

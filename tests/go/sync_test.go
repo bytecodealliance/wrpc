@@ -1,4 +1,5 @@
 //go:generate $WIT_BINDGEN_WRPC go --gofmt=false --world sync-client --out-dir bindings/sync_client --package wrpc.io/tests/go/bindings/sync_client ../wit
+//go:generate $WIT_BINDGEN_WRPC go --gofmt=false --world runner --out-dir bindings/maps --package wrpc.io/tests/go/bindings/maps ../runtime/map/test.wit
 
 package integration_test
 
@@ -16,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	wrpc "wrpc.io/go"
 	integration "wrpc.io/tests/go"
+	"wrpc.io/tests/go/bindings/maps/test/maps/to_test"
 	"wrpc.io/tests/go/bindings/sync_client"
 	"wrpc.io/tests/go/bindings/sync_client/foo"
 	"wrpc.io/tests/go/bindings/sync_client/strange"
@@ -169,6 +171,20 @@ func TestFlags(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, tc.want, flags)
 	}
+}
+
+func TestMapDuplicateKey(t *testing.T) {
+	ctx, client := serve(t, func(s wrpc.Server) (func() error, error) {
+		return s.Serve("test:maps/to-test", "empty-roundtrip", func(ctx context.Context, w wrpc.IndexWriteCloser, r wrpc.IndexReadCloser) {
+			_, _ = io.ReadAll(r)
+			_ = r.Close()
+			_, _ = w.Write([]byte("\x02\x01\x01a\x01\x01b"))
+			_ = w.Close()
+		})
+	})
+	m, err := to_test.EmptyRoundtrip(ctx, client, nil)
+	assert.ErrorContains(t, err, "duplicate map entry 1 key")
+	assert.Nil(t, m)
 }
 
 type floatsHandler struct {
