@@ -74,11 +74,13 @@ impl LanguageMethods for Rust {
     fn should_fail_verify(
         &self,
         _name: &str,
-        _config: &crate::config::WitConfig,
+        config: &crate::config::WitConfig,
         args: &[String],
     ) -> bool {
-        // wRPC's Rust generator does not implement upstream's `--ownership` flag.
-        args.iter().any(|arg| arg.starts_with("--ownership"))
+        // wRPC does not support `error-context`.
+        config.error_context
+            // wRPC's Rust generator does not implement upstream's `--ownership` flag.
+            || args.iter().any(|arg| arg.starts_with("--ownership"))
     }
 
     fn should_fail_runtime(&self, _name: &str) -> bool {

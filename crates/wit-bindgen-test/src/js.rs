@@ -30,11 +30,13 @@ impl LanguageMethods for Js {
     fn should_fail_verify(
         &self,
         name: &str,
-        _config: &crate::config::WitConfig,
+        config: &crate::config::WitConfig,
         _args: &[String],
     ) -> bool {
-        // The wRPC JavaScript generator does not yet support `map`.
-        name == "map.wit"
+        // wRPC does not support `error-context`.
+        config.error_context
+            // The wRPC JavaScript generator does not yet support `map`.
+            || name == "map.wit"
     }
 
     fn should_fail_runtime(&self, name: &str) -> bool {

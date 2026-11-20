@@ -32,12 +32,13 @@ impl LanguageMethods for Go {
     fn should_fail_verify(
         &self,
         name: &str,
-        _config: &crate::config::WitConfig,
+        config: &crate::config::WitConfig,
         _args: &[String],
     ) -> bool {
-        // The wRPC Go generator does not yet support bare `stream` types
-        // or `error-context`.
-        matches!(name, "streams.wit" | "error-context.wit")
+        // wRPC does not support `error-context`.
+        config.error_context
+            // The wRPC Go generator does not yet support bare `stream` types.
+            || name == "streams.wit"
     }
 
     fn should_fail_runtime(&self, name: &str) -> bool {

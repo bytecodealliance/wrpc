@@ -2,6 +2,7 @@ use std::collections::{BTreeSet, VecDeque};
 
 use wit_parser::{
     Case, Field, Function, FunctionKind, Handle, Record, Resolve, Type, TypeDefKind, TypeId,
+    TypeIdVisitor, WorldId,
 };
 
 #[must_use]
@@ -262,6 +263,34 @@ pub fn async_paths_tyid(resolve: &Resolve, id: TypeId) -> (BTreeSet<VecDeque<Opt
         | TypeDefKind::Handle(Handle::Own(..) | Handle::Borrow(..)) => (BTreeSet::default(), false),
         TypeDefKind::Unknown => unreachable!(),
     }
+}
+
+/// Whether `world` uses `error-context` anywhere
+#[must_use]
+pub fn uses_error_context(resolve: &Resolve, world: WorldId) -> bool {
+    #[derive(Default)]
+    struct Visitor {
+        visited: BTreeSet<TypeId>,
+        found: bool,
+    }
+
+    impl TypeIdVisitor for Visitor {
+        fn before_visit_type_id(&mut self, id: TypeId) -> bool {
+            self.visited.insert(id)
+        }
+
+        fn visit_type(&mut self, resolve: &Resolve, ty: &Type) {
+            match ty {
+                Type::Id(id) => self.visit_type_id(resolve, *id),
+                Type::ErrorContext => self.found = true,
+                _ => {}
+            }
+        }
+    }
+
+    let mut visitor = Visitor::default();
+    visitor.visit_world(resolve, world);
+    visitor.found
 }
 
 #[cfg(test)]
