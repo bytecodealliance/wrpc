@@ -1322,10 +1322,27 @@ where
     }
 }
 
+fn collect_map<T, M>(items: Vec<T>) -> std::io::Result<M>
+where
+    M: FromIterator<T>,
+    for<'a> &'a M: IntoIterator<IntoIter: ExactSizeIterator>,
+{
+    let n = items.len();
+    let map: M = items.into_iter().collect();
+    if (&map).into_iter().len() != n {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "map contains duplicate keys",
+        ));
+    }
+    Ok(map)
+}
+
 impl<T, M> tokio_util::codec::Decoder for MapDecoder<T, M>
 where
     T: tokio_util::codec::Decoder + Receive + Default,
     M: FromIterator<T::Item>,
+    for<'a> &'a M: IntoIterator<IntoIter: ExactSizeIterator>,
 {
     type Item = M;
     type Error = T::Error;
@@ -1334,14 +1351,16 @@ where
         let Some(items) = self.list.decode(src)? else {
             return Ok(None);
         };
-        Ok(Some(items.into_iter().collect()))
+        let map = collect_map(items)?;
+        Ok(Some(map))
     }
 
     fn decode_eof(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         let Some(items) = self.list.decode_eof(src)? else {
             return Ok(None);
         };
-        Ok(Some(items.into_iter().collect()))
+        let map = collect_map(items)?;
+        Ok(Some(map))
     }
 }
 
@@ -2807,6 +2826,16 @@ mod tests {
         )?;
         assert_eq!(v, BTreeMap::from([("a".into(), 1)]));
         Ok(())
+    }
+
+    #[test]
+    fn map_rejects_duplicate_keys() {
+        let err = crate::unpack(
+            <HashMap<String, u32> as Decode>::Decoder::default(),
+            &mut BytesMut::from(&b"\x02\x01a\x01\x01a\x02"[..]),
+        )
+        .unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     }
 
     #[test]

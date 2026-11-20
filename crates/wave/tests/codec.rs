@@ -135,6 +135,11 @@ fn errors() -> anyhow::Result<()> {
         (enum_ty, b"\x02", ErrorKind::InvalidData),
         (flags, b"\x08", ErrorKind::InvalidData),
         (
+            map.clone(),
+            b"\x02\x01a\x01\x01a\x02",
+            ErrorKind::InvalidData,
+        ),
+        (
             Type::list(Type::STRING),
             b"\x01\x03ab",
             ErrorKind::UnexpectedEof,

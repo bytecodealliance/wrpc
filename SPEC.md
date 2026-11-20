@@ -188,7 +188,7 @@ A `stream` without an element type is encoded like `stream<T>` with a `T` of emp
 
 ### Maps
 
-A sender MUST NOT send a `map` with duplicate keys. The behavior of a receiver of such a `map` is unspecified.
+A sender MUST NOT send a `map` with duplicate keys. A receiver MUST treat a `map` with duplicate keys as an error.
 
 ### Resources
 
