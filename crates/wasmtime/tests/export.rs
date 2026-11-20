@@ -32,3 +32,25 @@ fn instance_names() -> anyhow::Result<()> {
     assert!(exports.get("ns:pkg/a@1.2.3+build", "f").is_none());
     Ok(())
 }
+
+#[test]
+fn instance_name_collision() -> anyhow::Result<()> {
+    let engine = Engine::default();
+    let component = Component::new(
+        &engine,
+        r#"(component
+            (core module $m (func (export "f")))
+            (core instance $i (instantiate $m))
+            (func $f (canon lift (core func $i "f")))
+            (instance $x (export "f" (func $f)))
+            (export "ns:pkg/a@1.0.1" (instance $x))
+            (export "ns:pkg/a@1.2.0" (instance $x))
+        )"#,
+    )?;
+    let err = Exports::new(&component).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "exports `ns:pkg/a@1.0.1` and `ns:pkg/a@1.2.0` both map to instance `ns:pkg/a@1`"
+    );
+    Ok(())
+}

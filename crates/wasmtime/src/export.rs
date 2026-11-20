@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::Context as _;
+use anyhow::{Context as _, bail};
 use tracing::{debug, warn};
 use wasmparser::names::split_canonical_version;
 use wasmtime::component::{Component, ComponentExportIndex, Type, types};
@@ -52,7 +52,8 @@ impl Exports {
     ///
     /// # Errors
     ///
-    /// Returns an error if an export cannot be looked up
+    /// Returns an error if an export cannot be looked up or if two exports map to the same
+    /// instance name
     pub fn new(component: &Component) -> anyhow::Result<Self> {
         let engine = component.engine();
         let mut exports = HashMap::<Box<str>, HashMap<Box<str>, Export>>::default();
@@ -76,6 +77,7 @@ impl Exports {
             );
             Ok(())
         };
+        let mut instances = HashMap::<String, &str>::default();
         for (name, types::ComponentExtern { ty, .. }) in component.component_type().exports(engine)
         {
             match ty {
@@ -85,6 +87,9 @@ impl Exports {
                         .get_export_index(None, name)
                         .with_context(|| format!("export `{name}` not found"))?;
                     let instance = instance_name(name);
+                    if let Some(prev) = instances.insert(instance.clone(), name) {
+                        bail!("exports `{prev}` and `{name}` both map to instance `{instance}`");
+                    }
                     for (func, types::ComponentExtern { ty, .. }) in ty.exports(engine) {
                         match ty {
                             types::ComponentItem::ComponentFunc(ty) => {
