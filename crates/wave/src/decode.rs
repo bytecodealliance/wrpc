@@ -7,6 +7,7 @@ use core::mem;
 use core::task::{Context, Poll};
 
 use std::borrow::Cow;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use bytes::{Buf as _, BytesMut};
@@ -334,7 +335,14 @@ fn decode_ty<T: WasmValue>(
                 return Ok(None);
             };
             let mut vs = vs.into_iter();
-            let entries = iter::from_fn(|| vs.next().zip(vs.next()));
+            let entries: Vec<_> = iter::from_fn(|| vs.next().zip(vs.next())).collect();
+            let mut keys = HashSet::with_capacity(entries.len());
+            for (k, ..) in &entries {
+                let k = wasm_wave::to_string(k).map_err(error_invalid_data)?;
+                if !keys.insert(k) {
+                    return Err(error_invalid_data("map contains duplicate keys"));
+                }
+            }
             T::make_map(ty, entries)
                 .map(Some)
                 .map_err(error_invalid_data)
