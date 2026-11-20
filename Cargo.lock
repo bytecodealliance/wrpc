@@ -4671,6 +4671,7 @@ dependencies = [
  "tracing",
  "uuid",
  "wasm-tokio",
+ "wasmparser 0.263.0",
  "wasmtime",
  "wrpc-test",
  "wrpc-transport",
