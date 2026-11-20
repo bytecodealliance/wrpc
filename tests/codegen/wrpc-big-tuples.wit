@@ -1,0 +1,36 @@
+package wrpc-test:big-tuples;
+
+interface tuples {
+  type t13 = tuple<u8, u8, u8, u8, u8, u8, u8, u8, u8, u8, u8, u8, string>;
+  type t17 = tuple<u8, u16, u32, u64, s8, s16, s32, s64, f32, f64, bool, char, string, list<u8>, option<string>, result<u8, string>, t13>;
+  type t17-async = tuple<future<u8>, stream<string>, u8, u8, u8, u8, u8, u8, u8, u8, u8, u8, u8, u8, u8, u8, t13>;
+
+  record r {
+    a: t17,
+    b: list<t17>,
+    c: t17-async,
+  }
+
+  variant v {
+    a(t17),
+    b(t17-async),
+  }
+
+  list-of: func(a: list<t17>) -> list<t17>;
+  option-of: func(a: option<t17>) -> option<t17>;
+  result-of: func(a: result<t17, t13>) -> result<t17, t13>;
+  record-of: func(a: r) -> r;
+  variant-of: func(a: v) -> v;
+  nested: func(a: tuple<t17, u8, u8, u8, u8, u8, u8, u8, u8, u8, u8, u8, u8, u8, u8, u8, t17>) -> t17;
+  async-of: func(a: t17-async) -> t17-async;
+  params: func(a1: string, a2: u8, a3: u8, a4: u8, a5: u8, a6: u8, a7: u8, a8: u8, a9: u8, a10: u8, a11: u8, a12: u8, a13: t17) -> t17;
+  many-params: func(a1: u64, a2: u64, a3: u64, a4: u64, a5: u64, a6: u64, a7: u64, a8: u64, a9: u64, a10: u64, a11: u64, a12: u64, a13: u64, a14: u64, a15: u64, a16: u64, a17: future<u8>) -> u8;
+}
+
+world the-world {
+  import tuples;
+  export tuples;
+
+  import world-import: func(a: tuple<u8, u8, u8, u8, u8, u8, u8, u8, u8, u8, u8, u8, string>) -> tuple<u8, u8, u8, u8, u8, u8, u8, u8, u8, u8, u8, u8, string>;
+  export world-export: func(a: tuple<u8, u8, u8, u8, u8, u8, u8, u8, u8, u8, u8, u8, string>) -> tuple<u8, u8, u8, u8, u8, u8, u8, u8, u8, u8, u8, u8, string>;
+}
