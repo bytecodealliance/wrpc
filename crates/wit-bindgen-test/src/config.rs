@@ -110,10 +110,7 @@ impl Default for StringList {
 /// files for runtime tests.
 #[derive(Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
-#[expect(
-    dead_code,
-    reason = "fields are carried from upstream; wRPC drives expected failures by test name in should_fail_verify"
-)]
+#[expect(dead_code, reason = "fields are carried from upstream")]
 pub struct WitConfig {
     /// Indicates that this WIT test uses the component model async features
     /// and/or proposal.

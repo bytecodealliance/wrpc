@@ -11,6 +11,7 @@ use wit_bindgen_core::{
     Files, InterfaceGenerator as _, Source, Types, WorldGenerator, uwrite, uwriteln,
     wit_parser::{Function, InterfaceId, PackageId, Resolve, TypeId, WorldId, WorldItem, WorldKey},
 };
+use wrpc_introspect::uses_error_context;
 
 mod interface;
 
@@ -465,6 +466,9 @@ fn gofmt(src: &mut String) {
 
 impl WorldGenerator for GoWrpc {
     fn preprocess(&mut self, resolve: &Resolve, world: WorldId) -> Result<()> {
+        if uses_error_context(resolve, world) {
+            bail!("`error-context` is not supported");
+        }
         self.types.analyze(resolve);
         self.world = Some(world);
 

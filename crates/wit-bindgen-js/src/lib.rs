@@ -9,7 +9,7 @@ use wit_bindgen_core::wit_parser::{
     TypeId, TypeOwner, WorldId, WorldItem, WorldKey,
 };
 use wit_bindgen_core::{Files, WorldGenerator, dealias, uwrite, uwriteln};
-use wrpc_introspect::{async_paths_ty, rpc_func_name};
+use wrpc_introspect::{async_paths_ty, rpc_func_name, uses_error_context};
 
 fn generated_preamble() -> String {
     format!(
@@ -982,6 +982,9 @@ impl Gen<'_> {
 
 impl WorldGenerator for JsWrpc {
     fn preprocess(&mut self, resolve: &Resolve, world: WorldId) -> Result<()> {
+        if uses_error_context(resolve, world) {
+            bail!("`error-context` is not supported");
+        }
         let world = &resolve.worlds[world];
         self.world.clone_from(&world.name);
         for (key, item) in world.imports.iter().chain(world.exports.iter()) {

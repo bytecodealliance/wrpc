@@ -12,6 +12,7 @@ use wit_bindgen_core::{
     Files, InterfaceGenerator as _, Source, Types, WorldGenerator, dealias, name_package_module,
     uwrite, uwriteln,
 };
+use wrpc_introspect::uses_error_context;
 
 mod interface;
 
@@ -527,6 +528,9 @@ fn send__<T: ::core::future::Future + ::core::marker::Send>(
 
 impl WorldGenerator for RustWrpc {
     fn preprocess(&mut self, resolve: &Resolve, world: WorldId) -> Result<()> {
+        if uses_error_context(resolve, world) {
+            bail!("`error-context` is not supported");
+        }
         wit_bindgen_core::generated_preamble(&mut self.src_preamble, env!("CARGO_PKG_VERSION"));
 
         // Render some generator options to assist with debugging and/or to help
