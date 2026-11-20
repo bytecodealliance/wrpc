@@ -1,7 +1,7 @@
 use crate::interface::InterfaceGenerator;
 use anyhow::{Result, bail};
 use heck::{ToSnakeCase, ToUpperCamelCase};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::{self, Write as _};
 use std::mem;
 use wit_bindgen_core::wit_parser::{
@@ -42,6 +42,8 @@ struct RustWrpc {
     world: Option<WorldId>,
 
     export_paths: Vec<String>,
+    /// Arities of the generated `TupleN` structs
+    tuples: BTreeSet<usize>,
     /// Maps wit interface and type names to their Rust identifiers
     with: GenerationConfiguration,
 }
@@ -525,6 +527,248 @@ fn send__<T: ::core::future::Future + ::core::marker::Send>(
     }
 }
 
+impl RustWrpc {
+    /// Generates the `TupleN` structs used for tuples, which are too long for Rust tuple trait
+    /// implementations
+    fn finish_tuples(&mut self) {
+        const DERIVES: [&str; 9] = [
+            "::core::clone::Clone",
+            "::core::marker::Copy",
+            "::core::fmt::Debug",
+            "::core::default::Default",
+            "::core::cmp::PartialEq",
+            "::core::cmp::Eq",
+            "::core::cmp::PartialOrd",
+            "::core::cmp::Ord",
+            "::core::hash::Hash",
+        ];
+        let derives = DERIVES
+            .iter()
+            .map(ToString::to_string)
+            .chain(
+                self.opts
+                    .additional_derive_attributes
+                    .iter()
+                    .filter(|derive| {
+                        let name = derive.rsplit("::").next().unwrap_or(derive).trim();
+                        !DERIVES
+                            .iter()
+                            .any(|std| std.rsplit("::").next() == Some(name))
+                    })
+                    .cloned(),
+            )
+            .collect::<Vec<_>>()
+            .join(", ");
+        let bytes = self.bytes_path().to_string();
+        let tokio_util = self.tokio_util_path().to_string();
+        let wrpc_transport = self.wrpc_transport_path().to_string();
+        for n in mem::take(&mut self.tuples) {
+            let name = format!("Tuple{n}");
+            let ts = (0..n).map(|i| format!("T{i}, ")).collect::<String>();
+            let fields = (0..n).map(|i| format!("pub T{i}, ")).collect::<String>();
+            let vs = (0..n).map(|i| format!("v{i}, ")).collect::<String>();
+            let encode = (0..n)
+                .map(|i| format!("T{i}: {wrpc_transport}::Encode, "))
+                .collect::<String>();
+            let decode = (0..n)
+                .map(|i| format!("T{i}: {wrpc_transport}::Decode, "))
+                .collect::<String>();
+            let encode_ref = (0..n)
+                .map(|i| {
+                    format!(
+                        "T{i}: {wrpc_transport}::Encode, T{i}::Encoder: {tokio_util}::codec::Encoder<&'a T{i}, Error = ::std::io::Error>, "
+                    )
+                })
+                .collect::<String>();
+            let decode_static = (0..n)
+                .map(|i| {
+                    format!("T{i}: {wrpc_transport}::Decode + ::core::marker::Send + 'static, ")
+                })
+                .collect::<String>();
+            let encoders = (0..n)
+                .map(|i| format!("T{i}::Encoder, "))
+                .collect::<String>();
+            let cs = (0..n).map(|i| format!("C{i}, ")).collect::<String>();
+            let vs_ty = (0..n).map(|i| format!("V{i}, ")).collect::<String>();
+            let transmit_cs = (0..n)
+                .map(|i| format!("C{i}: {wrpc_transport}::Transmit, "))
+                .collect::<String>();
+            let encoder_cs = (0..n)
+                .map(|i| {
+                    format!("C{i}: {tokio_util}::codec::Encoder<V{i}, Error = ::std::io::Error>, ")
+                })
+                .collect::<String>();
+            let encoder_ref_cs = (0..n)
+                .map(|i| {
+                    format!(
+                        "C{i}: {tokio_util}::codec::Encoder<&'a V{i}, Error = ::std::io::Error>, "
+                    )
+                })
+                .collect::<String>();
+            let transmit = (0..n)
+                .map(|i| {
+                    format!(
+                        r"
+            path.push({i});
+            let res = {wrpc_transport}::Transmit::poll_transmit(&mut self.{i}, cx, path, dst);
+            path.pop();
+            match res {{
+                ::core::task::Poll::Ready(Ok(())) => {{}}
+                ::core::task::Poll::Ready(Err(err)) => return ::core::task::Poll::Ready(Err(err)),
+                ::core::task::Poll::Pending => ready = false,
+            }}"
+                    )
+                })
+                .collect::<String>();
+            let transmit_closed = (0..n)
+                .map(|i| format!("{wrpc_transport}::Transmit::is_closed(&self.{i})"))
+                .collect::<Vec<_>>()
+                .join(" && ");
+            let encode_fields = (0..n)
+                .map(|i| {
+                    format!("{tokio_util}::codec::Encoder::encode(&mut self.{i}, v{i}, dst)?;")
+                })
+                .collect::<String>();
+            let decoder_fields = (0..n)
+                .map(|i| format!("c{i}: T{i}::Decoder, v{i}: ::core::option::Option<T{i}>, "))
+                .collect::<String>();
+            let decoder_defaults = (0..n)
+                .map(|i| {
+                    format!(
+                        "c{i}: ::core::default::Default::default(), v{i}: ::core::option::Option::None, "
+                    )
+                })
+                .collect::<String>();
+            let receive = (0..n)
+                .map(|i| {
+                    format!(
+                        "::core::option::Option::Some(({i}, rest)) => {wrpc_transport}::Receive::poll_receive(&mut self.c{i}, cx, rest, src),"
+                    )
+                })
+                .collect::<String>();
+            let receive_closed = (0..n)
+                .map(|i| format!("{wrpc_transport}::Receive::is_closed(&self.c{i})"))
+                .collect::<Vec<_>>()
+                .join(" && ");
+            let decode_fields = (0..n)
+                .map(|i| {
+                    format!(
+                        r"
+            if self.v{i}.is_none() {{
+                let ::core::option::Option::Some(v) = {tokio_util}::codec::Decoder::decode(&mut self.c{i}, src)? else {{
+                    return ::core::result::Result::Ok(::core::option::Option::None);
+                }};
+                self.v{i} = ::core::option::Option::Some(v);
+            }}"
+                    )
+                })
+                .collect::<String>();
+            let decoded = (0..n)
+                .map(|i| format!("self.v{i}.take().unwrap(), "))
+                .collect::<String>();
+            let module = name.to_snake_case();
+            uwriteln!(
+                self.src,
+                r"
+#[derive({derives})]
+pub struct {name}<{ts}>({fields});
+
+impl<{encode}> {wrpc_transport}::Encode for {name}<{ts}> {{
+    type Encoder = {module}__::Encoder<{encoders}>;
+}}
+
+impl<'a, {ts}> {wrpc_transport}::Encode for &'a {name}<{ts}>
+where
+    {encode_ref}
+{{
+    type Encoder = {module}__::Encoder<{encoders}>;
+}}
+
+impl<{decode_static}> {wrpc_transport}::Decode for {name}<{ts}> {{
+    type Decoder = {module}__::Decoder<{ts}>;
+    type ListDecoder = {wrpc_transport}::ListDecoder<Self::Decoder>;
+}}
+
+mod {module}__ {{
+    #[derive(::core::default::Default)]
+    pub struct Encoder<{cs}>({cs});
+
+    impl<{transmit_cs}> {wrpc_transport}::Transmit for Encoder<{cs}> {{
+        fn poll_transmit(&mut self, cx: &mut ::core::task::Context<'_>, path: &mut ::std::vec::Vec<usize>, dst: &mut {bytes}::BytesMut) -> ::core::task::Poll<::std::io::Result<()>> {{
+            let mut ready = true;{transmit}
+            if ready {{
+                ::core::task::Poll::Ready(Ok(()))
+            }} else {{
+                ::core::task::Poll::Pending
+            }}
+        }}
+
+        fn is_closed(&self) -> bool {{
+            {transmit_closed}
+        }}
+    }}
+
+    impl<{cs} {vs_ty}> {tokio_util}::codec::Encoder<super::{name}<{vs_ty}>> for Encoder<{cs}>
+    where
+        {encoder_cs}
+    {{
+        type Error = ::std::io::Error;
+
+        fn encode(&mut self, super::{name}({vs}): super::{name}<{vs_ty}>, dst: &mut {bytes}::BytesMut) -> ::std::io::Result<()> {{
+            {encode_fields}
+            Ok(())
+        }}
+    }}
+
+    impl<'a, {cs} {vs_ty}> {tokio_util}::codec::Encoder<&'a super::{name}<{vs_ty}>> for Encoder<{cs}>
+    where
+        {encoder_ref_cs}
+    {{
+        type Error = ::std::io::Error;
+
+        fn encode(&mut self, super::{name}({vs}): &'a super::{name}<{vs_ty}>, dst: &mut {bytes}::BytesMut) -> ::std::io::Result<()> {{
+            {encode_fields}
+            Ok(())
+        }}
+    }}
+
+    pub struct Decoder<{decode}> {{
+        {decoder_fields}
+    }}
+
+    impl<{decode}> ::core::default::Default for Decoder<{ts}> {{
+        fn default() -> Self {{
+            Self {{ {decoder_defaults} }}
+        }}
+    }}
+
+    impl<{decode}> {wrpc_transport}::Receive for Decoder<{ts}> {{
+        fn poll_receive(&mut self, cx: &mut ::core::task::Context<'_>, path: &[usize], src: &mut {bytes}::BytesMut) -> ::core::task::Poll<::std::io::Result<()>> {{
+            match path.split_first() {{
+                {receive}
+                _ => ::core::task::Poll::Ready(::core::result::Result::Err({wrpc_transport}::error_unknown_path(path))),
+            }}
+        }}
+
+        fn is_closed(&self) -> bool {{
+            {receive_closed}
+        }}
+    }}
+
+    impl<{decode}> {tokio_util}::codec::Decoder for Decoder<{ts}> {{
+        type Item = super::{name}<{ts}>;
+        type Error = ::std::io::Error;
+
+        fn decode(&mut self, src: &mut {bytes}::BytesMut) -> ::core::result::Result<::core::option::Option<Self::Item>, Self::Error> {{{decode_fields}
+            ::core::result::Result::Ok(::core::option::Option::Some(super::{name}({decoded})))
+        }}
+    }}
+}}"
+            );
+        }
+    }
+}
+
 impl WorldGenerator for RustWrpc {
     fn preprocess(&mut self, resolve: &Resolve, world: WorldId) -> Result<()> {
         wit_bindgen_core::generated_preamble(&mut self.src_preamble, env!("CARGO_PKG_VERSION"));
@@ -773,6 +1017,7 @@ impl WorldGenerator for RustWrpc {
         self.emit_modules(exports);
 
         self.finish_handle_function();
+        self.finish_tuples();
 
         if self.opts.stubs {
             self.src.push_str(

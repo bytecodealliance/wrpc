@@ -143,6 +143,11 @@ where
                 .iter()
                 .map(|param| format!("{}, ", self.decoded_ty(&param.ty)))
                 .collect::<String>();
+            let params_tuple = self.use_tuple(func.params.len(), false);
+            let params_ty = match &params_tuple {
+                Some(tuple) => format!("{tuple}<{params_ty}>"),
+                None => format!("({params_ty})"),
+            };
             let results_ty = func
                 .result
                 .as_ref()
@@ -154,9 +159,10 @@ where
         ("{instance}", "{}") => {{
             let handler = handler.clone();
             ::core::result::Result::Ok(::std::boxed::Box::pin(async move {{
-                let res = {wrpc_transport}::serve::<({params_ty}), ({results_ty}), _, _, _, _>(tx, rx, move |("#,
+                let res = {wrpc_transport}::serve::<{params_ty}, ({results_ty}), _, _, _, _>(tx, rx, move |{params_tuple}("#,
                 rpc_func_name(func),
                 wrpc_transport = self.r#gen.wrpc_transport_path(),
+                params_tuple = params_tuple.unwrap_or_default(),
             );
             for i in 0..func.params.len() {
                 uwrite!(self.src, "p{i}, ");
@@ -197,13 +203,13 @@ where
                 wit_name = func.name,
             );
             for (i, param) in func.params.iter().enumerate() {
-                let p = self.decoded_value(&param.ty, &format!("p{i}"));
+                let p = self.decoded_value(&param.ty, &format!("p{i}"), false);
                 uwrite!(self.src, ", {p}");
             }
             self.push_str(").await?;\n");
             let results = if let Some(ty) = &func.result {
                 // wrap single-element results into a tuple for correct indexing
-                format!("({},)", self.encoded_value(ty, "results", false))
+                format!("({},)", self.encoded_value(ty, "results", false, false))
             } else {
                 "results".to_string()
             };
@@ -486,12 +492,17 @@ where
         let result = func
             .result
             .as_ref()
-            .map(|ty| self.decoded_value(ty, "wrpc__"));
+            .map(|ty| self.decoded_value(ty, "wrpc__", false));
         let args_ty = func
             .params
             .iter()
             .map(|param| format!("{}, ", self.import_param_ty(&param.ty)))
             .collect::<String>();
+        let args_tuple = self.use_tuple(func.params.len(), false);
+        let args_ty = match &args_tuple {
+            Some(tuple) => format!("{tuple}<{args_ty}>"),
+            None => format!("({args_ty})"),
+        };
         let results_ty = func
             .result
             .as_ref()
@@ -507,15 +518,16 @@ where
                 s
             }
         };
+        let params = format!("{}({params})", args_tuple.unwrap_or_default());
         let name = rpc_func_name(func);
         let io = result.is_some() && (async_params || async_results);
         let call = if io {
             format!(
-                r#"{futures}::FutureExt::flatten({futures}::future::lazy(move |_| {wrpc_transport}::invoke::<({args_ty}), ({results_ty}), _, _, _, _>(tx__, rx__, "{instance}", "{name}", ({params}))))"#
+                r#"{futures}::FutureExt::flatten({futures}::future::lazy(move |_| {wrpc_transport}::invoke::<{args_ty}, ({results_ty}), _, _, _, _>(tx__, rx__, "{instance}", "{name}", {params})))"#
             )
         } else {
             format!(
-                r#"{wrpc_transport}::invoke_blocking::<({args_ty}), ({results_ty}), _, _>(tx__, rx__, "{instance}", "{name}", ({params}))"#
+                r#"{wrpc_transport}::invoke_blocking::<{args_ty}, ({results_ty}), _, _>(tx__, rx__, "{instance}", "{name}", {params})"#
             )
         };
         let (pat, ret) = match result {
@@ -878,13 +890,13 @@ where
         self.encoding = encoding;
     }
 
-    fn decoded_value(&self, ty: &Type, v: &str) -> String {
-        self.map_raw_strings(ty, v, false, &|v| format!("{v}.into_bytes()"))
+    fn decoded_value(&self, ty: &Type, v: &str, submodule: bool) -> String {
+        self.map_raw_strings(ty, v, false, submodule, &|v| format!("{v}.into_bytes()"))
     }
 
-    fn encoded_value(&self, ty: &Type, v: &str, by_ref: bool) -> String {
+    fn encoded_value(&self, ty: &Type, v: &str, by_ref: bool, submodule: bool) -> String {
         let wrpc_transport = self.r#gen.wrpc_transport_path();
-        self.map_raw_strings(ty, v, by_ref, &|v| {
+        self.map_raw_strings(ty, v, by_ref, submodule, &|v| {
             format!("{wrpc_transport}::Utf8Bytes({v})")
         })
     }
@@ -894,6 +906,7 @@ where
         ty: &Type,
         v: &str,
         by_ref: bool,
+        submodule: bool,
         string: &dyn Fn(&str) -> String,
     ) -> String {
         if !self.has_raw_strings(ty) {
@@ -904,7 +917,7 @@ where
         };
         let futures = self.r#gen.futures_path();
         match &self.resolve.types[*id].kind {
-            TypeDefKind::Type(ty) => self.map_raw_strings(ty, v, by_ref, string),
+            TypeDefKind::Type(ty) => self.map_raw_strings(ty, v, by_ref, submodule, string),
             TypeDefKind::List(ty) => format!(
                 "{v}.{}(|v| {}).collect::<Vec<_>>()",
                 if by_ref {
@@ -912,12 +925,12 @@ where
                 } else {
                     "into_iter().map"
                 },
-                self.map_raw_strings(ty, "v", by_ref, string)
+                self.map_raw_strings(ty, "v", by_ref, submodule, string)
             ),
             TypeDefKind::FixedLengthList(ty, ..) => format!(
                 "{v}.{}(|v| {})",
                 if by_ref { "each_ref().map" } else { "map" },
-                self.map_raw_strings(ty, "v", by_ref, string)
+                self.map_raw_strings(ty, "v", by_ref, submodule, string)
             ),
             TypeDefKind::Map(key, value) => format!(
                 "{v}.{}(|(k, v)| ({}, {})).collect::<{}<_, _>>()",
@@ -926,21 +939,21 @@ where
                 } else {
                     "into_iter().map"
                 },
-                self.map_raw_strings(key, "k", by_ref, string),
-                self.map_raw_strings(value, "v", by_ref, string),
+                self.map_raw_strings(key, "k", by_ref, submodule, string),
+                self.map_raw_strings(value, "v", by_ref, submodule, string),
                 self.r#gen.map_type_path(),
             ),
             TypeDefKind::Option(ty) => format!(
                 "{v}.{}(|v| {})",
                 if by_ref { "as_ref().map" } else { "map" },
-                self.map_raw_strings(ty, "v", by_ref, string)
+                self.map_raw_strings(ty, "v", by_ref, submodule, string)
             ),
             TypeDefKind::Result(Result_ { ok, err }) => {
                 let ok = ok.as_ref().map_or("v".into(), |ty| {
-                    self.map_raw_strings(ty, "v", by_ref, string)
+                    self.map_raw_strings(ty, "v", by_ref, submodule, string)
                 });
                 let err = err.as_ref().map_or("v".into(), |ty| {
-                    self.map_raw_strings(ty, "v", by_ref, string)
+                    self.map_raw_strings(ty, "v", by_ref, submodule, string)
                 });
                 format!(
                     "{v}.{}(|v| {ok}).map_err(|v| {err})",
@@ -953,35 +966,53 @@ where
                     .enumerate()
                     .map(|(i, ty)| {
                         let name = format!("v{i}");
-                        let value = self.map_raw_strings(ty, &name, by_ref, string);
+                        let value = self.map_raw_strings(ty, &name, by_ref, submodule, string);
                         (name, value)
                     })
                     .unzip();
+                let tuple = self.tuple_path(types.len(), submodule).unwrap_or_default();
                 format!(
-                    "{{ let ({},) = {v}; ({},) }}",
+                    "{{ let {tuple}({},) = {v}; {tuple}({},) }}",
                     names.join(", "),
                     values.join(", ")
                 )
             }
             TypeDefKind::Future(Some(ty)) => format!(
                 "::std::boxed::Box::pin({futures}::FutureExt::map({v}, |v| {})) as ::core::pin::Pin<::std::boxed::Box<dyn ::core::future::Future<Output = _> + ::core::marker::Send>>",
-                self.map_raw_strings(ty, "v", by_ref, string)
+                self.map_raw_strings(ty, "v", by_ref, submodule, string)
             ),
             TypeDefKind::Stream(Some(ty)) => format!(
                 "::std::boxed::Box::pin({futures}::StreamExt::map({v}, |v| v.into_iter().map(|v| {}).collect::<Vec<_>>())) as ::core::pin::Pin<::std::boxed::Box<dyn {futures}::Stream<Item = _> + ::core::marker::Send>>",
-                self.map_raw_strings(ty, "v", by_ref, string)
+                self.map_raw_strings(ty, "v", by_ref, submodule, string)
             ),
             _ => unreachable!(),
         }
     }
 
+    fn tuple_path(&self, n: usize, submodule: bool) -> Option<String> {
+        (n > 12).then(|| {
+            let sup = if submodule { "super::" } else { "" };
+            format!("{sup}{}Tuple{n}", self.path_to_root())
+        })
+    }
+
+    fn use_tuple(&mut self, n: usize, submodule: bool) -> Option<String> {
+        let path = self.tuple_path(n, submodule)?;
+        self.r#gen.tuples.insert(n);
+        Some(path)
+    }
+
     fn print_tuple(&mut self, Tuple { types }: &Tuple, owned: bool, submodule: bool) {
-        self.push_str("(");
+        let (open, close) = match self.use_tuple(types.len(), submodule) {
+            Some(path) => (format!("{path}<"), ">"),
+            None => ("(".to_string(), ")"),
+        };
+        self.push_str(&open);
         for ty in types {
             self.print_ty(ty, owned, submodule);
             self.push_str(",");
         }
-        self.push_str(")");
+        self.push_str(close);
     }
 
     fn print_option(&mut self, ty: &Type, owned: bool, submodule: bool) {
@@ -1519,7 +1550,7 @@ mod {mod_name} {{
             self.push_str("Ok(Some(Self::Item{\n");
             for Field { name, ty, .. } in fields {
                 let name = to_rust_ident(name);
-                let v = self.decoded_value(ty, &format!("self.v_{name}.take().unwrap()"));
+                let v = self.decoded_value(ty, &format!("self.v_{name}.take().unwrap()"), true);
                 uwriteln!(self.src, "{name}: {v},");
             }
             self.push_str("}))\n");
@@ -1555,7 +1586,7 @@ mod {mod_name} {{
 
                     for Field { name, ty, .. } in fields {
                         let name = to_rust_ident(name);
-                        let v = self.encoded_value(ty, &format!("f_{name}"), by_ref);
+                        let v = self.encoded_value(ty, &format!("f_{name}"), by_ref, true);
                         uwriteln!(self.src, "self.{name}.encode({v}, &mut dst)?;");
                     }
                     uwriteln!(
@@ -2091,7 +2122,7 @@ mod {mod_name} {{
                     {
                         let case = case_name.to_upper_camel_case();
                         if let Some(ty) = ty {
-                            let payload = self.encoded_value(ty, "payload", by_ref);
+                            let payload = self.encoded_value(ty, "payload", by_ref, true);
                             uwrite!(
                                 self.src,
                                 r"
@@ -2272,7 +2303,7 @@ mod {mod_name} {{
                 {
                     let case = case_name.to_upper_camel_case();
                     if let Some(ty) = ty {
-                        let payload = self.decoded_value(ty, "payload");
+                        let payload = self.decoded_value(ty, "payload", true);
                         uwriteln!(
                             self.src,
                             r"
