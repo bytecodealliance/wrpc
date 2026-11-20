@@ -105,6 +105,7 @@ impl Parse for Config {
                     }
                     Opt::RawStrings => opts.raw_strings = true,
                     Opt::Skip(list) => opts.skip.extend(list.iter().map(syn::LitStr::value)),
+                    Opt::MapType(path) => opts.map_type = Some(path.value()),
                     Opt::BitflagsPath(path) => opts.bitflags_path = Some(path.value()),
                     Opt::Stubs => {
                         opts.stubs = true;
@@ -290,6 +291,7 @@ mod kw {
     syn::custom_keyword!(world);
     syn::custom_keyword!(path);
     syn::custom_keyword!(inline);
+    syn::custom_keyword!(map_type);
     syn::custom_keyword!(bitflags_path);
     syn::custom_keyword!(exports);
     syn::custom_keyword!(stubs);
@@ -340,6 +342,7 @@ enum Opt {
     Inline(syn::LitStr),
     RawStrings,
     Skip(Vec<syn::LitStr>),
+    MapType(syn::LitStr),
     BitflagsPath(syn::LitStr),
     Stubs,
     // Parse as paths so we can take the concrete types/macro names rather than raw strings
@@ -399,6 +402,10 @@ impl Parse for Opt {
             syn::bracketed!(contents in input);
             let list = Punctuated::<_, Token![,]>::parse_terminated(&contents)?;
             Ok(Opt::Skip(list.iter().cloned().collect()))
+        } else if l.peek(kw::map_type) {
+            input.parse::<kw::map_type>()?;
+            input.parse::<Token![:]>()?;
+            Ok(Opt::MapType(input.parse()?))
         } else if l.peek(kw::bitflags_path) {
             input.parse::<kw::bitflags_path>()?;
             input.parse::<Token![:]>()?;

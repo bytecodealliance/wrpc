@@ -701,6 +701,11 @@ where
                     self.print_list(&element, false, submodule);
                     return;
                 }
+                TypeDefKind::Map(key, value) => {
+                    let (key, value) = (*key, *value);
+                    self.print_map(&key, &value, false, submodule);
+                    return;
+                }
                 _ => {}
             }
         }
@@ -842,6 +847,9 @@ where
             TypeDefKind::Result(Result_ { ok, err }) => {
                 ok.iter().chain(err).any(|ty| self.has_raw_strings(ty))
             }
+            TypeDefKind::Map(key, value) => {
+                self.has_raw_strings(key) || self.has_raw_strings(value)
+            }
             TypeDefKind::Tuple(Tuple { types }) => types.iter().any(|ty| self.has_raw_strings(ty)),
             TypeDefKind::Future(ty) | TypeDefKind::Stream(ty) => {
                 ty.as_ref().is_some_and(|ty| self.has_raw_strings(ty))
@@ -925,6 +933,17 @@ where
                 "{v}.{}(|v| {})",
                 if by_ref { "each_ref().map" } else { "map" },
                 self.map_raw_strings(ty, "v", by_ref, string)
+            ),
+            TypeDefKind::Map(key, value) => format!(
+                "{v}.{}(|(k, v)| ({}, {})).collect::<{}<_, _>>()",
+                if by_ref {
+                    "iter().map"
+                } else {
+                    "into_iter().map"
+                },
+                self.map_raw_strings(key, "k", by_ref, string),
+                self.map_raw_strings(value, "v", by_ref, string),
+                self.r#gen.map_type_path(),
             ),
             TypeDefKind::Option(ty) => format!(
                 "{v}.{}(|v| {})",
@@ -1016,6 +1035,17 @@ where
         }
     }
 
+    fn print_map(&mut self, key: &Type, value: &Type, owned: bool, submodule: bool) {
+        if !owned {
+            self.push_str("&'a ");
+        }
+        uwrite!(self.src, "{}<", self.r#gen.map_type_path());
+        self.print_ty(key, true, submodule);
+        self.push_str(", ");
+        self.print_ty(value, true, submodule);
+        self.push_str(">");
+    }
+
     fn print_fixed_length_list(&mut self, ty: &Type, size: u32, owned: bool, submodule: bool) {
         if !owned {
             self.push_str("&'a ");
@@ -1085,7 +1115,7 @@ where
             TypeDefKind::FixedLengthList(ty, size) => {
                 self.print_fixed_length_list(ty, *size, owned, submodule)
             }
-            TypeDefKind::Map(..) => panic!("unsupported anonymous type reference: map"),
+            TypeDefKind::Map(key, value) => self.print_map(key, value, owned, submodule),
             TypeDefKind::Option(ty) => self.print_option(ty, owned, submodule),
             TypeDefKind::Result(ty) => self.print_result(ty, owned, submodule),
             TypeDefKind::Variant(_) => panic!("unsupported anonymous variant"),
@@ -1125,6 +1155,7 @@ where
             TypeDefKind::Future(..) | TypeDefKind::Stream(..) => false,
             TypeDefKind::List(ty)
             | TypeDefKind::FixedLengthList(ty, ..)
+            | TypeDefKind::Map(_, ty)
             | TypeDefKind::Option(ty)
             | TypeDefKind::Type(ty) => self.has_debug(ty),
             TypeDefKind::Result(Result_ { ok, err }) => {
@@ -2562,8 +2593,13 @@ mod {mod_name} {{
         }
     }
 
-    fn type_map(&mut self, _id: TypeId, _name: &str, _key: &Type, _value: &Type, _docs: &Docs) {
-        panic!("unsupported type: map")
+    fn type_map(&mut self, id: TypeId, _name: &str, key: &Type, value: &Type, docs: &Docs) {
+        if let Some(name) = self.name_of(id) {
+            self.rustdoc(docs);
+            uwrite!(self.src, "pub type {name} = ");
+            self.print_map(key, value, true, false);
+            self.push_str(";\n");
+        }
     }
 
     fn type_builtin(&mut self, _id: TypeId, name: &str, ty: &Type, docs: &Docs) {

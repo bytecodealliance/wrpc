@@ -73,25 +73,16 @@ impl LanguageMethods for Rust {
 
     fn should_fail_verify(
         &self,
-        name: &str,
+        _name: &str,
         _config: &crate::config::WitConfig,
         args: &[String],
     ) -> bool {
-        // wRPC's Rust generator does not implement upstream's `--ownership`
-        // and `--map-type` flags.
-        if args.iter().any(|arg| {
-            ["--ownership", "--map-type"]
-                .iter()
-                .any(|flag| arg.starts_with(flag))
-        }) {
-            return true;
-        }
-        // The wRPC Rust generator does not yet support `map`.
-        name == "map.wit" || name == "map.wit-merge-equal"
+        // wRPC's Rust generator does not implement upstream's `--ownership` flag.
+        args.iter().any(|arg| arg.starts_with("--ownership"))
     }
 
-    fn should_fail_runtime(&self, name: &str) -> bool {
-        name == "map"
+    fn should_fail_runtime(&self, _name: &str) -> bool {
+        false
     }
 
     fn should_fail_runtime_component(&self, name: &str, component: &str) -> bool {

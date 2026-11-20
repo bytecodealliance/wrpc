@@ -230,49 +230,48 @@ mod newtyped_list {
     impl_codec!(NewtypedListofNoncopyByte);
 }
 
-// TODO: implement map support and uncomment
-//#[allow(unused, reason = "testing codegen, not functionality")]
-//mod map_type_hashmap {
-//    wit_bindgen_wrpc::generate!({
-//        inline: r#"
-//        package test:map-type;
-//
-//        interface maps {
-//            type names-by-id = map<u32, string>;
-//
-//            roundtrip: func(a: names-by-id) -> names-by-id;
-//            inline-roundtrip: func(a: map<string, u32>) -> map<string, u32>;
-//        }
-//
-//        world test {
-//            import maps;
-//            export maps;
-//        }
-//        "#,
-//        map_type: "std::collections::HashMap",
-//        generate_all,
-//    });
-//}
-//
-//#[allow(unused, reason = "testing codegen, not functionality")]
-//mod map_type_default {
-//    wit_bindgen_wrpc::generate!({
-//        inline: r#"
-//        package test:map-default;
-//
-//        interface maps {
-//            type names-by-id = map<u32, string>;
-//            nested: func(a: map<string, map<u32, string>>) -> map<string, map<u32, string>>;
-//        }
-//
-//        world test {
-//            import maps;
-//            export maps;
-//        }
-//        "#,
-//        generate_all,
-//    });
-//}
+#[allow(unused, reason = "testing codegen, not functionality")]
+mod map_type_hashmap {
+    wit_bindgen_wrpc::generate!({
+        inline: r#"
+        package test:map-type;
+
+        interface maps {
+            type names-by-id = map<u32, string>;
+
+            roundtrip: func(a: names-by-id) -> names-by-id;
+            inline-roundtrip: func(a: map<string, u32>) -> map<string, u32>;
+        }
+
+        world test {
+            import maps;
+            export maps;
+        }
+        "#,
+        map_type: "std::collections::HashMap",
+        generate_all,
+    });
+}
+
+#[allow(unused, reason = "testing codegen, not functionality")]
+mod map_type_default {
+    wit_bindgen_wrpc::generate!({
+        inline: r#"
+        package test:map-default;
+
+        interface maps {
+            type names-by-id = map<u32, string>;
+            nested: func(a: map<string, map<u32, string>>) -> map<string, map<u32, string>>;
+        }
+
+        world test {
+            import maps;
+            export maps;
+        }
+        "#,
+        generate_all,
+    });
+}
 
 #[allow(unused, reason = "testing codegen, not functionality")]
 mod retyped_list {
