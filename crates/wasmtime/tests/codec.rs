@@ -3,17 +3,24 @@ use std::sync::Arc;
 use bytes::BytesMut;
 use tokio_util::codec::Decoder as _;
 use wasmtime::component::{self, Component, Type, types};
-use wasmtime::{Engine, bail};
+use wasmtime::{Config, Engine, bail};
 use wrpc_transport::{pack, unpack};
 use wrpc_wasmtime::{TupleDecoder, TupleEncoder, Val};
 
 #[test]
 fn plain_values() -> wasmtime::Result<()> {
-    let engine = Engine::default();
+    let mut config = Config::default();
+    config.wasm_component_model_map(true);
+    config.wasm_component_model_fixed_length_lists(true);
+    let engine = Engine::new(&config)?;
     let component = Component::new(
         &engine,
         r#"(component
-            (type $r (record (field "a" u32) (field "b" (list string))))
+            (type $r (record
+                (field "a" u32)
+                (field "b" (list string))
+                (field "c" (map string u8))
+                (field "d" (list u8 2))))
             (export "r" (type $r))
             (type $f (flags "a" "b" "c"))
             (export "f" (type $f))
@@ -47,6 +54,17 @@ fn plain_values() -> wasmtime::Result<()> {
             "b".into(),
             component::Val::List(vec![component::Val::String("foo".into())]),
         ),
+        (
+            "c".into(),
+            component::Val::Map(vec![(
+                component::Val::String("k".into()),
+                component::Val::U8(7),
+            )]),
+        ),
+        (
+            "d".into(),
+            component::Val::FixedLengthList(vec![component::Val::U8(1), component::Val::U8(2)]),
+        ),
     ]);
 
     let tys: Arc<[Type]> = Arc::from([ty, Type::Bool]);
@@ -54,7 +72,7 @@ fn plain_values() -> wasmtime::Result<()> {
     let vs = vec![record, Val::Bool(true)];
     let mut buf = BytesMut::default();
     pack(TupleEncoder::new(Arc::clone(&tys)), vs, &mut buf)?;
-    assert_eq!(buf, b"\x2a\x01\x03foo\x01"[..]);
+    assert_eq!(buf, b"\x2a\x01\x03foo\x01\x01k\x07\x01\x02\x01"[..]);
     let decoded = unpack(TupleDecoder::new(Arc::clone(&tys)), &mut buf)?;
     let decoded = decoded
         .into_iter()
@@ -62,15 +80,32 @@ fn plain_values() -> wasmtime::Result<()> {
         .collect::<wasmtime::Result<Vec<_>>>()?;
     assert_eq!(decoded, [v, component::Val::Bool(true)]);
 
-    let renamed = vec![
-        Val::Record(vec![
-            ("c".into(), Val::U32(42)),
-            ("b".into(), Val::List(Vec::default())),
-        ]),
-        Val::Bool(true),
-    ];
-    let err = pack(TupleEncoder::new(Arc::clone(&tys)), renamed, &mut buf).unwrap_err();
-    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    let record = |a: &str, c| {
+        vec![
+            Val::Record(vec![
+                (a.into(), Val::U32(42)),
+                ("b".into(), Val::List(Vec::default())),
+                ("c".into(), Val::Map(c)),
+                (
+                    "d".into(),
+                    Val::FixedLengthList(vec![Val::U8(1), Val::U8(2)]),
+                ),
+            ]),
+            Val::Bool(true),
+        ]
+    };
+    let renamed = record("x", Vec::default());
+    let duplicate = record(
+        "a",
+        vec![
+            (Val::String("k".into()), Val::U8(1)),
+            (Val::String("k".into()), Val::U8(2)),
+        ],
+    );
+    for vs in [renamed, duplicate] {
+        let err = pack(TupleEncoder::new(Arc::clone(&tys)), vs, &mut buf).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    }
 
     for buf in [&b"\x2a\x03"[..], &b"\x2a\x01\x03foo\x01"[..]] {
         let dec = TupleDecoder::new(Arc::clone(&tys)).with_max_len(2);
