@@ -225,6 +225,14 @@ test("numeric lists round-trip as typed arrays", () => {
 test("lists, tuples, records", () => {
   roundtrip(t.list(t.string), ["a", "b", "c"]);
   roundtrip(t.list(t.list(t.u16)), [Uint16Array.of(1), new Uint16Array(0)]);
+  // fixed-length lists have no length prefix
+  assert.deepEqual(encode(t.list(t.u32, 2), [1, 300]), Uint8Array.of(1, 0xac, 0x02));
+  assert.deepEqual(encode(t.list(t.list(t.u8, 2), 1), [[1, 2]]), Uint8Array.of(1, 2));
+  roundtrip(t.list(t.list(t.string, 2), 2), [
+    ["a", "b"],
+    ["c", "d"],
+  ]);
+  assert.throws(() => encode(t.list(t.u8, 2), [1]), RangeError);
   roundtrip(t.tuple(t.u8, t.string, t.bool), [7, "x", true]);
   const rec = t.record({ keys: t.list(t.string), cursor: t.option(t.string) });
   roundtrip(rec, obj({ keys: ["a", "b"], cursor: "next" }));

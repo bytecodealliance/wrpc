@@ -522,13 +522,15 @@ impl Gen<'_> {
                 format!("$t.result({ok}, {err})")
             }
             TypeDefKind::List(ty) => format!("$t.list({})", self.js_ty(resolve, ty)),
+            TypeDefKind::FixedLengthList(ty, n) => {
+                format!("$t.list({}, {n})", self.js_ty(resolve, ty))
+            }
             TypeDefKind::Future(Some(ty)) => format!("$t.future({})", self.js_ty(resolve, ty)),
             TypeDefKind::Future(None) => "$t.future()".to_string(),
             TypeDefKind::Stream(Some(ty)) => format!("$t.stream({})", self.js_ty(resolve, ty)),
             TypeDefKind::Stream(None) => "$t.stream($t.tuple())".to_string(),
             TypeDefKind::Type(..) | TypeDefKind::Unknown => unreachable!(),
             TypeDefKind::Map(..) => panic!("unsupported type: map"),
-            TypeDefKind::FixedLengthList(..) => panic!("unsupported type: fixed length list"),
         }
     }
 
@@ -641,7 +643,9 @@ impl Gen<'_> {
                 let err = self.ts_tagged(resolve, "error", r.err.as_ref());
                 format!("{ok} | {err}")
             }
-            TypeDefKind::List(ty) => self.ts_list(resolve, ty),
+            TypeDefKind::List(ty) | TypeDefKind::FixedLengthList(ty, ..) => {
+                self.ts_list(resolve, ty)
+            }
             TypeDefKind::Future(ty) => format!(
                 "globalThis.Promise<{}>",
                 self.ts_opt_ty(resolve, ty.as_ref())
@@ -654,7 +658,6 @@ impl Gen<'_> {
             }
             TypeDefKind::Type(ty) => self.ts_ty(resolve, ty),
             TypeDefKind::Map(..) => panic!("unsupported type: map"),
-            TypeDefKind::FixedLengthList(..) => panic!("unsupported type: fixed length list"),
             TypeDefKind::Unknown => unreachable!(),
         }
     }
@@ -703,6 +706,7 @@ impl Gen<'_> {
             }
             TypeDefKind::Option(ty)
             | TypeDefKind::List(ty)
+            | TypeDefKind::FixedLengthList(ty, ..)
             | TypeDefKind::Type(ty)
             | TypeDefKind::Future(Some(ty))
             | TypeDefKind::Stream(Some(ty)) => Self::local_deps(resolve, owner, ty, deps),

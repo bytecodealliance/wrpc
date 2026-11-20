@@ -3,7 +3,7 @@
 //
 //   { kind: "bool" | "s8" | "u8" | "s16" | "u16" | "s32" | "u32" | "s64"
 //          | "u64" | "f32" | "f64" | "char" | "string" }
-//   | { kind: "list", elem: Type }
+//   | { kind: "list", elem: Type, length?: number }
 //   | { kind: "option", some: Type }
 //   | { kind: "result", ok: Type | null, err: Type | null }
 //   | { kind: "tuple", elems: Type[] }
@@ -47,8 +47,12 @@ export const char = { kind: "char" };
 /** @type {Type} */
 export const string = { kind: "string" };
 
-/** `list<elem>` @param {Type} elem @returns {Type} */
-export const list = (elem) => ({ kind: "list", elem });
+/**
+ * `list<elem>`, or the fixed-length `list<elem, length>` if `length` is given.
+ * @param {Type} elem @param {number} [length] @returns {Type}
+ */
+export const list = (elem, length) =>
+  length === undefined ? { kind: "list", elem } : { kind: "list", elem, length };
 
 /** `option<some>` @param {Type} some @returns {Type} */
 export const option = (some) => ({ kind: "option", some });
