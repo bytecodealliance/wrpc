@@ -5,10 +5,11 @@ use tokio_util::codec::Decoder as _;
 use tracing::{instrument, trace};
 use wasm_tokio::{CoreNameEncoder, Leb128DecoderU32};
 
-use crate::DEFAULT_MAX_NAME_LEN;
-
 /// wRPC protocol version
 pub const PROTOCOL: u8 = 1;
+
+/// Default maximum length of the instance and function names in a [Header]
+const DEFAULT_MAX_NAME_LEN: u32 = 1 << 10;
 
 /// Owned wRPC invocation header
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]

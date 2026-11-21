@@ -82,9 +82,6 @@ impl<I, O> Framed<I, O> {
     }
 }
 
-/// Default maximum length of the instance and function names in a [Header]
-const DEFAULT_MAX_NAME_LEN: u32 = 1 << 10;
-
 /// Encodes `data` as frames on `path` into `dst`, encoding nothing if `data` is empty
 fn encode_frames(path: &[usize], mut data: impl Buf, dst: &mut BytesMut) -> std::io::Result<()> {
     while data.has_remaining() {
