@@ -3,14 +3,73 @@ use core::time::Duration;
 
 use anyhow::{Context as _, bail, ensure};
 use bytes::Bytes;
+use futures::future::BoxFuture;
 use futures::{StreamExt as _, future, stream};
+use http::request::Parts;
+use http::{Request, Response};
+use http_body_util::BodyExt;
+use http_body_util::combinators::UnsyncBoxBody;
+use hyper::body::Incoming;
+use hyper::client::conn::http2::SendRequest;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt as _};
 use tokio::sync::oneshot;
 use tokio::task::yield_now;
 use tokio::time::timeout;
 use tokio::{join, try_join};
 use tracing::info;
-use wrpc_transport::Framed;
+use wrpc_http::{Body, Client};
+use wrpc_transport::{Framed, Invoke, Transmit};
+
+/// Connection, which invocations are made on one after another
+pub trait Connection {
+    type Client<'a, E: Transmit + Send + 'static>: Invoke<E>
+    where
+        Self: 'a;
+
+    /// Returns the client of the next invocation
+    fn client<E: Transmit + Send + 'static>(&mut self) -> Self::Client<'_, E>;
+}
+
+impl<I, O> Connection for Framed<I, O>
+where
+    I: AsyncRead + Unpin,
+    O: AsyncWrite + Unpin,
+{
+    type Client<'a, E: Transmit + Send + 'static>
+        = &'a mut Framed<I, O>
+    where
+        Self: 'a;
+
+    fn client<E: Transmit + Send + 'static>(&mut self) -> Self::Client<'_, E> {
+        self
+    }
+}
+
+impl Connection for (SendRequest<UnsyncBoxBody<Bytes, std::io::Error>>, Parts) {
+    type Client<'a, E: Transmit + Send + 'static>
+        = Client<
+        Box<
+            dyn FnOnce(Request<Body<E>>) -> BoxFuture<'a, hyper::Result<Response<Incoming>>>
+                + Send
+                + 'a,
+        >,
+    >
+    where
+        Self: 'a;
+
+    fn client<E: Transmit + Send + 'static>(&mut self) -> Self::Client<'_, E> {
+        let (sender, parts) = self;
+        Client {
+            parts: parts.clone(),
+            send: Box::new(|req| {
+                Box::pin(async move {
+                    sender.ready().await?;
+                    sender.send_request(req.map(BodyExt::boxed_unsync)).await
+                })
+            }),
+        }
+    }
+}
 
 /// Shut down `tx` and check that `rx` ends without data.
 pub async fn assert_eof(
@@ -24,9 +83,7 @@ pub async fn assert_eof(
     wrpc_test::read_eof(&mut rx).await
 }
 
-pub async fn assert_async(
-    clt: &mut Framed<impl AsyncRead + Send + Unpin, impl AsyncWrite + Send + Unpin>,
-) -> anyhow::Result<()> {
+pub async fn assert_async(clt: &mut impl Connection) -> anyhow::Result<()> {
     wit_bindgen_wrpc::generate!({
         world: "async-client",
         path: "tests/wit",
@@ -40,7 +97,7 @@ pub async fn assert_async(
     }
 
     info!("calling `wrpc-test:integration/async.with-streams`");
-    let ((a, b), io) = wrpc_test::integration::async_::with_streams(&mut *clt)
+    let ((a, b), io) = wrpc_test::integration::async_::with_streams(clt.client())
         .await
         .context("failed to call `wrpc-test:integration/async.with-streams`")?;
     join!(
@@ -63,7 +120,7 @@ pub async fn assert_async(
 
     info!("calling `wrpc-test:integration/async.with-future`");
     let (fut, io) = wrpc_test::integration::async_::with_future(
-        &mut *clt,
+        clt.client(),
         &wrpc_test::integration::async_::Something {
             foo: "bar".to_string(),
         },
@@ -85,7 +142,7 @@ pub async fn assert_async(
     info!("calling `wrpc-test:integration/async.identity-future`");
     let (fut_tx, fut_rx) = oneshot::channel();
     let (mut fut, io) = wrpc_test::integration::async_::identity_future(
-        &mut *clt,
+        clt.client(),
         Box::pin(async { fut_rx.await.expect("sender dropped") }),
     )
     .await
@@ -113,7 +170,7 @@ pub async fn assert_async(
     let (r_tx, r_rx) = oneshot::channel();
     let (v_tx, v_rx) = oneshot::channel();
     let ((o, r, v), io) = wrpc_test::integration::async_::identity_cases(
-        &mut *clt,
+        clt.client(),
         Some(Box::pin(async { o_rx.await.expect("sender dropped") })),
         Err(Box::pin(async { r_rx.await.expect("sender dropped") })),
         wrpc_test::integration::async_::AsyncCase::Fut(Box::pin(async {
@@ -163,7 +220,7 @@ pub async fn assert_async(
     ] {
         info!(?v, "calling `wrpc-test:integration/async.identity-cases`");
         let ((o, r, v), io) = wrpc_test::integration::async_::identity_cases(
-            &mut *clt,
+            clt.client(),
             None,
             Err(Box::pin(async { 42 })),
             v,
@@ -210,9 +267,7 @@ pub async fn assert_async(
 
 /// Call every function of the `sync-client` world in `tests/wit` and check the
 /// results the `sync-server` world is expected to return.
-pub async fn assert_sync(
-    clt: &mut Framed<impl AsyncRead + Send + Unpin, impl AsyncWrite + Send + Unpin>,
-) -> anyhow::Result<()> {
+pub async fn assert_sync(clt: &mut impl Connection) -> anyhow::Result<()> {
     mod bindings {
         wit_bindgen_wrpc::generate!({
             world: "sync-client",
@@ -227,30 +282,30 @@ pub async fn assert_sync(
     use bindings::{foo, strange};
 
     info!("calling `wrpc-test:integration/sync-client.foo.f`");
-    let v = foo::f(&mut *clt, "f")
+    let v = foo::f(clt.client(), "f")
         .await
         .context("failed to call `wrpc-test:integration/sync-client.foo.f`")?;
     ensure!(v == 42);
 
     info!("calling `wrpc-test:integration/sync-client.foo.foo`");
-    foo::foo(&mut *clt, "foo")
+    foo::foo(clt.client(), "foo")
         .await
         .context("failed to call `wrpc-test:integration/sync-client.foo.foo`")?;
 
     info!("calling `wrpc-test:integration/sync.fallible`");
-    let res = sync::fallible(&mut *clt, true)
+    let res = sync::fallible(clt.client(), true)
         .await
         .context("failed to call `wrpc-test:integration/sync.fallible`")?;
     ensure!(res == Ok(true));
 
     info!("calling `wrpc-test:integration/sync.fallible`");
-    let res = sync::fallible(&mut *clt, false)
+    let res = sync::fallible(clt.client(), false)
         .await
         .context("failed to call `wrpc-test:integration/sync.fallible`")?;
     ensure!(res == Err("test".to_string()));
 
     info!("calling `wrpc-test:integration/sync.numbers`");
-    let (a, b, c, d, e, f, g, h, i, j) = sync::numbers(&mut *clt)
+    let (a, b, c, d, e, f, g, h, i, j) = sync::numbers(clt.client())
         .await
         .context("failed to call `wrpc-test:integration/sync.numbers`")?;
     ensure!(a == 1);
@@ -265,19 +320,19 @@ pub async fn assert_sync(
     ensure!(j == 10.);
 
     info!("calling `wrpc-test:integration/sync.with-flags`");
-    let v = sync::with_flags(&mut *clt, true, false, true)
+    let v = sync::with_flags(clt.client(), true, false, true)
         .await
         .context("failed to call `wrpc-test:integration/sync.with-flags`")?;
     ensure!(v == Abc::A | Abc::C, "{v:?}");
 
     info!("calling `wrpc-test:integration/sync.with-variant-option`");
-    let v = sync::with_variant_option(&mut *clt, false)
+    let v = sync::with_variant_option(clt.client(), false)
         .await
         .context("failed to call `wrpc-test:integration/sync.with-variant-option`")?;
     ensure!(v.is_none(), "{v:?}");
 
     info!("calling `wrpc-test:integration/sync.with-variant-option`");
-    let v = sync::with_variant_option(&mut *clt, true)
+    let v = sync::with_variant_option(clt.client(), true)
         .await
         .context("failed to call `wrpc-test:integration/sync.with-variant-option`")?;
     ensure!(
@@ -290,7 +345,7 @@ pub async fn assert_sync(
     );
 
     info!("calling `wrpc-test:integration/sync.with-variant-list`");
-    let v = sync::with_variant_list(&mut *clt)
+    let v = sync::with_variant_list(clt.client())
         .await
         .context("failed to call `wrpc-test:integration/sync.with-variant-list`")?;
     ensure!(
@@ -314,7 +369,7 @@ pub async fn assert_sync(
     );
 
     info!("calling `wrpc-test:integration/sync.with-record`");
-    let v = sync::with_record(&mut *clt)
+    let v = sync::with_record(clt.client())
         .await
         .context("failed to call `wrpc-test:integration/sync.with-record`")?;
     ensure!(
@@ -327,13 +382,13 @@ pub async fn assert_sync(
     );
 
     info!("calling `wrpc-test:integration/sync.with-record-list`");
-    let v = sync::with_record_list(&mut *clt, 0)
+    let v = sync::with_record_list(clt.client(), 0)
         .await
         .context("failed to call `wrpc-test:integration/sync.with-record-list`")?;
     ensure!(v.is_empty(), "{v:?}");
 
     info!("calling `wrpc-test:integration/sync.with-record-list`");
-    let v = sync::with_record_list(&mut *clt, 3)
+    let v = sync::with_record_list(clt.client(), 3)
         .await
         .context("failed to call `wrpc-test:integration/sync.with-record-list`")?;
     ensure!(
@@ -358,7 +413,7 @@ pub async fn assert_sync(
     );
 
     info!("calling `wrpc-test:integration/sync.with-record-tuple`");
-    let v = sync::with_record_tuple(&mut *clt)
+    let v = sync::with_record_tuple(clt.client())
         .await
         .context("failed to call `wrpc-test:integration/sync.with-record-tuple`")?;
     ensure!(
@@ -378,14 +433,14 @@ pub async fn assert_sync(
     );
 
     info!("calling `wrpc-test:integration/sync.with-enum`");
-    let v = sync::with_enum(&mut *clt)
+    let v = sync::with_enum(clt.client())
         .await
         .context("failed to call `wrpc-test:integration/sync.with-enum`")?;
     ensure!(v == Foobar::Bar, "{v:?}");
 
     for c in ['a', 'é', '🚩'] {
         info!("calling `wrpc-test:integration/sync.identity-char`");
-        let v = sync::identity_char(&mut *clt, c)
+        let v = sync::identity_char(clt.client(), c)
             .await
             .context("failed to call `wrpc-test:integration/sync.identity-char`")?;
         ensure!(v == c, "{v:?}");
@@ -400,77 +455,77 @@ pub async fn assert_sync(
             .as_ref()
             .map(|b| b.iter().map(String::as_str).collect::<Vec<_>>());
         info!("calling `wrpc-test:integration/sync.identity-option-lists`");
-        let v = sync::identity_option_lists(&mut *clt, a.as_ref(), b_ref.as_deref())
+        let v = sync::identity_option_lists(clt.client(), a.as_ref(), b_ref.as_deref())
             .await
             .context("failed to call `wrpc-test:integration/sync.identity-option-lists`")?;
         ensure!(v == (a, b), "{v:?}");
     }
 
     info!("calling `wrpc-test:integration/sync-client.ping`");
-    let v = bindings::ping(&mut *clt)
+    let v = bindings::ping(clt.client())
         .await
         .context("failed to call `wrpc-test:integration/sync-client.ping`")?;
     ensure!(v == "pong", "{v:?}");
 
     info!("calling `wrpc-test:integration/resources.[constructor]foo`");
-    let res = Foo::new(&mut *clt)
+    let res = Foo::new(clt.client())
         .await
         .context("failed to call `wrpc-test:integration/resources.[constructor]foo`")?;
 
     info!("calling `wrpc-test:integration/resources.[method]foo.bar`");
-    let v = Foo::bar(&mut *clt, &res.as_borrow())
+    let v = Foo::bar(clt.client(), &res.as_borrow())
         .await
         .context("failed to call `wrpc-test:integration/resources.[method]foo.bar`")?;
     ensure!(v == "bar", "{v:?}");
 
     info!("calling `wrpc-test:integration/resources.bar`");
-    let v = resources::bar(&mut *clt, &res.as_borrow())
+    let v = resources::bar(clt.client(), &res.as_borrow())
         .await
         .context("failed to call `wrpc-test:integration/resources.bar`")?;
     ensure!(v == "bar", "{v:?}");
 
     info!("calling `wrpc-test:integration/sync-client.strange.bar`");
-    let v = strange::bar(&mut *clt, &res.as_borrow())
+    let v = strange::bar(clt.client(), &res.as_borrow())
         .await
         .context("failed to call `wrpc-test:integration/sync-client.strange.bar`")?;
     ensure!(v == 42, "{v:?}");
 
     info!("calling `wrpc-test:integration/resources.[static]foo.foo`");
-    let v = Foo::foo(&mut *clt, &res)
+    let v = Foo::foo(clt.client(), &res)
         .await
         .context("failed to call `wrpc-test:integration/resources.[static]foo.foo`")?;
     ensure!(v == "foo", "{v:?}");
 
     info!("calling `wrpc-test:integration/resources.[constructor]counter`");
-    let a = Counter::new(&mut *clt, 1)
+    let a = Counter::new(clt.client(), 1)
         .await
         .context("failed to call `wrpc-test:integration/resources.[constructor]counter`")?;
 
     info!("calling `wrpc-test:integration/resources.[method]counter.increment-by`");
-    Counter::increment_by(&mut *clt, &a.as_borrow(), 2)
+    Counter::increment_by(clt.client(), &a.as_borrow(), 2)
         .await
         .context("failed to call `wrpc-test:integration/resources.[method]counter.increment-by`")?;
 
     info!("calling `wrpc-test:integration/resources.[method]counter.get-count`");
-    let v = Counter::get_count(&mut *clt, &a.as_borrow())
+    let v = Counter::get_count(clt.client(), &a.as_borrow())
         .await
         .context("failed to call `wrpc-test:integration/resources.[method]counter.get-count`")?;
     ensure!(v == 3, "{v:?}");
 
     info!("calling `wrpc-test:integration/resources.[method]counter.clone-counter`");
-    let b = Counter::clone_counter(&mut *clt, &a.as_borrow())
+    let b = Counter::clone_counter(clt.client(), &a.as_borrow())
         .await
         .context(
             "failed to call `wrpc-test:integration/resources.[method]counter.clone-counter`",
         )?;
 
     info!("calling `wrpc-test:integration/resources.[method]counter.increment-by`");
-    Counter::increment_by(&mut *clt, &b.as_borrow(), 1)
+    Counter::increment_by(clt.client(), &b.as_borrow(), 1)
         .await
         .context("failed to call `wrpc-test:integration/resources.[method]counter.increment-by`")?;
 
     info!("calling `wrpc-test:integration/resources.[static]counter.sum`");
-    let v = Counter::sum(&mut *clt, &a.as_borrow(), &b.as_borrow())
+    let v = Counter::sum(clt.client(), &a.as_borrow(), &b.as_borrow())
         .await
         .context("failed to call `wrpc-test:integration/resources.[static]counter.sum`")?;
     ensure!(v == 7, "{v:?}");
