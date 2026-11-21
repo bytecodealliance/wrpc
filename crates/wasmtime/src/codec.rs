@@ -525,7 +525,7 @@ impl TupleDecoder {
                     return Ok(None);
                 };
                 let cap = DEFAULT_MAX_INITIAL_CAPACITY / mem::size_of::<(Val, Val)>();
-                (n, Vec::with_capacity(n.min(cap)))
+                (n, Vec::with_capacity(n.min(src.len()).min(cap)))
             }
         };
         while vs.len() < n {
@@ -560,8 +560,10 @@ impl TupleDecoder {
                     };
                     n
                 };
-                let vs =
-                    Vec::with_capacity(n.min(DEFAULT_MAX_INITIAL_CAPACITY / mem::size_of::<Val>()));
+                let vs = Vec::with_capacity(
+                    n.min(src.len())
+                        .min(DEFAULT_MAX_INITIAL_CAPACITY / mem::size_of::<Val>()),
+                );
                 (n, vs)
             }
         };

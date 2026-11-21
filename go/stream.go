@@ -106,7 +106,7 @@ func ReadStream[T any](r IndexReadCloser, f func(IndexReadCloser, ...uint32) (T,
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to read ready stream length: %w", err)
 		}
-		vs := NewSlice[[]T](n)
+		vs := make([]T, 0)
 		var ds []func(context.Context) error
 		for i := range n {
 			v, deferred, err := f(r, append(path, i)...)
@@ -154,7 +154,7 @@ func ReadStream[T any](r IndexReadCloser, f func(IndexReadCloser, ...uint32) (T,
 				if math.MaxUint32-n < total {
 					return errors.New("total pending stream element count would overflow a 32-bit unsigned integer")
 				}
-				vs := NewSlice[[]T](n)
+				vs := make([]T, 0)
 				for range n {
 					v, deferred, err := f(r, total)
 					if err != nil {

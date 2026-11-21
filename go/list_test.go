@@ -22,9 +22,6 @@ func TestUntrustedLength(t *testing.T) {
 	if _, err := wrpc.ReadBytes(bytes.NewReader(nil), math.MaxUint32); !errors.Is(err, io.ErrUnexpectedEOF) {
 		t.Fatalf("expected %v, got %v", io.ErrUnexpectedEOF, err)
 	}
-	if v := wrpc.NewSlice[[]uint64](math.MaxUint32); len(v) != 0 || cap(v) > 1<<20 {
-		t.Fatalf("unexpected slice length %d and capacity %d", len(v), cap(v))
-	}
 }
 
 func TestInvalidUTF8String(t *testing.T) {

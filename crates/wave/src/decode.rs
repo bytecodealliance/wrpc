@@ -236,7 +236,9 @@ fn decode_seq<T: WasmValue>(
             let Some(n) = len(src)? else {
                 return Ok(None);
             };
-            let cap = n.min(DEFAULT_MAX_INITIAL_CAPACITY / mem::size_of::<T>().max(1));
+            let cap = n
+                .min(src.len())
+                .min(DEFAULT_MAX_INITIAL_CAPACITY / mem::size_of::<T>().max(1));
             (n, Vec::with_capacity(cap), None)
         }
     };

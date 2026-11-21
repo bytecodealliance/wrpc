@@ -955,7 +955,8 @@ where
             let len = usize::try_from(len)
                 .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
             self.ret = Vec::with_capacity(
-                len.min(DEFAULT_MAX_INITIAL_CAPACITY / mem::size_of::<T::Item>().max(1)),
+                len.min(src.len())
+                    .min(DEFAULT_MAX_INITIAL_CAPACITY / mem::size_of::<T::Item>().max(1)),
             );
             self.cap = len;
         }
