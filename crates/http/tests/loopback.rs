@@ -206,7 +206,7 @@ async fn response_parts() -> anyhow::Result<()> {
             parts: parts.clone(),
             send: |req: http::Request<Body<_>>| sender.send_request(req),
         };
-        let (buf,) = invoke_blocking::<(), (Bytes,), _>(clt, "foo", "bar", ()).await?;
+        let (buf,) = invoke_blocking::<(), (Bytes,)>(clt, "foo", "bar", ()).await?;
         assert_eq!(buf, "baz");
 
         sender.ready().await?;
@@ -225,7 +225,7 @@ async fn response_parts() -> anyhow::Result<()> {
                 }
             },
         };
-        let res = invoke_blocking::<(), (Bytes,), _>(clt, "foo", "bar", ()).await;
+        let res = invoke_blocking::<(), (Bytes,)>(clt, "foo", "bar", ()).await;
         let err = res.err().context("receiving results should fail")?;
         assert_eq!(err.to_string(), "status `418 I'm a teapot`");
         Ok(())
@@ -260,7 +260,7 @@ async fn buffered() -> anyhow::Result<()> {
             Ok(http::Response::from_parts(res, Full::new(body.to_bytes())))
         },
     };
-    let results = invoke_blocking::<Bytes, Bytes, _>(clt, "foo", "bar", params.clone()).await?;
+    let results = invoke_blocking::<Bytes, Bytes>(clt, "foo", "bar", params.clone()).await?;
     assert_eq!(results, params);
     Ok(())
 }
@@ -300,7 +300,7 @@ async fn local() -> anyhow::Result<()> {
         },
     };
     let greeting: LocalBoxFuture<'static, String> = Box::pin(async { "Hello".into() });
-    let (greeting,) = invoke_blocking::<_, (String,), _>(clt, "foo", "bar", (greeting,)).await?;
+    let (greeting,) = invoke_blocking::<_, (String,)>(clt, "foo", "bar", (greeting,)).await?;
     assert_eq!(greeting, "Hello, world");
     Ok(())
 }

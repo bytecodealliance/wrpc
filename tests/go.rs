@@ -75,7 +75,7 @@ async fn go_bindgen() -> anyhow::Result<()> {
         let (tx, rx) = wrpc_test::tcp_streams(&addr).await?;
         let mut clt = Framed::new(tx, rx);
         common::assert_sync(&mut clt).await?;
-        let res = invoke_blocking::<(&str,), (u32,), _>(clt, "foo", "f", ("panic",)).await;
+        let res = invoke_blocking::<(&str,), (u32,)>(clt, "foo", "f", ("panic",)).await;
         let Err(err) = res else {
             bail!("a panicking handler must fail the invocation");
         };

@@ -540,7 +540,7 @@ where
             )
         } else {
             format!(
-                r#"{wrpc_transport}::invoke_blocking::<{args_ty}, ({results_ty}), _>(clt__, "{instance}", "{name}", {params})"#
+                r#"{wrpc_transport}::invoke_blocking::<{args_ty}, ({results_ty})>(clt__, "{instance}", "{name}", {params})"#
             )
         };
         let (pat, ret) = match result {
