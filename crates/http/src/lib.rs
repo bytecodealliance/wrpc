@@ -34,7 +34,7 @@ pub type BodyReader<T> = StreamReader<
     <T as http_body::Body>::Data,
 >;
 
-/// Body transmitting a value, the parameters of a [request] or the results of a [respond]
+/// Body transmitting a value, the parameters of a [Client] request or the results of a [Server]
 /// response, and the asynchronous values nested in it, using `E`
 pub struct Body<E> {
     enc: E,
@@ -151,50 +151,6 @@ impl Drop for SentSignal {
     }
 }
 
-/// Returns a `POST` request with `parts`, with content type [`MEDIA_TYPE`] unless `parts` set
-/// one, invoking function `func` on instance `instance` with `params` encoded using `enc`
-///
-/// `params` are encoded before this returns.
-pub fn request<E, T>(
-    mut parts: http::request::Parts,
-    enc: E,
-    instance: &str,
-    func: &str,
-    params: T,
-) -> std::io::Result<http::Request<Body<E>>>
-where
-    E: Encoder<T, Error = std::io::Error> + Transmit,
-{
-    let body = Body::new(
-        enc,
-        Some(HeaderRef {
-            instance,
-            name: func,
-        }),
-        params,
-    )?;
-    parts.method = http::Method::POST;
-    parts
-        .headers
-        .entry(CONTENT_TYPE)
-        .or_insert(HeaderValue::from_static(MEDIA_TYPE));
-    Ok(http::Request::from_parts(parts, body))
-}
-
-/// Returns a response with content type [`MEDIA_TYPE`] transmitting `results` encoded using `enc`
-///
-/// `results` are encoded before this returns.
-pub fn respond<E, T>(enc: E, results: T) -> std::io::Result<http::Response<Body<E>>>
-where
-    E: Encoder<T, Error = std::io::Error> + Transmit,
-{
-    let body = Body::new(enc, None, results)?;
-    let mut res = http::Response::new(body);
-    res.headers_mut()
-        .insert(CONTENT_TYPE, HeaderValue::from_static(MEDIA_TYPE));
-    Ok(res)
-}
-
 /// Receives the invocation header of a request with `body`, returning it along with the [Server]
 /// of the invocation
 ///
@@ -213,23 +169,9 @@ where
     Ok((header, Server { rx }))
 }
 
-/// Returns a reader of the body of the response `res` resolves to
-///
-/// The response is awaited on first read, so that the request body can be sent first. Its status
-/// and headers are not checked: to act on them, map `res`, failing reads with its error.
-pub fn response<F, B, Err>(res: F) -> ResponseReader<F, B>
-where
-    F: Future<Output = Result<http::Response<B>, Err>>,
-    B: http_body::Body,
-{
-    ResponseReader {
-        res: Some(Box::pin(res)),
-        body: None,
-    }
-}
-
-/// Reader of the data of the body of the response a future resolves to, see [response]
-pub struct ResponseReader<F, B: http_body::Body> {
+/// Reader of the data of the body of the response a future resolves to, which it awaits on first
+/// read
+struct ResponseReader<F, B: http_body::Body> {
     res: Option<Pin<Box<F>>>,
     body: Option<Pin<Box<BodyReader<B>>>>,
 }
@@ -263,8 +205,11 @@ where
     }
 }
 
-/// Client invoking a function with a wRPC [request] with `parts` sent by `send`, such as a
-/// closure calling `send_request` of a hyper HTTP/1 or HTTP/2 connection
+/// Client invoking a function with a `POST` request with `parts`, with content type
+/// [`MEDIA_TYPE`] unless `parts` set one, sent by `send`, such as a closure calling
+/// `send_request` of a hyper HTTP/1 or HTTP/2 connection
+///
+/// The parameters are encoded before [`Invoke::invoke`] returns.
 ///
 /// The response status and headers are not checked: to act on them, map the response `send`
 /// resolves to, failing it with an error.
@@ -297,14 +242,31 @@ where
         E: Encoder<T, Error = std::io::Error>,
         D: Decoder<Error = std::io::Error> + Receive,
     {
-        let Self { parts, send } = self;
+        let Self { mut parts, send } = self;
         let Codec { enc, dec } = codec;
-        let req = request(parts, enc, instance, func, params);
+        let body = Body::new(
+            enc,
+            Some(HeaderRef {
+                instance,
+                name: func,
+            }),
+            params,
+        );
+        parts.method = http::Method::POST;
+        parts
+            .headers
+            .entry(CONTENT_TYPE)
+            .or_insert(HeaderValue::from_static(MEDIA_TYPE));
         async move {
-            let mut req = req?;
+            let mut body = body?;
             let (tx, sent) = oneshot::channel();
-            req.body_mut().sent.tx = Some(tx);
-            let rx = FramedRead::new(response(send(req)), FrameDecoder::default());
+            body.sent.tx = Some(tx);
+            let res = send(http::Request::from_parts(parts, body));
+            let rx = ResponseReader {
+                res: Some(Box::pin(res)),
+                body: None,
+            };
+            let rx = FramedRead::new(rx, FrameDecoder::default());
             let (results, rx) = receive(dec, rx).await?;
             Ok((
                 results,
@@ -410,7 +372,10 @@ where
             })
             .await?
         };
-        let res = respond(ResultsEncoder { enc, rx, rest }, results)?;
+        let body = Body::new(ResultsEncoder { enc, rx, rest }, None, results)?;
+        let mut res = http::Response::new(body);
+        res.headers_mut()
+            .insert(CONTENT_TYPE, HeaderValue::from_static(MEDIA_TYPE));
         Ok(res)
     }
 }

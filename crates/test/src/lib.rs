@@ -614,24 +614,22 @@ where
 {
     let s: BoxStream<'static, Bytes> =
         Box::pin(stream::iter([Bytes::from_static(b"client->server")]));
-    let req = wrpc_http::request(
+    let clt = wrpc_http::Client {
         parts,
-        <FooBar as Encode>::Encoder::default(),
-        "foo",
-        "bar",
-        (Bytes::from_static(b"testbar"), s),
-    )?;
-    let res = send(req.map(http_body_util::BodyExt::boxed_unsync));
-    let mut rx = FramedRead::new(wrpc_http::response(res), FrameDecoder::default());
-    let ((results, s), io) = receive(<FooBar as Decode>::Decoder::default(), &mut rx)
-        .await
-        .context("failed to receive `foo.bar` results")?;
+        send: |req: http::Request<wrpc_http::Body<_>>| {
+            send(req.map(http_body_util::BodyExt::boxed_unsync))
+        },
+    };
+    let ((results, s), io) =
+        invoke::<FooBar, FooBar, _>(clt, "foo", "bar", (Bytes::from_static(b"testbar"), s))
+            .await
+            .context("failed to invoke `foo.bar`")?;
     assert_eq!(results, b"foo".as_slice());
     let (buf, ()) = try_join!(async { anyhow::Ok(s.collect::<Vec<_>>().await) }, async {
         io.await.context("`foo.bar` invocation failed")
     },)?;
     assert_eq!(buf.concat(), b"server->client");
-    read_eof(&mut rx).await
+    Ok(())
 }
 
 /// Serves the invocation of [`assert_http_invocation`]

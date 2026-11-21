@@ -12,14 +12,13 @@ use http::{HeaderValue, StatusCode};
 use http_body::Body as _;
 use http_body_util::{BodyExt, Full};
 use hyper_util::rt::TokioIo;
-use tokio::io::AsyncReadExt as _;
 use tokio::time::sleep;
 use tokio::{spawn, try_join};
-use tokio_util::codec::{Encoder as _, FramedRead};
+use tokio_util::codec::Encoder as _;
 use wrpc_http::{Body, Client};
 use wrpc_transport::{
-    Codec, Decode, Encode, FrameDecoder, FrameEncoder, FrameRef, Header, HeaderEncoder, HeaderRef,
-    invoke, invoke_blocking, receive, serve,
+    Codec, Decode, Encode, FrameEncoder, FrameRef, Header, HeaderEncoder, HeaderRef, invoke,
+    invoke_blocking, serve,
 };
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -37,10 +36,8 @@ async fn http2() -> anyhow::Result<()> {
         },
         |parts, mut sender| async move {
             sender.ready().await?;
-            wrpc_test::assert_http_invocation(parts.clone(), |req| {
-                sender.send_request(req.map(BodyExt::boxed_unsync))
-            })
-            .await?;
+            wrpc_test::assert_http_invocation(parts.clone(), |req| sender.send_request(req))
+                .await?;
 
             let mut baz = BytesMut::default();
             HeaderEncoder.encode(
@@ -57,9 +54,11 @@ async fn http2() -> anyhow::Result<()> {
                 let body = Full::new(buf.freeze()).map_err(|err| match err {});
                 let req = http::Request::from_parts(parts.clone(), body.boxed_unsync());
                 sender.ready().await?;
-                let res = wrpc_http::response(sender.send_request(req))
-                    .read_to_end(&mut Vec::default())
-                    .await;
+                let res = async {
+                    let res = sender.send_request(req).await?;
+                    res.into_body().collect().await
+                }
+                .await;
                 res.expect_err("invalid data must fail the response");
             }
             Ok(())
@@ -144,34 +143,31 @@ async fn response_parts() -> anyhow::Result<()> {
         .context("failed to serve HTTP/2 connection")
     };
     wrpc_test::with_http2(serve, |parts, mut sender| async move {
-        let req = wrpc_http::request(
-            parts.clone(),
-            <() as Encode>::Encoder::default(),
-            "foo",
-            "bar",
-            (),
-        )?;
         sender.ready().await?;
-        let rx = wrpc_http::response(sender.send_request(req));
-        let rx = FramedRead::new(rx, FrameDecoder::default());
-        let ((buf,), io) = receive(<(Bytes,) as Decode>::Decoder::default(), rx).await?;
-        io.await?;
+        let clt = Client {
+            parts: parts.clone(),
+            send: |req: http::Request<Body<_>>| sender.send_request(req),
+        };
+        let (buf,) = invoke_blocking::<(), (Bytes,), _>(clt, "foo", "bar", ()).await?;
         assert_eq!(buf, "baz");
 
-        let req = wrpc_http::request(parts, <() as Encode>::Encoder::default(), "foo", "bar", ())?;
         sender.ready().await?;
-        let res = sender.send_request(req);
-        let rx = wrpc_http::response(async {
-            let res = res.await?;
-            let headers = res.headers();
-            assert_eq!(headers[CONTENT_TYPE], wrpc_http::MEDIA_TYPE);
-            assert_eq!(headers["req-content-type"], wrpc_http::MEDIA_TYPE);
-            assert_eq!(headers["foo"], "bar");
-            ensure!(res.status().is_success(), "status `{}`", res.status());
-            Ok(res)
-        });
-        let rx = FramedRead::new(rx, FrameDecoder::default());
-        let res = receive(<(Bytes,) as Decode>::Decoder::default(), rx).await;
+        let clt = Client {
+            parts,
+            send: |req: http::Request<Body<_>>| {
+                let res = sender.send_request(req);
+                async {
+                    let res = res.await?;
+                    let headers = res.headers();
+                    assert_eq!(headers[CONTENT_TYPE], wrpc_http::MEDIA_TYPE);
+                    assert_eq!(headers["req-content-type"], wrpc_http::MEDIA_TYPE);
+                    assert_eq!(headers["foo"], "bar");
+                    ensure!(res.status().is_success(), "status `{}`", res.status());
+                    Ok(res)
+                }
+            },
+        };
+        let res = invoke_blocking::<(), (Bytes,), _>(clt, "foo", "bar", ()).await;
         let err = res.err().context("receiving results should fail")?;
         assert_eq!(err.to_string(), "status `418 I'm a teapot`");
         Ok(())
@@ -183,30 +179,24 @@ async fn response_parts() -> anyhow::Result<()> {
 async fn buffered() -> anyhow::Result<()> {
     let params = Bytes::from(vec![0x42; 65536]);
     let (parts, ()) = http::Request::new(()).into_parts();
-    let req = wrpc_http::request(
+    let clt = Client {
         parts,
-        <Bytes as Encode>::Encoder::default(),
-        "foo",
-        "bar",
-        params.clone(),
-    )?;
-    let size = req.body().size_hint().exact();
-    let rx = wrpc_http::response(async {
-        let (parts, body) = req.into_parts();
-        let body = body.collect().await?;
-        let body = body.to_bytes();
-        ensure!(size == u64::try_from(body.len()).ok());
-        let (Header { instance, name }, srv) = wrpc_http::accept(Full::new(body)).await?;
-        ensure!(instance == "foo" && name == "bar");
-        let res = serve::<Bytes, _, _, _, _>(srv, async |params| anyhow::Ok(params)).await?;
-        let (res, body) = res.into_parts();
-        let body = body.collect().await?;
-        ensure!(parts.headers[CONTENT_TYPE] == res.headers[CONTENT_TYPE]);
-        Ok::<_, anyhow::Error>(http::Response::from_parts(res, Full::new(body.to_bytes())))
-    });
-    let rx = FramedRead::new(rx, FrameDecoder::default());
-    let (results, io) = receive(<Bytes as Decode>::Decoder::default(), rx).await?;
-    io.await?;
+        send: |req: http::Request<Body<_>>| async {
+            let size = req.body().size_hint().exact();
+            let (parts, body) = req.into_parts();
+            let body = body.collect().await?;
+            let body = body.to_bytes();
+            ensure!(size == u64::try_from(body.len()).ok());
+            let (Header { instance, name }, srv) = wrpc_http::accept(Full::new(body)).await?;
+            ensure!(instance == "foo" && name == "bar");
+            let res = serve::<Bytes, _, _, _, _>(srv, async |params| anyhow::Ok(params)).await?;
+            let (res, body) = res.into_parts();
+            let body = body.collect().await?;
+            ensure!(parts.headers[CONTENT_TYPE] == res.headers[CONTENT_TYPE]);
+            Ok(http::Response::from_parts(res, Full::new(body.to_bytes())))
+        },
+    };
+    let results = invoke_blocking::<Bytes, Bytes, _>(clt, "foo", "bar", params.clone()).await?;
     assert_eq!(results, params);
     Ok(())
 }
