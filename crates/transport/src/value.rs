@@ -659,6 +659,14 @@ pub trait Decode: Sized {
     type ListDecoder: tokio_util::codec::Decoder<Item = Vec<Self>, Error = std::io::Error>
         + Default
         + 'static;
+
+    #[doc(hidden)]
+    fn decode_chunk(
+        dec: &mut ListDecoder<Self::Decoder>,
+        src: &mut BytesMut,
+    ) -> std::io::Result<Option<Vec<Self>>> {
+        dec.decode(src)
+    }
 }
 
 impl<T: Transmit> Transmit for OptionEncoder<T> {
@@ -1735,6 +1743,18 @@ impl Encode for () {
 impl Decode for () {
     type Decoder = UnitCodec;
     type ListDecoder = CoreVecDecoder<Self::Decoder>;
+
+    fn decode_chunk(
+        _: &mut ListDecoder<Self::Decoder>,
+        src: &mut BytesMut,
+    ) -> std::io::Result<Option<Vec<Self>>> {
+        let Some(len) = Leb128DecoderU32.decode(src)? else {
+            return Ok(None);
+        };
+        let len = usize::try_from(len)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
+        Ok(Some(vec![(); len]))
+    }
 }
 
 macro_rules! impl_tuple_codec {
@@ -2510,13 +2530,38 @@ where
     Poll::Ready(Ok(()))
 }
 
+struct ChunkDecoder<T: Decode>(ListDecoder<T::Decoder>);
+
+impl<T: Decode> Default for ChunkDecoder<T> {
+    fn default() -> Self {
+        Self(ListDecoder::default())
+    }
+}
+
+impl<T: Decode> tokio_util::codec::Decoder for ChunkDecoder<T> {
+    type Item = Vec<T>;
+    type Error = std::io::Error;
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        T::decode_chunk(&mut self.0, src)
+    }
+
+    fn decode_eof(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        match self.decode(src)? {
+            Some(v) => Ok(Some(v)),
+            None if self.0.cap == 0 && src.is_empty() => Ok(None),
+            None => Err(std::io::ErrorKind::UnexpectedEof.into()),
+        }
+    }
+}
+
 /// Decoder for `stream<T>` of type `S`, whose chunks are received on its path and the values
 /// nested in its elements below their indices
 pub struct StreamDecoder<T, S = Pin<Box<dyn Stream<Item = Vec<T>> + Send>>>
 where
     T: Decode,
 {
-    dec: OptionDecoder<ListDecoder<T::Decoder>>,
+    dec: OptionDecoder<ChunkDecoder<T>>,
     /// Sender of the chunks and of the end of a pending stream, until it is closed
     tx: Option<(mpsc::Sender<Vec<T>>, oneshot::Sender<()>)>,
     buf: BytesMut,
@@ -2588,7 +2633,7 @@ where
                             "stream element index would overflow usize",
                         )
                     })?;
-                    let nested = mem::take(&mut dec.nested)
+                    let nested = mem::take(&mut dec.0.nested)
                         .into_iter()
                         .map(|(i, dec)| (offset.saturating_add(i), dec));
                     self.nested.extend(nested);
@@ -2617,7 +2662,7 @@ where
             return Ok(None);
         };
         if let Some(chunk) = chunk {
-            self.nested = mem::take(&mut self.dec.get_mut().nested);
+            self.nested = mem::take(&mut self.dec.get_mut().0.nested);
             if chunk.is_empty() {
                 return Ok(Some(Box::pin(stream::empty())));
             }
@@ -2642,7 +2687,7 @@ where
             return Ok(None);
         };
         if let Some(chunk) = chunk {
-            self.nested = mem::take(&mut self.dec.get_mut().nested);
+            self.nested = mem::take(&mut self.dec.get_mut().0.nested);
             if chunk.is_empty() {
                 return Ok(Some(Box::pin(stream::empty())));
             }
@@ -3093,6 +3138,17 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn unit_stream_max_chunk() -> std::io::Result<()> {
+        let s = crate::unpack(
+            <BoxStream<'static, Vec<()>> as Decode>::Decoder::default(),
+            &mut BytesMut::from(&b"\x01\xff\xff\xff\xff\x0f"[..]),
+        )?;
+        let lens: Vec<_> = s.map(|chunk| chunk.len()).collect().await;
+        assert_eq!(lens, [0xffff_ffff]);
+        Ok(())
     }
 
     #[test]
