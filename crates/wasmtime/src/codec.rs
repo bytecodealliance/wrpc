@@ -538,6 +538,13 @@ impl TupleDecoder {
             };
             vs.push((k, v));
         }
+        let mut keys = HashSet::with_capacity(vs.len());
+        if !vs.iter().all(|(k, ..)| keys.insert(format!("{k:?}"))) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "map contains duplicate keys",
+            ));
+        }
         Ok(Some(vs))
     }
 

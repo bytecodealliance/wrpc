@@ -107,7 +107,11 @@ fn plain_values() -> wasmtime::Result<()> {
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
     }
 
-    for buf in [&b"\x2a\x03"[..], &b"\x2a\x01\x03foo\x01"[..]] {
+    for buf in [
+        &b"\x2a\x03"[..],
+        &b"\x2a\x01\x03foo\x01"[..],
+        &b"\x2a\x00\x02\x01k\x01\x01k\x02\x01\x02\x01"[..],
+    ] {
         let dec = TupleDecoder::new(Arc::clone(&tys)).with_max_len(2);
         let err = unpack(dec, &mut buf.into()).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
