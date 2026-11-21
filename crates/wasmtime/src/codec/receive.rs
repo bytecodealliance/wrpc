@@ -84,8 +84,8 @@ impl Receive for FutureReceiver {
         Poll::Ready(Ok(()))
     }
 
-    fn is_closed(&self) -> bool {
-        self.closed && self.dec.is_closed()
+    fn is_complete(&self) -> bool {
+        self.closed && self.dec.is_complete()
     }
 }
 
@@ -143,7 +143,7 @@ impl StreamReceiver {
                     self.list = Some((n, vs));
                     return Ok(chunk);
                 };
-                if !self.dec.is_closed() {
+                if !self.dec.is_complete() {
                     let dec = TupleDecoder::new(Arc::default()).with_max_len(max_len);
                     let dec = mem::replace(&mut self.dec, dec);
                     self.nested
@@ -206,8 +206,8 @@ impl Receive for StreamReceiver {
         Poll::Ready(Ok(()))
     }
 
-    fn is_closed(&self) -> bool {
-        self.tx.is_none() && self.nested.is_closed()
+    fn is_complete(&self) -> bool {
+        self.tx.is_none() && self.nested.is_complete()
     }
 }
 

@@ -96,7 +96,7 @@ impl<E: Transmit> http_body::Body for Body<E> {
                 "invocation dropped",
             ))));
         }
-        let closed = enc.is_closed()
+        let complete = enc.is_complete()
             || match enc.poll_transmit(cx, path, buffer) {
                 Poll::Ready(Ok(())) => true,
                 Poll::Ready(Err(err)) => {
@@ -111,10 +111,10 @@ impl<E: Transmit> http_body::Body for Body<E> {
                 }
                 Poll::Pending => false,
             };
-        sent.done = closed;
+        sent.done = complete;
         if !buffer.is_empty() {
             Poll::Ready(Some(Ok(Frame::data(buffer.split().freeze()))))
-        } else if closed {
+        } else if complete {
             Poll::Ready(None)
         } else {
             Poll::Pending
@@ -122,12 +122,12 @@ impl<E: Transmit> http_body::Body for Body<E> {
     }
 
     fn is_end_stream(&self) -> bool {
-        self.buffer.is_empty() && self.enc.is_closed()
+        self.buffer.is_empty() && self.enc.is_complete()
     }
 
     fn size_hint(&self) -> SizeHint {
         let n = u64::try_from(self.buffer.len()).unwrap_or(u64::MAX);
-        if self.enc.is_closed() {
+        if self.enc.is_complete() {
             SizeHint::with_exact(n)
         } else {
             let mut hint = SizeHint::default();

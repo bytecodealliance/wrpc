@@ -66,7 +66,7 @@ impl<T: WasmType> Transmit for ValueEncoder<T> {
         Poll::Ready(Ok(()))
     }
 
-    fn is_closed(&self) -> bool {
+    fn is_complete(&self) -> bool {
         true
     }
 }
@@ -118,7 +118,7 @@ impl<T: WasmType> Transmit for TupleEncoder<T> {
         Poll::Ready(Ok(()))
     }
 
-    fn is_closed(&self) -> bool {
+    fn is_complete(&self) -> bool {
         true
     }
 }
