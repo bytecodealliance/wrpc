@@ -14,17 +14,19 @@
 //!
 //! [`Codec::invoke`] *invokes* WIT functions by sending the invocation header and transmitting
 //! the parameters while receiving the results, [`invoke()`] uses the default codecs.
-//! [`Codec::serve`] *serves* WIT functions by receiving the parameters following the header of an
-//! invocation and transmitting the results, [`serve()`] uses the default codecs. Generated
-//! bindings, [`invoke()`] and [`serve()`] use any [`Invoke`] client and [`Serve`] server, such as
-//! [`Framed`]. [`Serve`] requires [`Send`] values and futures, [`Codec::serve`] does not.
+//! [`Server::serve`] *serves* WIT functions by receiving the parameters of an invocation, which
+//! a [`Listener`] accepted, and transmitting the results, [`serve()`] uses the default codecs.
+//! Generated bindings, [`invoke()`] and [`serve()`] use any [`Invoke`] client, such as [`Framed`],
+//! and [`Serve`] server, such as [`Server`]. [`Serve`] requires [`Send`] values and futures,
+//! [`Server::serve`] does not.
 //!
 //! A transport establishes bidirectional byte streams, each carrying invocations one after
 //! another, which it yields as any [`AsyncWrite`](tokio::io::AsyncWrite)/
 //! [`AsyncRead`](tokio::io::AsyncRead) byte stream pair. [`transmit()`] and [`receive()`] layer
 //! the wRPC [framing](FrameDecoder) protocol on top of it to multiplex the asynchronous values nested in
 //! parameters and results, which encoders [Transmit] and decoders [Receive]. [`Listener`]
-//! accepts the invocations sent over a byte stream pair one after another.
+//! accepts the invocations sent over a byte stream pair one after another, serving them
+//! concurrently pipelines them.
 //!
 //! Over TCP, enable `TCP_NODELAY`, since invocations consist of small writes, each awaited by
 //! the peer.
@@ -47,7 +49,7 @@ pub use invoke::{Invocation, Invoke, invoke, invoke_blocking};
 pub use listener::Listener;
 pub use mux::{Receipt, Transmission, receive, transmit};
 pub use pack::{pack, unpack};
-pub use serve::{Serve, serve};
+pub use serve::{Serve, Server, serve};
 pub use value::*;
 
 use bytes::{Buf, BufMut as _, BytesMut};
@@ -116,9 +118,14 @@ pub fn error_data_after_end() -> std::io::Error {
     )
 }
 
-/// Returns the error for a connection, on which receiving an invocation header failed
+/// Returns the error for a connection, on which receiving a header or a previous invocation failed
 fn error_connection_failed() -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::InvalidInput, "connection failed")
+}
+
+/// Returns the error for an invocation, whose writer was lost by a previous invocation failing
+fn error_writer_lost() -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::BrokenPipe, "writer lost")
 }
 
 /// Returns the error for data received for a closed receiver

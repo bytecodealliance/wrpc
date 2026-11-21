@@ -10,7 +10,7 @@ use tokio::try_join;
 use tokio_util::codec::{Decoder as _, Encoder, FramedRead, FramedWrite};
 use wasm_wave::value::{Type, Value};
 use wasm_wave::wasm::WasmValue as _;
-use wrpc_transport::{Codec, Encode, FrameDecoder, FrameEncoder, Framed, Listener};
+use wrpc_transport::{Codec, Encode, FrameDecoder, FrameEncoder, Listener};
 use wrpc_wave::{TupleDecoder, TupleEncoder, ValueDecoder, ValueEncoder};
 
 #[test]
@@ -231,14 +231,14 @@ async fn invoke_tuple() -> anyhow::Result<()> {
         async {
             let mut lis = Listener::new(srv_tx, srv_rx);
             let next = lis.accept().await?;
-            let (header, Framed { tx, rx }) = next.context("connection closed")?;
+            let (header, srv) = next.context("connection closed")?;
             assert_eq!(header.instance, "foo");
             assert_eq!(header.name, "bar");
-            Codec {
+            let codec = Codec {
                 enc: TupleEncoder::new(Arc::clone(&result_tys)),
                 dec: TupleDecoder::<Value>::new(Arc::clone(&param_tys)),
-            }
-            .serve(tx, rx, async |got| {
+            };
+            srv.serve(codec, async |got| {
                 assert_eq!(got, params);
                 anyhow::Ok(results.as_slice())
             })

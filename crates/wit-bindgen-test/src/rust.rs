@@ -269,7 +269,7 @@ use std::sync::Arc;
 
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream};
-use wrpc_transport::{Framed, Header, Listener};
+use wrpc_transport::{Framed, Header, Listener, Server};
 
 {modules}
 
@@ -287,11 +287,11 @@ impl Client {
 
 fn serve(
     lis: TcpListener,
-    handle: impl for<'a> Fn(
+    handle: impl Fn(
         &str,
         &str,
-        &'a mut Framed<OwnedReadHalf, OwnedWriteHalf>,
-    ) -> Result<Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'a>>, String>
+        Server<OwnedReadHalf, OwnedWriteHalf>,
+    ) -> Result<Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>>, String>
     + Send
     + Sync
     + 'static,

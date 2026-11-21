@@ -159,11 +159,7 @@ where
 ///
 /// The value is encoded before this returns. Returns the [Transmission] of the value and of the
 /// asynchronous values nested in it.
-pub fn transmit<E, F, O, T>(
-    mut enc: E,
-    mut tx: F,
-    value: T,
-) -> std::io::Result<Transmission<F, O, E>>
+pub fn transmit<E, F, O, T>(mut enc: E, tx: F, value: T) -> std::io::Result<Transmission<F, O, E>>
 where
     E: Encoder<T, Error = std::io::Error> + Transmit,
     F: BorrowMut<FramedWrite<O, FrameEncoder>>,
@@ -171,6 +167,18 @@ where
 {
     let mut data = BytesMut::default();
     enc.encode(value, &mut data)?;
+    transmit_encoded(enc, tx, data)
+}
+
+/// Sends a value encoded as `data` using `enc` into the frames written by `tx`, see [`transmit`]
+pub(crate) fn transmit_encoded<E, F, O>(
+    enc: E,
+    mut tx: F,
+    data: BytesMut,
+) -> std::io::Result<Transmission<F, O, E>>
+where
+    F: BorrowMut<FramedWrite<O, FrameEncoder>>,
+{
     let buf = tx.borrow_mut().write_buffer_mut();
     encode_frames(&[], data, &mut *buf)?;
     encode_close(&[], buf)?;
