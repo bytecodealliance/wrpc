@@ -413,7 +413,6 @@ impl_sync_encoder!(
     PrimValEncoder,
     Utf8BytesEncoder,
     Leb128Encoder,
-    ResourceEncoder,
 );
 
 /// Codec for synchronous values
@@ -1460,84 +1459,30 @@ impl Decode for Bytes {
     type ListDecoder = CoreVecDecoder<Self::Decoder>;
 }
 
-/// Encoder for `resource` types
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
-#[repr(transparent)]
-pub struct ResourceEncoder;
-
-impl<T: ?Sized> tokio_util::codec::Encoder<ResourceOwn<T>> for ResourceEncoder {
-    type Error = std::io::Error;
-
-    #[instrument(level = "trace", skip(self, item), ret, fields(ty = "own"))]
-    fn encode(&mut self, item: ResourceOwn<T>, dst: &mut BytesMut) -> std::io::Result<()> {
-        CoreVecEncoderBytes.encode(item.repr, dst)
-    }
+impl<T: ?Sized> Encode for ResourceOwn<T> {
+    type Encoder = CoreVecEncoderBytes;
 }
 
-impl<T: ?Sized> tokio_util::codec::Encoder<&ResourceOwn<T>> for ResourceEncoder {
-    type Error = std::io::Error;
-
-    #[instrument(level = "trace", skip(self, item), ret, fields(ty = "own"))]
-    fn encode(&mut self, item: &ResourceOwn<T>, dst: &mut BytesMut) -> std::io::Result<()> {
-        CoreVecEncoderBytes.encode(&item.repr, dst)
-    }
+impl<T: ?Sized> Encode for &ResourceOwn<T> {
+    type Encoder = CoreVecEncoderBytes;
 }
 
-impl<T> Encode for ResourceOwn<T>
-where
-    T: ?Sized,
-{
-    type Encoder = ResourceEncoder;
+impl<T: ?Sized> Encode for ResourceBorrow<T> {
+    type Encoder = CoreVecEncoderBytes;
 }
 
-impl<T> Encode for &ResourceOwn<T>
-where
-    T: ?Sized,
-{
-    type Encoder = ResourceEncoder;
+impl<T: ?Sized> Encode for &ResourceBorrow<T> {
+    type Encoder = CoreVecEncoderBytes;
 }
 
-impl<T: ?Sized> tokio_util::codec::Encoder<ResourceBorrow<T>> for ResourceEncoder {
-    type Error = std::io::Error;
-
-    #[instrument(level = "trace", skip(self, item), ret, fields(ty = "borrow"))]
-    fn encode(&mut self, item: ResourceBorrow<T>, dst: &mut BytesMut) -> std::io::Result<()> {
-        CoreVecEncoderBytes.encode(item.repr, dst)
-    }
-}
-
-impl<T: ?Sized> tokio_util::codec::Encoder<&ResourceBorrow<T>> for ResourceEncoder {
-    type Error = std::io::Error;
-
-    #[instrument(level = "trace", skip(self, item), ret, fields(ty = "borrow"))]
-    fn encode(&mut self, item: &ResourceBorrow<T>, dst: &mut BytesMut) -> std::io::Result<()> {
-        CoreVecEncoderBytes.encode(&item.repr, dst)
-    }
-}
-
-impl<T> Encode for ResourceBorrow<T>
-where
-    T: ?Sized,
-{
-    type Encoder = ResourceEncoder;
-}
-
-impl<T> Encode for &ResourceBorrow<T>
-where
-    T: ?Sized,
-{
-    type Encoder = ResourceEncoder;
-}
-
-/// Decoder for borrowed resource types
+/// Decoder for resource handles of type `T`
 #[derive(Debug)]
-#[repr(transparent)]
-pub struct ResourceBorrowDecoder<T: ?Sized> {
+pub struct ResourceDecoder<T> {
     dec: CoreVecDecoderBytes,
-    _ty: PhantomData<T>,
+    _ty: PhantomData<fn() -> T>,
 }
 
-impl<T: ?Sized> Default for ResourceBorrowDecoder<T> {
+impl<T> Default for ResourceDecoder<T> {
     fn default() -> Self {
         Self {
             dec: CoreVecDecoderBytes::default(),
@@ -1546,69 +1491,33 @@ impl<T: ?Sized> Default for ResourceBorrowDecoder<T> {
     }
 }
 
-impl<T: ?Sized> Receive for ResourceBorrowDecoder<T> {
+impl<T> Receive for ResourceDecoder<T> {
     sync_receive!();
 }
 
-impl<T: ?Sized> Receive for CoreVecDecoder<ResourceBorrowDecoder<T>> {
+impl<T: From<Bytes>> Receive for CoreVecDecoder<ResourceDecoder<T>> {
     sync_receive!();
 }
 
-impl<T: ?Sized + 'static> Decode for ResourceBorrow<T> {
-    type Decoder = ResourceBorrowDecoder<T>;
-    type ListDecoder = CoreVecDecoder<Self::Decoder>;
-}
-
-impl<T: ?Sized> tokio_util::codec::Decoder for ResourceBorrowDecoder<T> {
-    type Item = ResourceBorrow<T>;
+impl<T: From<Bytes>> tokio_util::codec::Decoder for ResourceDecoder<T> {
+    type Item = T;
     type Error = std::io::Error;
 
-    #[instrument(level = "trace", skip(self), fields(ty = "borrow"))]
+    #[instrument(level = "trace", skip(self), fields(ty = "resource"))]
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         let repr = self.dec.decode(src)?;
-        Ok(repr.map(Self::Item::from))
+        Ok(repr.map(T::from))
     }
-}
-
-/// Decoder for owned resource types
-#[derive(Debug)]
-#[repr(transparent)]
-pub struct ResourceOwnDecoder<T: ?Sized> {
-    dec: CoreVecDecoderBytes,
-    _ty: PhantomData<T>,
-}
-
-impl<T: ?Sized> Default for ResourceOwnDecoder<T> {
-    fn default() -> Self {
-        Self {
-            dec: CoreVecDecoderBytes::default(),
-            _ty: PhantomData,
-        }
-    }
-}
-
-impl<T: ?Sized> Receive for ResourceOwnDecoder<T> {
-    sync_receive!();
-}
-
-impl<T: ?Sized> Receive for CoreVecDecoder<ResourceOwnDecoder<T>> {
-    sync_receive!();
 }
 
 impl<T: ?Sized + 'static> Decode for ResourceOwn<T> {
-    type Decoder = ResourceOwnDecoder<T>;
+    type Decoder = ResourceDecoder<Self>;
     type ListDecoder = CoreVecDecoder<Self::Decoder>;
 }
 
-impl<T: ?Sized> tokio_util::codec::Decoder for ResourceOwnDecoder<T> {
-    type Item = ResourceOwn<T>;
-    type Error = std::io::Error;
-
-    #[instrument(level = "trace", skip(self), fields(ty = "own"))]
-    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        let repr = self.dec.decode(src)?;
-        Ok(repr.map(Self::Item::from))
-    }
+impl<T: ?Sized + 'static> Decode for ResourceBorrow<T> {
+    type Decoder = ResourceDecoder<Self>;
+    type ListDecoder = CoreVecDecoder<Self::Decoder>;
 }
 
 /// Codec for `()`
