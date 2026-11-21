@@ -251,7 +251,6 @@ pub(crate) fn encode_value<T: WasmValue>(
         }
         WasmTypeKind::Option => {
             let v = v.unwrap_option();
-            dst.reserve(1);
             dst.put_u8(v.is_some().into());
             if v.is_none() {
                 return Ok(());
@@ -262,7 +261,6 @@ pub(crate) fn encode_value<T: WasmValue>(
             let (ok, err) = ty
                 .result_types()
                 .ok_or_else(|| error_invalid_input("result type missing ok/err types"))?;
-            dst.reserve(1);
             match v.unwrap_result() {
                 Ok(v) => {
                     dst.put_u8(0);

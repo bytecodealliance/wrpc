@@ -1,6 +1,6 @@
-use core::any::TypeId;
+use core::any;
 use core::fmt::{self, Debug};
-use core::future::pending;
+use core::future::{self, pending};
 use core::hash::{BuildHasher, Hash, Hasher};
 use core::marker::PhantomData;
 use core::mem;
@@ -16,7 +16,7 @@ use bytes::{Buf, BufMut as _, Bytes, BytesMut};
 use futures::channel::mpsc;
 use futures::stream;
 use futures::{FutureExt as _, Stream, StreamExt as _};
-use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncReadExt as _};
 use tokio::sync::oneshot;
 use tokio_util::codec::{Decoder as _, Encoder as _};
 use tokio_util::io::{StreamReader, poll_read_buf};
@@ -44,7 +44,6 @@ fn encode_ready_bytes(chunks: &[impl AsRef<[u8]>], dst: &mut BytesMut) -> std::i
     let n = chunks.iter().map(|chunk| chunk.as_ref().len()).sum();
     let len = u32::try_from(n)
         .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
-    dst.reserve(1);
     dst.put_u8(0x01);
     Leb128Encoder.encode(len, dst)?;
     dst.reserve(n);
@@ -62,178 +61,105 @@ fn encode_bytes_frames(path: &[usize], data: &[u8], dst: &mut BytesMut) -> std::
     encode_frames(path, Buf::chain(&*len, data), dst)
 }
 
-/// Borrowed resource handle, represented as an opaque byte blob
-#[repr(transparent)]
-pub struct ResourceBorrow<T: ?Sized> {
-    repr: Bytes,
-    _ty: PhantomData<T>,
-}
-
-impl<T: ?Sized> From<Bytes> for ResourceBorrow<T> {
-    fn from(repr: Bytes) -> Self {
-        Self {
-            repr,
-            _ty: PhantomData,
+macro_rules! impl_resource {
+    ($(#[$attr:meta])* $name:ident, $kind:literal) => {
+        $(#[$attr])*
+        #[repr(transparent)]
+        pub struct $name<T: ?Sized> {
+            repr: Bytes,
+            _ty: PhantomData<T>,
         }
-    }
-}
 
-impl<T: ?Sized> From<Vec<u8>> for ResourceBorrow<T> {
-    fn from(repr: Vec<u8>) -> Self {
-        Self {
-            repr: repr.into(),
-            _ty: PhantomData,
+        impl<T: ?Sized> From<Bytes> for $name<T> {
+            fn from(repr: Bytes) -> Self {
+                Self {
+                    repr,
+                    _ty: PhantomData,
+                }
+            }
         }
-    }
-}
 
-impl<T: ?Sized> From<ResourceBorrow<T>> for Bytes {
-    fn from(ResourceBorrow { repr, .. }: ResourceBorrow<T>) -> Self {
-        repr
-    }
-}
-
-impl<T: ?Sized> PartialEq for ResourceBorrow<T> {
-    fn eq(&self, other: &Self) -> bool {
-        self.repr == other.repr
-    }
-}
-
-impl<T: ?Sized> Eq for ResourceBorrow<T> {}
-
-impl<T: ?Sized> Hash for ResourceBorrow<T> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.repr.hash(state);
-    }
-}
-
-impl<T: ?Sized> AsRef<[u8]> for ResourceBorrow<T> {
-    fn as_ref(&self) -> &[u8] {
-        &self.repr
-    }
-}
-
-impl<T: ?Sized> AsRef<Bytes> for ResourceBorrow<T> {
-    fn as_ref(&self) -> &Bytes {
-        &self.repr
-    }
-}
-
-impl<T: ?Sized + 'static> Debug for ResourceBorrow<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "borrow<{:?}>", TypeId::of::<T>())
-    }
-}
-
-impl<T: ?Sized> Clone for ResourceBorrow<T> {
-    fn clone(&self) -> Self {
-        Self {
-            repr: self.repr.clone(),
-            _ty: PhantomData,
+        impl<T: ?Sized> From<Vec<u8>> for $name<T> {
+            fn from(repr: Vec<u8>) -> Self {
+                Self::from(Bytes::from(repr))
+            }
         }
-    }
+
+        impl<T: ?Sized> From<$name<T>> for Bytes {
+            fn from($name { repr, .. }: $name<T>) -> Self {
+                repr
+            }
+        }
+
+        impl<T: ?Sized> PartialEq for $name<T> {
+            fn eq(&self, other: &Self) -> bool {
+                self.repr == other.repr
+            }
+        }
+
+        impl<T: ?Sized> Eq for $name<T> {}
+
+        impl<T: ?Sized> Hash for $name<T> {
+            fn hash<H: Hasher>(&self, state: &mut H) {
+                self.repr.hash(state);
+            }
+        }
+
+        impl<T: ?Sized> AsRef<[u8]> for $name<T> {
+            fn as_ref(&self) -> &[u8] {
+                &self.repr
+            }
+        }
+
+        impl<T: ?Sized> AsRef<Bytes> for $name<T> {
+            fn as_ref(&self) -> &Bytes {
+                &self.repr
+            }
+        }
+
+        impl<T: ?Sized> Debug for $name<T> {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, "{}<{}>", $kind, any::type_name::<T>())
+            }
+        }
+
+        impl<T: ?Sized> Clone for $name<T> {
+            fn clone(&self) -> Self {
+                Self::from(self.repr.clone())
+            }
+        }
+
+        impl<T: ?Sized> $name<T> {
+            /// Constructs a new resource handle
+            pub fn new(repr: impl Into<Bytes>) -> Self {
+                Self::from(repr.into())
+            }
+        }
+    };
 }
 
-impl<T: ?Sized> ResourceBorrow<T> {
-    /// Constructs a new borrowed resource handle
-    pub fn new(repr: impl Into<Bytes>) -> Self {
-        Self::from(repr.into())
-    }
-}
+impl_resource!(
+    /// Borrowed resource handle, represented as an opaque byte blob
+    ResourceBorrow,
+    "borrow"
+);
 
-/// Owned resource handle, represented as an opaque byte blob
-#[repr(transparent)]
-pub struct ResourceOwn<T: ?Sized> {
-    repr: Bytes,
-    _ty: PhantomData<T>,
-}
+impl_resource!(
+    /// Owned resource handle, represented as an opaque byte blob
+    ResourceOwn,
+    "own"
+);
 
 impl<T: ?Sized> From<ResourceOwn<T>> for ResourceBorrow<T> {
-    fn from(ResourceOwn { repr, _ty }: ResourceOwn<T>) -> Self {
-        Self {
-            repr,
-            _ty: PhantomData,
-        }
-    }
-}
-
-impl<T: ?Sized> From<Bytes> for ResourceOwn<T> {
-    fn from(repr: Bytes) -> Self {
-        Self {
-            repr,
-            _ty: PhantomData,
-        }
-    }
-}
-
-impl<T: ?Sized> From<Vec<u8>> for ResourceOwn<T> {
-    fn from(repr: Vec<u8>) -> Self {
-        Self {
-            repr: repr.into(),
-            _ty: PhantomData,
-        }
-    }
-}
-
-impl<T: ?Sized> From<ResourceOwn<T>> for Bytes {
     fn from(ResourceOwn { repr, .. }: ResourceOwn<T>) -> Self {
-        repr
-    }
-}
-
-impl<T: ?Sized> PartialEq for ResourceOwn<T> {
-    fn eq(&self, other: &Self) -> bool {
-        self.repr == other.repr
-    }
-}
-
-impl<T: ?Sized> Eq for ResourceOwn<T> {}
-
-impl<T: ?Sized> Hash for ResourceOwn<T> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.repr.hash(state);
-    }
-}
-
-impl<T: ?Sized> AsRef<[u8]> for ResourceOwn<T> {
-    fn as_ref(&self) -> &[u8] {
-        &self.repr
-    }
-}
-
-impl<T: ?Sized> AsRef<Bytes> for ResourceOwn<T> {
-    fn as_ref(&self) -> &Bytes {
-        &self.repr
-    }
-}
-
-impl<T: ?Sized + 'static> Debug for ResourceOwn<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "own<{:?}>", TypeId::of::<T>())
-    }
-}
-
-impl<T: ?Sized> Clone for ResourceOwn<T> {
-    fn clone(&self) -> Self {
-        Self {
-            repr: self.repr.clone(),
-            _ty: PhantomData,
-        }
+        Self::from(repr)
     }
 }
 
 impl<T: ?Sized> ResourceOwn<T> {
-    /// Constructs a new owned resource handle
-    pub fn new(repr: impl Into<Bytes>) -> Self {
-        Self::from(repr.into())
-    }
-
     /// Returns the owned handle as [`ResourceBorrow`]
     pub fn as_borrow(&self) -> ResourceBorrow<T> {
-        ResourceBorrow {
-            repr: self.repr.clone(),
-            _ty: PhantomData,
-        }
+        ResourceBorrow::from(self.repr.clone())
     }
 }
 
@@ -545,16 +471,6 @@ where
 
     fn decode_eof(&mut self, buf: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         self.0.decode_eof(buf)
-    }
-
-    fn framed<IO: AsyncRead + AsyncWrite + Sized>(
-        self,
-        io: IO,
-    ) -> tokio_util::codec::Framed<IO, Self>
-    where
-        Self: Sized,
-    {
-        self.0.framed(io).map_codec(Self)
     }
 }
 
@@ -1352,19 +1268,13 @@ where
     type Error = T::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        let Some(items) = self.list.decode(src)? else {
-            return Ok(None);
-        };
-        let map = collect_map(items)?;
-        Ok(Some(map))
+        let items = self.list.decode(src)?;
+        items.map(collect_map).transpose().map_err(Into::into)
     }
 
     fn decode_eof(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        let Some(items) = self.list.decode_eof(src)? else {
-            return Ok(None);
-        };
-        let map = collect_map(items)?;
-        Ok(Some(map))
+        let items = self.list.decode_eof(src)?;
+        items.map(collect_map).transpose().map_err(Into::into)
     }
 }
 
@@ -1470,17 +1380,13 @@ impl tokio_util::codec::Decoder for ListDecoderU8 {
 
     #[instrument(level = "trace", skip(self), fields(ty = "list<u8>"))]
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        let Some(buf) = self.0.decode(src)? else {
-            return Ok(None);
-        };
-        Ok(Some(buf.into()))
+        let buf = self.0.decode(src)?;
+        Ok(buf.map(Vec::from))
     }
 
     fn decode_eof(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        let Some(buf) = self.0.decode_eof(src)? else {
-            return Ok(None);
-        };
-        Ok(Some(buf.into()))
+        let buf = self.0.decode_eof(src)?;
+        Ok(buf.map(Vec::from))
     }
 }
 
@@ -1771,11 +1677,8 @@ macro_rules! impl_tuple_codec {
                     path.push($i);
                     let res = $cn.poll_transmit(cx, path, dst);
                     path.pop();
-                    match res {
-                        Poll::Ready(Ok(())) => {}
-                        Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
-                        Poll::Pending => ready = false,
-                    }
+                    let res = res?;
+                    ready &= res.is_ready();
                 )+
                 if ready {
                     Poll::Ready(Ok(()))
@@ -1935,13 +1838,11 @@ where
     #[instrument(level = "trace", skip(self, item), fields(ty = "future"))]
     fn encode(&mut self, mut item: F, dst: &mut BytesMut) -> std::io::Result<()> {
         if let Some(item) = (&mut item).now_or_never() {
-            dst.reserve(1);
             dst.put_u8(0x01);
             self.fut = None;
             self.nested.encode(item, dst)?;
             return Ok(());
         }
-        dst.reserve(1);
         dst.put_u8(0x00);
         self.fut = Some(item);
         Ok(())
@@ -2081,7 +1982,7 @@ where
             return Ok(None);
         };
         if let Some(item) = item {
-            return Ok(Some(Box::pin(async { item })));
+            return Ok(Some(Box::pin(future::ready(item))));
         }
         let (dec, rx) = Self::pending();
         *self = dec;
@@ -2102,7 +2003,7 @@ where
             return Ok(None);
         };
         if let Some(item) = item {
-            return Ok(Some(Box::pin(async { item })));
+            return Ok(Some(Box::pin(future::ready(item))));
         }
         let (dec, rx) = Self::pending();
         *self = dec;
@@ -2229,10 +2130,8 @@ where
         let mut ready = Vec::default();
         loop {
             match items.next().now_or_never() {
-                Some(Some(chunk)) if ready.is_empty() => ready = chunk,
                 Some(Some(chunk)) => ready.extend(chunk),
                 Some(None) => {
-                    dst.reserve(1);
                     dst.put_u8(0x01);
                     let nested = encode_list(ready, dst)?;
                     *self = Self {
@@ -2244,7 +2143,6 @@ where
                 None => break,
             }
         }
-        dst.reserve(1);
         dst.put_u8(0x00);
         *self = Self {
             ready,
@@ -2336,7 +2234,6 @@ where
                 None => break,
             }
         }
-        dst.reserve(1);
         dst.put_u8(0x00);
         self.items = Some(items);
         self.ready = ready.into_iter();
@@ -2431,7 +2328,6 @@ where
                 None => break,
             }
         }
-        dst.reserve(1);
         dst.put_u8(0x00);
         self.items = Some(items);
         self.buf = ready;
@@ -2677,10 +2573,9 @@ where
         };
         if let Some(chunk) = chunk {
             self.nested = mem::take(&mut self.dec.get_mut().0.nested);
-            if chunk.is_empty() {
-                return Ok(Some(Box::pin(stream::empty())));
-            }
-            return Ok(Some(Box::pin(stream::iter([chunk]))));
+            return Ok(Some(Box::pin(stream::iter(
+                (!chunk.is_empty()).then_some(chunk),
+            ))));
         }
         let (dec, rx) = Self::pending();
         *self = dec;
@@ -2702,10 +2597,9 @@ where
         };
         if let Some(chunk) = chunk {
             self.nested = mem::take(&mut self.dec.get_mut().0.nested);
-            if chunk.is_empty() {
-                return Ok(Some(Box::pin(stream::empty())));
-            }
-            return Ok(Some(Box::pin(stream::iter([chunk]))));
+            return Ok(Some(Box::pin(stream::iter(
+                (!chunk.is_empty()).then_some(chunk),
+            ))));
         }
         let (dec, rx) = Self::pending();
         *self = dec;
@@ -2811,10 +2705,9 @@ impl tokio_util::codec::Decoder for StreamDecoderBytes {
             return Ok(None);
         };
         if let Some(chunk) = chunk {
-            if chunk.is_empty() {
-                return Ok(Some(Box::pin(stream::empty())));
-            }
-            return Ok(Some(Box::pin(stream::iter([chunk]))));
+            return Ok(Some(Box::pin(stream::iter(
+                (!chunk.is_empty()).then_some(chunk),
+            ))));
         }
         let (dec, rx) = Self::pending();
         *self = dec;
@@ -2832,10 +2725,9 @@ impl tokio_util::codec::Decoder for StreamDecoderBytes<Pin<Box<dyn Stream<Item =
             return Ok(None);
         };
         if let Some(chunk) = chunk {
-            if chunk.is_empty() {
-                return Ok(Some(Box::pin(stream::empty())));
-            }
-            return Ok(Some(Box::pin(stream::iter([chunk]))));
+            return Ok(Some(Box::pin(stream::iter(
+                (!chunk.is_empty()).then_some(chunk),
+            ))));
         }
         let (dec, rx) = Self::pending();
         *self = dec;
