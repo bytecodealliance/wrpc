@@ -34,6 +34,7 @@ wRPC supports both dynamic (based on e.g. runtime WebAssembly component type int
 For static use cases, wRPC provides [WIT] binding generators for:
 - Rust
 - Go
+- JavaScript
 
 wRPC fully supports the unreleased native [WIT] `stream` and `future` data types along with all currently released WIT functionality.
 
@@ -71,7 +72,7 @@ There are 2 different kinds of examples:
 
 ### Requirements
 
-- For Rust components and wRPC applications: `rust` >= 1.93
+- For Rust components and wRPC applications: `rust` >= 1.97
 
 Nix users can run `nix develop` anywhere in the repository to get all dependencies correctly set up
 
@@ -108,9 +109,6 @@ We will use the following two Rust wRPC applications using TCP transport:
     wrpc-wasmtime tcp serve ./target/wasm32-wasip2/release/hello_component_server.wasm
     ```
 
-    - Sample output:
-    > INFO wrpc_wasmtime_cli: serving instance function name="hello"
-
 2. Call the Wasm `hello` server using a native wRPC `hello` client via TCP:
 
     ```sh
@@ -121,9 +119,7 @@ We will use the following two Rust wRPC applications using TCP transport:
     >hello from Rust
 
     - Sample output in the server:
-    > INFO wrpc_wasmtime_cli: serving instance function invocation
-    >
-    > INFO wrpc_wasmtime_cli: successfully served instance function invocation
+    > INFO wrpc_wasmtime_cli: accepted connection addr=[::1]:57238
 
 3. Serve native wRPC `hello` server via TCP:
 
