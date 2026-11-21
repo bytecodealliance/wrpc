@@ -2785,8 +2785,13 @@ impl<T> Receive for StreamDecoderBytes<T> {
                 let Some(mut chunk) = dec.decode(buf)? else {
                     return Ok(None);
                 };
-                while let Some(data) = dec.decode(buf)? {
-                    chunk = [chunk, data].concat().into();
+                if let Some(data) = dec.decode(buf)? {
+                    let mut chunks = BytesMut::from(&chunk[..]);
+                    chunks.extend_from_slice(&data);
+                    while let Some(data) = dec.decode(buf)? {
+                        chunks.extend_from_slice(&data);
+                    }
+                    chunk = chunks.freeze();
                 }
                 Ok((!chunk.is_empty()).then_some(chunk))
             },
