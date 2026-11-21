@@ -1446,19 +1446,19 @@ mod {mod_name} {{
             }}"
                 );
             }
-            let closed: Vec<String> = fields
+            let complete: Vec<String> = fields
                 .iter()
                 .map(|Field { name, .. }| {
                     format!(
-                        "{wrpc_transport}::Transmit::is_closed(&self.{})",
+                        "{wrpc_transport}::Transmit::is_complete(&self.{})",
                         to_rust_ident(name)
                     )
                 })
                 .collect();
-            let closed = if closed.is_empty() {
+            let complete = if complete.is_empty() {
                 "true".to_string()
             } else {
-                closed.join(" && ")
+                complete.join(" && ")
             };
             uwriteln!(
                 self.src,
@@ -1470,8 +1470,8 @@ mod {mod_name} {{
             }}
         }}
 
-        fn is_closed(&self) -> bool {{
-            {closed}
+        fn is_complete(&self) -> bool {{
+            {complete}
         }}
     }}
 
@@ -1525,19 +1525,19 @@ mod {mod_name} {{
                     "Some(({i}, rest)) => {wrpc_transport}::Receive::poll_receive(&mut self.c_{name}, cx, rest, src),"
                 );
             }
-            let closed: Vec<String> = fields
+            let complete: Vec<String> = fields
                 .iter()
                 .map(|Field { name, .. }| {
                     format!(
-                        "{wrpc_transport}::Receive::is_closed(&self.c_{})",
+                        "{wrpc_transport}::Receive::is_complete(&self.c_{})",
                         to_rust_ident(name)
                     )
                 })
                 .collect();
-            let closed = if closed.is_empty() {
+            let complete = if complete.is_empty() {
                 "true".to_string()
             } else {
-                closed.join(" && ")
+                complete.join(" && ")
             };
             uwriteln!(
                 self.src,
@@ -1545,8 +1545,8 @@ mod {mod_name} {{
             }}
         }}
 
-        fn is_closed(&self) -> bool {{
-            {closed}
+        fn is_complete(&self) -> bool {{
+            {complete}
         }}
     }}
 
@@ -1756,7 +1756,7 @@ impl {wrpc_transport}::Receive for {mod_name}::Codec {{
         ::core::task::Poll::Ready(::core::result::Result::Err({wrpc_transport}::error_unknown_path(path)))
     }}
 
-    fn is_closed(&self) -> bool {{
+    fn is_complete(&self) -> bool {{
         true
     }}
 }}
@@ -1773,7 +1773,7 @@ mod {mod_name} {{
             ::core::task::Poll::Ready(::core::result::Result::Ok(()))
         }}
 
-        fn is_closed(&self) -> bool {{
+        fn is_complete(&self) -> bool {{
             true
         }}
     }}
@@ -1946,7 +1946,7 @@ impl {wrpc_transport}::Receive for {mod_name}::Codec {{
         ::core::task::Poll::Ready(::core::result::Result::Err({wrpc_transport}::error_unknown_path(path)))
     }}
 
-    fn is_closed(&self) -> bool {{
+    fn is_complete(&self) -> bool {{
         true
     }}
 }}
@@ -1961,7 +1961,7 @@ mod {mod_name} {{
             ::core::task::Poll::Ready(::core::result::Result::Ok(()))
         }}
 
-        fn is_closed(&self) -> bool {{
+        fn is_complete(&self) -> bool {{
             true
         }}
     }}
@@ -2072,7 +2072,7 @@ mod {mod_name} {{
     {{"#
                 );
                 let mut poll_transmit = String::default();
-                let mut is_closed = String::default();
+                let mut is_complete = String::default();
                 for Case {
                     name: case_name,
                     ty,
@@ -2087,8 +2087,8 @@ mod {mod_name} {{
                         poll_transmit.push_str(&format!(
                             "Some(PayloadEncoder::{case}(enc)) => {wrpc_transport}::Transmit::poll_transmit(enc, cx, path, dst),"
                         ));
-                        is_closed.push_str(&format!(
-                            "Some(PayloadEncoder::{case}(enc)) => {wrpc_transport}::Transmit::is_closed(enc),"
+                        is_complete.push_str(&format!(
+                            "Some(PayloadEncoder::{case}(enc)) => {wrpc_transport}::Transmit::is_complete(enc),"
                         ));
                     }
                 }
@@ -2106,9 +2106,9 @@ mod {mod_name} {{
             }}
         }}
 
-        fn is_closed(&self) -> bool {{
+        fn is_complete(&self) -> bool {{
             match &self.0 {{
-                {is_closed}
+                {is_complete}
                 None => true,
             }}
         }}
@@ -2224,7 +2224,7 @@ mod {mod_name} {{
 "#
                 );
                 let mut poll_receive = String::default();
-                let mut is_closed = String::default();
+                let mut is_complete = String::default();
                 for Case {
                     name: case_name,
                     ty,
@@ -2236,8 +2236,8 @@ mod {mod_name} {{
                         poll_receive.push_str(&format!(
                             "Self::Decoded(Some(PayloadDecoder::{case}(dec))) => {wrpc_transport}::Receive::poll_receive(dec, cx, path, src),"
                         ));
-                        is_closed.push_str(&format!(
-                            "Self::Decoded(Some(PayloadDecoder::{case}(dec))) => {wrpc_transport}::Receive::is_closed(dec),"
+                        is_complete.push_str(&format!(
+                            "Self::Decoded(Some(PayloadDecoder::{case}(dec))) => {wrpc_transport}::Receive::is_complete(dec),"
                         ));
                     }
                 }
@@ -2254,9 +2254,9 @@ mod {mod_name} {{
             }}
         }}
 
-        fn is_closed(&self) -> bool {{
+        fn is_complete(&self) -> bool {{
             match self {{
-                {is_closed}
+                {is_complete}
                 _ => true,
             }}
         }}
@@ -2517,7 +2517,7 @@ impl {wrpc_transport}::Receive for {mod_name}::Codec {{
         ::core::task::Poll::Ready(::core::result::Result::Err({wrpc_transport}::error_unknown_path(path)))
     }}
 
-    fn is_closed(&self) -> bool {{
+    fn is_complete(&self) -> bool {{
         true
     }}
 }}
@@ -2532,7 +2532,7 @@ mod {mod_name} {{
             ::core::task::Poll::Ready(::core::result::Result::Ok(()))
         }}
 
-        fn is_closed(&self) -> bool {{
+        fn is_complete(&self) -> bool {{
             true
         }}
     }}

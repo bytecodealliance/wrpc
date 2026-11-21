@@ -20,7 +20,7 @@ pub fn pack<T>(
     dst: &mut BytesMut,
 ) -> std::io::Result<()> {
     enc.encode(v, dst)?;
-    if !enc.is_closed() {
+    if !enc.is_complete() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::WouldBlock,
             "asynchronous value is pending",
@@ -45,7 +45,7 @@ where
             "buffer is incomplete",
         ));
     };
-    if !dec.is_closed() {
+    if !dec.is_complete() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             "buffer contains pending asynchronous values, which cannot be unpacked",

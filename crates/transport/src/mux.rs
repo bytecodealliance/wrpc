@@ -133,7 +133,7 @@ where
                 }
                 *data = None;
             }
-            if *closed && dec.is_closed() {
+            if *closed && dec.is_complete() {
                 debug!("ingress complete");
                 return Poll::Ready(Ok(()));
             }

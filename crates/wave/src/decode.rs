@@ -95,7 +95,7 @@ impl<V: WasmValue> Receive for ValueDecoder<V> {
         Poll::Ready(Err(error_unknown_path(path)))
     }
 
-    fn is_closed(&self) -> bool {
+    fn is_complete(&self) -> bool {
         true
     }
 }
@@ -162,7 +162,7 @@ impl<V: WasmValue> Receive for TupleDecoder<V> {
         Poll::Ready(Err(error_unknown_path(path)))
     }
 
-    fn is_closed(&self) -> bool {
+    fn is_complete(&self) -> bool {
         true
     }
 }

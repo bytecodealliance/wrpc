@@ -251,9 +251,8 @@ pub trait Transmit {
         dst: &mut BytesMut,
     ) -> Poll<std::io::Result<()>>;
 
-    /// Returns whether the paths of all asynchronous values nested in the last encoded value are
-    /// closed
-    fn is_closed(&self) -> bool;
+    /// Returns whether nothing in the last encoded value is pending
+    fn is_complete(&self) -> bool;
 }
 
 impl<T: Transmit + ?Sized> Transmit for Box<T> {
@@ -266,8 +265,8 @@ impl<T: Transmit + ?Sized> Transmit for Box<T> {
         (**self).poll_transmit(cx, path, dst)
     }
 
-    fn is_closed(&self) -> bool {
-        (**self).is_closed()
+    fn is_complete(&self) -> bool {
+        (**self).is_complete()
     }
 }
 
@@ -305,7 +304,7 @@ impl<T: Transmit> Transmit for BTreeMap<usize, T> {
         }
     }
 
-    fn is_closed(&self) -> bool {
+    fn is_complete(&self) -> bool {
         self.is_empty()
     }
 }
@@ -323,9 +322,8 @@ pub trait Receive {
         src: &mut BytesMut,
     ) -> Poll<std::io::Result<()>>;
 
-    /// Returns whether the paths of all asynchronous values nested in the last decoded value are
-    /// closed
-    fn is_closed(&self) -> bool;
+    /// Returns whether nothing in the last decoded value is pending
+    fn is_complete(&self) -> bool;
 }
 
 impl<T: Receive + ?Sized> Receive for Box<T> {
@@ -338,8 +336,8 @@ impl<T: Receive + ?Sized> Receive for Box<T> {
         (**self).poll_receive(cx, path, src)
     }
 
-    fn is_closed(&self) -> bool {
-        (**self).is_closed()
+    fn is_complete(&self) -> bool {
+        (**self).is_complete()
     }
 }
 
@@ -357,13 +355,13 @@ impl<T: Receive> Receive for BTreeMap<usize, T> {
             return Poll::Ready(Err(error_unknown_path(path)));
         };
         ready!(r.poll_receive(cx, rest, src))?;
-        if r.is_closed() {
+        if r.is_complete() {
             self.remove(i);
         }
         Poll::Ready(Ok(()))
     }
 
-    fn is_closed(&self) -> bool {
+    fn is_complete(&self) -> bool {
         self.is_empty()
     }
 }
@@ -379,7 +377,7 @@ macro_rules! sync_transmit {
             Poll::Ready(Ok(()))
         }
 
-        fn is_closed(&self) -> bool {
+        fn is_complete(&self) -> bool {
             true
         }
     };
@@ -396,7 +394,7 @@ macro_rules! sync_receive {
             Poll::Ready(Err(error_unknown_path(path)))
         }
 
-        fn is_closed(&self) -> bool {
+        fn is_complete(&self) -> bool {
             true
         }
     };
@@ -626,7 +624,7 @@ where
     let mut nested = BTreeMap::default();
     for (i, item) in items.enumerate() {
         enc.encode(item, dst)?;
-        if !enc.is_closed() {
+        if !enc.is_complete() {
             nested.insert(i, mem::take(&mut enc));
         }
     }
@@ -679,8 +677,8 @@ impl<T: Transmit> Transmit for OptionEncoder<T> {
         self.0.poll_transmit(cx, path, dst)
     }
 
-    fn is_closed(&self) -> bool {
-        self.0.is_closed()
+    fn is_complete(&self) -> bool {
+        self.0.is_complete()
     }
 }
 
@@ -709,8 +707,8 @@ impl<T: Receive> Receive for OptionDecoder<T> {
         self.get_mut().poll_receive(cx, path, src)
     }
 
-    fn is_closed(&self) -> bool {
-        self.get_ref().is_closed()
+    fn is_complete(&self) -> bool {
+        self.get_ref().is_complete()
     }
 }
 
@@ -733,8 +731,8 @@ impl<O: Transmit, E: Transmit> Transmit for ResultEncoder<O, E> {
         self.err.poll_transmit(cx, path, dst)
     }
 
-    fn is_closed(&self) -> bool {
-        self.ok.is_closed() && self.err.is_closed()
+    fn is_complete(&self) -> bool {
+        self.ok.is_complete() && self.err.is_complete()
     }
 }
 
@@ -764,16 +762,16 @@ impl<O: Receive, E: Receive> Receive for ResultDecoder<O, E> {
         src: &mut BytesMut,
     ) -> Poll<std::io::Result<()>> {
         let (ok, err) = self.get_mut();
-        if ok.is_closed() {
+        if ok.is_complete() {
             err.poll_receive(cx, path, src)
         } else {
             ok.poll_receive(cx, path, src)
         }
     }
 
-    fn is_closed(&self) -> bool {
+    fn is_complete(&self) -> bool {
         let (ok, err) = self.get_ref();
-        ok.is_closed() && err.is_closed()
+        ok.is_complete() && err.is_complete()
     }
 }
 
@@ -809,8 +807,8 @@ impl<E: Transmit> Transmit for ListEncoder<E> {
         self.nested.poll_transmit(cx, path, dst)
     }
 
-    fn is_closed(&self) -> bool {
-        self.nested.is_closed()
+    fn is_complete(&self) -> bool {
+        self.nested.is_complete()
     }
 }
 
@@ -939,8 +937,8 @@ where
         self.nested.poll_receive(cx, path, src)
     }
 
-    fn is_closed(&self) -> bool {
-        self.nested.is_closed()
+    fn is_complete(&self) -> bool {
+        self.nested.is_complete()
     }
 }
 
@@ -972,7 +970,7 @@ where
             let Some(v) = self.dec.decode(src)? else {
                 return Ok(None);
             };
-            if !self.dec.is_closed() {
+            if !self.dec.is_complete() {
                 self.nested.insert(self.ret.len(), mem::take(&mut self.dec));
             }
             self.ret.push(v);
@@ -1092,8 +1090,8 @@ where
         self.nested.poll_receive(cx, path, src)
     }
 
-    fn is_closed(&self) -> bool {
-        self.nested.is_closed()
+    fn is_complete(&self) -> bool {
+        self.nested.is_complete()
     }
 }
 
@@ -1114,7 +1112,7 @@ where
             let Some(v) = self.dec.decode(src)? else {
                 return Ok(None);
             };
-            if !self.dec.is_closed() {
+            if !self.dec.is_complete() {
                 self.nested.insert(self.ret.len(), mem::take(&mut self.dec));
             }
             self.ret.push(v);
@@ -1323,8 +1321,8 @@ where
         self.list.poll_receive(cx, path, src)
     }
 
-    fn is_closed(&self) -> bool {
-        self.list.is_closed()
+    fn is_complete(&self) -> bool {
+        self.list.is_complete()
     }
 }
 
@@ -1786,9 +1784,9 @@ macro_rules! impl_tuple_codec {
                 }
             }
 
-            fn is_closed(&self) -> bool {
+            fn is_complete(&self) -> bool {
                 let ($($cn),+,) = &self.0;
-                true $(&& $cn.is_closed())+
+                true $(&& $cn.is_complete())+
             }
         }
 
@@ -1828,9 +1826,9 @@ macro_rules! impl_tuple_codec {
                 }
             }
 
-            fn is_closed(&self) -> bool {
+            fn is_complete(&self) -> bool {
                 let ($($cn),+,) = self.get_ref();
-                true $(&& $cn.is_closed())+
+                true $(&& $cn.is_complete())+
             }
         }
 
@@ -1922,8 +1920,8 @@ where
         res
     }
 
-    fn is_closed(&self) -> bool {
-        self.fut.is_none() && self.nested.is_closed()
+    fn is_complete(&self) -> bool {
+        self.fut.is_none() && self.nested.is_complete()
     }
 }
 
@@ -2065,8 +2063,8 @@ where
         Poll::Ready(Ok(()))
     }
 
-    fn is_closed(&self) -> bool {
-        self.closed && self.dec.is_closed()
+    fn is_complete(&self) -> bool {
+        self.closed && self.dec.is_complete()
     }
 }
 
@@ -2214,8 +2212,8 @@ where
         Poll::Ready(Ok(()))
     }
 
-    fn is_closed(&self) -> bool {
-        self.items.is_none() && self.nested.is_closed()
+    fn is_complete(&self) -> bool {
+        self.items.is_none() && self.nested.is_complete()
     }
 }
 
@@ -2316,7 +2314,7 @@ where
         Poll::Ready(Ok(()))
     }
 
-    fn is_closed(&self) -> bool {
+    fn is_complete(&self) -> bool {
         self.items.is_none()
     }
 }
@@ -2405,7 +2403,7 @@ where
         Poll::Pending
     }
 
-    fn is_closed(&self) -> bool {
+    fn is_complete(&self) -> bool {
         self.items.is_none()
     }
 }
@@ -2660,8 +2658,8 @@ where
         )
     }
 
-    fn is_closed(&self) -> bool {
-        self.tx.is_none() && self.nested.is_closed()
+    fn is_complete(&self) -> bool {
+        self.tx.is_none() && self.nested.is_complete()
     }
 }
 
@@ -2798,7 +2796,7 @@ impl<T> Receive for StreamDecoderBytes<T> {
         )
     }
 
-    fn is_closed(&self) -> bool {
+    fn is_complete(&self) -> bool {
         self.tx.is_none()
     }
 }
@@ -2880,8 +2878,8 @@ impl<T> Receive for StreamDecoderRead<T> {
         self.dec.poll_receive(cx, path, src)
     }
 
-    fn is_closed(&self) -> bool {
-        self.dec.is_closed()
+    fn is_complete(&self) -> bool {
+        self.dec.is_complete()
     }
 }
 

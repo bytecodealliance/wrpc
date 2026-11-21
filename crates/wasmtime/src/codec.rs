@@ -83,8 +83,8 @@ impl Transmit for TupleEncoder {
         self.nested.poll_transmit(cx, path, dst)
     }
 
-    fn is_closed(&self) -> bool {
-        self.nested.is_closed()
+    fn is_complete(&self) -> bool {
+        self.nested.is_complete()
     }
 }
 
@@ -155,8 +155,8 @@ impl Transmit for PayloadEncoder {
         }
     }
 
-    fn is_closed(&self) -> bool {
-        self.0.as_ref().is_none_or(Transmit::is_closed)
+    fn is_complete(&self) -> bool {
+        self.0.as_ref().is_none_or(Transmit::is_complete)
     }
 }
 
@@ -419,14 +419,14 @@ impl Receive for TupleDecoder {
             return Poll::Ready(Err(error_unknown_path(path)));
         };
         ready!(r.poll_receive(cx, &path[p.len()..], src))?;
-        if r.is_closed() {
+        if r.is_complete() {
             let p = p.clone();
             self.nested.remove(&p);
         }
         Poll::Ready(Ok(()))
     }
 
-    fn is_closed(&self) -> bool {
+    fn is_complete(&self) -> bool {
         self.nested.is_empty()
     }
 }

@@ -614,8 +614,8 @@ impl RustWrpc {
                     )
                 })
                 .collect::<String>();
-            let transmit_closed = (0..n)
-                .map(|i| format!("{wrpc_transport}::Transmit::is_closed(&self.{i})"))
+            let transmit_complete = (0..n)
+                .map(|i| format!("{wrpc_transport}::Transmit::is_complete(&self.{i})"))
                 .collect::<Vec<_>>()
                 .join(" && ");
             let encode_fields = (0..n)
@@ -640,8 +640,8 @@ impl RustWrpc {
                     )
                 })
                 .collect::<String>();
-            let receive_closed = (0..n)
-                .map(|i| format!("{wrpc_transport}::Receive::is_closed(&self.c{i})"))
+            let receive_complete = (0..n)
+                .map(|i| format!("{wrpc_transport}::Receive::is_complete(&self.c{i})"))
                 .collect::<Vec<_>>()
                 .join(" && ");
             let decode_fields = (0..n)
@@ -697,8 +697,8 @@ mod {module}__ {{
             }}
         }}
 
-        fn is_closed(&self) -> bool {{
-            {transmit_closed}
+        fn is_complete(&self) -> bool {{
+            {transmit_complete}
         }}
     }}
 
@@ -744,8 +744,8 @@ mod {module}__ {{
             }}
         }}
 
-        fn is_closed(&self) -> bool {{
-            {receive_closed}
+        fn is_complete(&self) -> bool {{
+            {receive_complete}
         }}
     }}
 

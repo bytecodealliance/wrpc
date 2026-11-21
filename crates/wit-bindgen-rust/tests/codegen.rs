@@ -192,7 +192,7 @@ mod newtyped_list {
             Poll::Ready(Ok(()))
         }
 
-        fn is_closed(&self) -> bool {
+        fn is_complete(&self) -> bool {
             true
         }
     }
@@ -207,7 +207,7 @@ mod newtyped_list {
             Poll::Ready(Err(error_unknown_path(path)))
         }
 
-        fn is_closed(&self) -> bool {
+        fn is_complete(&self) -> bool {
             true
         }
     }
