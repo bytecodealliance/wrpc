@@ -169,7 +169,7 @@ path = "lib.rs"
 
 [dependencies]
 wit-bindgen-wrpc = {{ {wit_bindgen_dep} }}
-wrpc-transport = {{ {transport_dep}, features = ["net"] }}
+wrpc-transport = {{ {transport_dep} }}
 tokio = {{ version = "1", features = ["macros", "rt-multi-thread", "net", "sync", "io-util", "time"] }}
 futures = {{ version = "0.3", default-features = false, features = ["std", "async-await"] }}
 anyhow = "1"

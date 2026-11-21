@@ -18,7 +18,7 @@ http = [
     "dep:hyper-util",
     "dep:wrpc-http",
 ]
-net = ["dep:tempfile", "wrpc-transport/net"]
+net = ["dep:tempfile"]
 quic = ["dep:quinn"]
 webtransport = ["dep:quinn", "dep:url", "dep:web-transport-quinn"]
 

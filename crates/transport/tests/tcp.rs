@@ -1,5 +1,3 @@
-#![cfg(feature = "net")]
-
 use core::time::Duration;
 
 use anyhow::Context as _;

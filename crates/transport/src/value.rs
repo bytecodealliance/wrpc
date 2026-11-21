@@ -2253,42 +2253,6 @@ impl Encode for Pin<Box<dyn AsyncRead>> {
     type Encoder = StreamEncoderRead<Self>;
 }
 
-impl<T> Encode for std::io::Cursor<T>
-where
-    T: AsRef<[u8]> + Unpin,
-{
-    type Encoder = StreamEncoderRead<Self>;
-}
-
-impl Encode for tokio::io::Empty {
-    type Encoder = StreamEncoderRead<Self>;
-}
-
-#[cfg(feature = "io-std")]
-impl Encode for tokio::io::Stdin {
-    type Encoder = StreamEncoderRead<Self>;
-}
-
-#[cfg(feature = "fs")]
-impl Encode for tokio::fs::File {
-    type Encoder = StreamEncoderRead<Self>;
-}
-
-#[cfg(feature = "net")]
-impl Encode for tokio::net::TcpStream {
-    type Encoder = StreamEncoderRead<Self>;
-}
-
-#[cfg(all(unix, feature = "net"))]
-impl Encode for tokio::net::UnixStream {
-    type Encoder = StreamEncoderRead<Self>;
-}
-
-#[cfg(all(unix, feature = "net"))]
-impl Encode for tokio::net::unix::pipe::Receiver {
-    type Encoder = StreamEncoderRead<Self>;
-}
-
 fn receive_pending_stream<T>(
     rx: mpsc::Receiver<T>,
     end: oneshot::Receiver<()>,

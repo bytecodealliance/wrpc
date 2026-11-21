@@ -5,15 +5,10 @@ use tokio_util::codec::{Decoder, Encoder};
 
 use crate::{Receive, Transmit};
 
-/// Packs `v` into a singular byte buffer `dst` using `enc`.
+/// Encodes `v` into `dst` using `enc`, failing with [`WouldBlock`](std::io::ErrorKind::WouldBlock)
+/// if it contains pending asynchronous values
 ///
-/// All asynchronous values contained in `v` must be resolved, this function returns an error of
-/// kind [`std::io::ErrorKind::WouldBlock`] otherwise. Futures are polled exactly once and streams
-/// are polled until they are pending or finished, so values backed by Tokio I/O types (e.g.
-/// `tokio::fs::File`) are typically pending and require this function to be called within the
-/// context of a Tokio runtime.
-///
-/// If this function returns an error, contents of `dst` are undefined.
+/// The contents of `dst` are unspecified on failure.
 pub fn pack<T>(
     mut enc: impl Encoder<T, Error = std::io::Error> + Transmit,
     v: T,
@@ -29,12 +24,10 @@ pub fn pack<T>(
     Ok(())
 }
 
-/// Unpacks a value from a byte buffer `buf` produced by [`pack`] using `dec`.
+/// Decodes a value [`pack`] encoded from `buf` using `dec`, failing if `buf` is incomplete,
+/// contains pending asynchronous values or trailing bytes
 ///
-/// This function returns an error if `buf` contains pending asynchronous values or if `buf` is
-/// not fully consumed.
-///
-/// If this function returns an error, contents of `buf` are undefined.
+/// The contents of `buf` are unspecified on failure.
 pub fn unpack<D>(mut dec: D, buf: &mut BytesMut) -> std::io::Result<D::Item>
 where
     D: Decoder<Error = std::io::Error> + Receive,
