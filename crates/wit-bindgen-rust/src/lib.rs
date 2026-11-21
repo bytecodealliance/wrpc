@@ -471,18 +471,18 @@ with: {{\n\t{with_name:?}: generate\n}}
         uwrite!(
             self.src,
             r#"
-pub fn handle<S, H>(
-    handler: &H,
+pub fn handle<S__, H__>(
+    handler: &H__,
     instance: &str,
     func: &str,
-    srv: S,
+    srv: S__,
 ) -> ::core::result::Result<
-    impl ::core::future::Future<Output = {anyhow}::Result<()>> + ::core::marker::Send + use<S, H>,
-    S,
+    impl ::core::future::Future<Output = {anyhow}::Result<()>> + ::core::marker::Send + use<S__, H__>,
+    S__,
 >
 where
-    S: {wrpc_transport}::Serve + ::core::marker::Send,
-    H: {bound} + ::core::marker::Send + ::core::marker::Sync + ::core::clone::Clone,
+    S__: {wrpc_transport}::Serve + ::core::marker::Send,
+    H__: {bound} + ::core::marker::Send + ::core::marker::Sync + ::core::clone::Clone,
 {{
     let (i, func) = "#
         );
