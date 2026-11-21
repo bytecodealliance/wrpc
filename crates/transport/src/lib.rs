@@ -115,6 +115,11 @@ pub fn error_data_after_end() -> std::io::Error {
     )
 }
 
+/// Returns the error for data received for a closed receiver
+pub fn error_receiver_closed() -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::BrokenPipe, "receiver closed")
+}
+
 /// Returns the error for a connection, on which receiving a header or a previous invocation failed
 fn error_connection_failed() -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::InvalidInput, "connection failed")
@@ -123,9 +128,4 @@ fn error_connection_failed() -> std::io::Error {
 /// Returns the error for an invocation, whose writer was lost by a previous invocation failing
 fn error_writer_lost() -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::BrokenPipe, "writer lost")
-}
-
-/// Returns the error for data received for a closed receiver
-fn error_receiver_closed() -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::BrokenPipe, "receiver closed")
 }

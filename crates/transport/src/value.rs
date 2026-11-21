@@ -38,7 +38,7 @@ use crate::{
 };
 
 /// Size of chunks read from byte streams
-pub const READ_CHUNK_SIZE: usize = 8192;
+const READ_CHUNK_SIZE: usize = 8192;
 
 /// Number of bytes or elements of a stream, after which encoding it eagerly stops
 const MAX_READY: usize = u32::MAX as _;
