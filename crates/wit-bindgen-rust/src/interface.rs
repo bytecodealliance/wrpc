@@ -1392,38 +1392,20 @@ impl {wrpc_transport}::Decode for self::{name}
 }}
 
 mod {mod_name} {{
+    #[derive(::core::default::Default)]
     pub struct Encoder
     {{",
             );
 
-            if !fields.is_empty() {
-                for Field { name, ty, .. } in fields {
-                    let name = to_rust_ident(name);
-                    uwrite!(self.src, "{name}: <");
-                    self.print_encoded_ty(ty, true);
-                    uwriteln!(self.src, " as {wrpc_transport}::Encode>::Encoder,");
-                }
+            for Field { name, ty, .. } in fields {
+                let name = to_rust_ident(name);
+                uwrite!(self.src, "{name}: <");
+                self.print_encoded_ty(ty, true);
+                uwriteln!(self.src, " as {wrpc_transport}::Encode>::Encoder,");
             }
             uwriteln!(
                 self.src,
                 r"}}
-    #[automatically_derived]
-    impl ::core::default::Default for Encoder
-    {{
-        fn default() -> Self {{
-            Self{{"
-            );
-            if !fields.is_empty() {
-                for Field { name, .. } in fields {
-                    let name = to_rust_ident(name);
-                    uwriteln!(self.src, "{name}: ::core::default::Default::default(),");
-                }
-            }
-            uwriteln!(
-                self.src,
-                r"}}
-        }}
-    }}
 
     #[automatically_derived]
     impl {wrpc_transport}::Transmit for Encoder
@@ -1439,14 +1421,11 @@ mod {mod_name} {{
             path.push({i});
             let res = {wrpc_transport}::Transmit::poll_transmit(&mut self.{name}, cx, path, dst);
             path.pop();
-            match res {{
-                ::core::task::Poll::Ready(Ok(())) => {{}}
-                ::core::task::Poll::Ready(Err(err)) => return ::core::task::Poll::Ready(Err(err)),
-                ::core::task::Poll::Pending => ready = false,
-            }}"
+            let res = res?;
+            ready &= res.is_ready();"
                 );
             }
-            let complete: Vec<String> = fields
+            let complete = fields
                 .iter()
                 .map(|Field { name, .. }| {
                     format!(
@@ -1454,12 +1433,8 @@ mod {mod_name} {{
                         to_rust_ident(name)
                     )
                 })
-                .collect();
-            let complete = if complete.is_empty() {
-                "true".to_string()
-            } else {
-                complete.join(" && ")
-            };
+                .collect::<Vec<_>>()
+                .join(" && ");
             uwriteln!(
                 self.src,
                 r"
@@ -1475,42 +1450,23 @@ mod {mod_name} {{
         }}
     }}
 
+    #[derive(::core::default::Default)]
     pub struct Decoder
     {{"
             );
 
-            if !fields.is_empty() {
-                for Field { name, ty, .. } in fields {
-                    let name = to_rust_ident(name);
-                    uwrite!(self.src, "c_{name}: <");
-                    self.print_decoded_ty(ty, true);
-                    uwriteln!(self.src, " as {wrpc_transport}::Decode>::Decoder,");
-                    uwrite!(self.src, "v_{name}: ::core::option::Option<");
-                    self.print_decoded_ty(ty, true);
-                    uwriteln!(self.src, ">,");
-                }
+            for Field { name, ty, .. } in fields {
+                let name = to_rust_ident(name);
+                uwrite!(self.src, "c_{name}: <");
+                self.print_decoded_ty(ty, true);
+                uwriteln!(self.src, " as {wrpc_transport}::Decode>::Decoder,");
+                uwrite!(self.src, "v_{name}: ::core::option::Option<");
+                self.print_decoded_ty(ty, true);
+                uwriteln!(self.src, ">,");
             }
             uwriteln!(
                 self.src,
                 r"}}
-    #[automatically_derived]
-    impl ::core::default::Default for Decoder
-    {{
-        fn default() -> Self {{
-            Self{{"
-            );
-            if !fields.is_empty() {
-                for Field { name, .. } in fields {
-                    let name = to_rust_ident(name);
-                    uwriteln!(self.src, "c_{name}: ::core::default::Default::default(),");
-                    uwriteln!(self.src, "v_{name}: ::core::default::Default::default(),");
-                }
-            }
-            uwriteln!(
-                self.src,
-                r"}}
-        }}
-    }}
 
     #[automatically_derived]
     impl {wrpc_transport}::Receive for Decoder
@@ -1525,7 +1481,7 @@ mod {mod_name} {{
                     "Some(({i}, rest)) => {wrpc_transport}::Receive::poll_receive(&mut self.c_{name}, cx, rest, src),"
                 );
             }
-            let complete: Vec<String> = fields
+            let complete = fields
                 .iter()
                 .map(|Field { name, .. }| {
                     format!(
@@ -1533,12 +1489,8 @@ mod {mod_name} {{
                         to_rust_ident(name)
                     )
                 })
-                .collect();
-            let complete = if complete.is_empty() {
-                "true".to_string()
-            } else {
-                complete.join(" && ")
-            };
+                .collect::<Vec<_>>()
+                .join(" && ");
             uwriteln!(
                 self.src,
                 r#"_ => ::core::task::Poll::Ready(::core::result::Result::Err({wrpc_transport}::error_unknown_path(path))),
@@ -1595,32 +1547,29 @@ mod {mod_name} {{
     {{
         type Error = ::std::io::Error;
 
-        #[allow(unused_mut)]
-        fn encode(&mut self, item: {name}, mut dst: &mut {bytes}::BytesMut) -> ::std::io::Result<()> {{"#
+        fn encode(&mut self, item: {name}, dst: &mut {bytes}::BytesMut) -> ::std::io::Result<()> {{"#
                 );
-                if !fields.is_empty() {
-                    self.push_str("let ");
-                    self.push_str(name.trim_start_matches('&'));
-                    self.push_str("{\n");
-                    for Field { name, .. } in fields {
-                        let name = to_rust_ident(name);
-                        uwriteln!(self.src, "{name}: f_{name},");
-                    }
-                    self.push_str("} = item;\n");
+                self.push_str("let ");
+                self.push_str(name.trim_start_matches('&'));
+                self.push_str("{\n");
+                for Field { name, .. } in fields {
+                    let name = to_rust_ident(name);
+                    uwriteln!(self.src, "{name}: f_{name},");
+                }
+                self.push_str("} = item;\n");
 
-                    for Field { name, ty, .. } in fields {
-                        let name = to_rust_ident(name);
-                        let v = self.encoded_value(ty, &format!("f_{name}"), by_ref, true);
-                        uwriteln!(self.src, "self.{name}.encode({v}, &mut dst)?;");
-                    }
-                    uwriteln!(
-                        self.src,
-                        r"
+                for Field { name, ty, .. } in fields {
+                    let name = to_rust_ident(name);
+                    let v = self.encoded_value(ty, &format!("f_{name}"), by_ref, true);
+                    uwriteln!(self.src, "self.{name}.encode({v}, dst)?;");
+                }
+                uwriteln!(
+                    self.src,
+                    r"
         Ok(())
     }}
 }}",
-                    );
-                }
+                );
             }
             uwriteln!(self.src, "}}");
 
@@ -2059,14 +2008,8 @@ impl {wrpc_transport}::Decode for self::{name}
 }}
 
 mod {mod_name} {{
+    #[derive(::core::default::Default)]
     pub struct Encoder(::core::option::Option<PayloadEncoder>);
-
-    #[automatically_derived]
-    impl ::core::default::Default for Encoder {{
-        fn default() -> Self {{
-            Self(None)
-        }}
-    }}
 
     pub enum PayloadEncoder
     {{"#
@@ -2269,13 +2212,11 @@ mod {mod_name} {{
         type Error = ::std::io::Error;
 
         fn decode(&mut self, src: &mut {bytes}::BytesMut) -> ::core::result::Result<::core::option::Option<Self::Item>, Self::Error> {{
-            let state = if let Self::Decoding(state) = self {{
-                state
-            }} else {{
+            if let Self::Decoded(..) = self {{
                 let Some(disc) = {wasm_tokio}::Leb128DecoderU32.decode(src)? else {{
                     return Ok(None)
                 }};
-                match disc {{"#
+                let dec = match disc {{"#
                 );
                 for (
                     i,
@@ -2291,13 +2232,7 @@ mod {mod_name} {{
                         uwrite!(
                             self.src,
                             r"
-                    {i} => {{
-                        *self = Self::Decoding(PayloadDecoder::{case}(::core::default::Default::default()));
-                        let Self::Decoding(state) = self else {{
-                            unreachable!()
-                        }};
-                        state
-                    }},"
+                    {i} => PayloadDecoder::{case}(::core::default::Default::default()),"
                         );
                     } else {
                         uwrite!(
@@ -2314,9 +2249,12 @@ mod {mod_name} {{
                     self.src,
                     r#"
                     _ => return Err(::std::io::Error::new(::std::io::ErrorKind::InvalidData, format!("unknown variant discriminant `{{disc}}`"))),
-                }}
+                }};
+                *self = Self::Decoding(dec);
+            }}
+            let Self::Decoding(state) = self else {{
+                unreachable!()
             }};
-
             let item = match state {{"#
                 );
                 for Case {
