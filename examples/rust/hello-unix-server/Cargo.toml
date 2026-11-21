@@ -19,7 +19,7 @@ clap = { workspace = true, features = [
     "suggestions",
     "usage",
 ] }
-tokio = { workspace = true, features = ["fs", "rt-multi-thread", "net", "signal"] }
+tokio = { workspace = true, features = ["macros", "fs", "rt-multi-thread", "net", "signal"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["ansi", "fmt"] }
 wit-bindgen-wrpc = { workspace = true }

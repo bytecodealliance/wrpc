@@ -20,7 +20,7 @@ clap = { workspace = true, features = [
     "suggestions",
     "usage",
 ] }
-tokio = { workspace = true, features = ["net", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread"] }
 tracing-subscriber = { workspace = true, features = [
     "ansi",
     "env-filter",

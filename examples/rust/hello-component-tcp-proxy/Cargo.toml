@@ -22,7 +22,7 @@ clap = { workspace = true, features = [
     "suggestions",
     "usage",
 ] }
-tokio = { workspace = true, features = ["rt"] }
+tokio = { workspace = true, features = ["macros", "rt"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["ansi", "fmt"] }
 wasi = { workspace = true, features = ["std"] }

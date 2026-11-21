@@ -21,7 +21,7 @@ clap = { workspace = true, features = [
     "usage",
 ] }
 futures = { workspace = true }
-tokio = { workspace = true, features = ["net", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread"] }
 tokio-stream = { workspace = true, features = ["time"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = [
