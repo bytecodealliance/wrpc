@@ -2078,7 +2078,7 @@ where
     type Encoder = StreamEncoder<T, Self>;
 }
 
-/// Encoder for `stream<list<u8>>` of type `T`, whose chunks are transmitted on its path
+/// Encoder for `stream<u8>` of type `T`, whose chunks are transmitted on its path
 pub struct StreamEncoderBytes<T> {
     items: Option<T>,
     /// Chunks read, but not transmitted yet
@@ -2165,7 +2165,7 @@ impl Encode for Pin<Box<dyn Stream<Item = Bytes>>> {
     type Encoder = StreamEncoderBytes<Self>;
 }
 
-/// Encoder for `stream<list<u8>>` with [`AsyncRead`] support of type `T`, whose chunks are
+/// Encoder for `stream<u8>` with [`AsyncRead`] support of type `T`, whose chunks are
 /// transmitted on its path
 pub struct StreamEncoderRead<T> {
     items: Option<T>,
@@ -2497,7 +2497,7 @@ where
     type ListDecoder = ListDecoder<Self::Decoder>;
 }
 
-/// Decoder for `stream<list<u8>>` of type `T`, whose chunks are received on its path
+/// Decoder for `stream<u8>` of type `T`, whose chunks are received on its path
 pub struct StreamDecoderBytes<T = Pin<Box<dyn Stream<Item = Bytes> + Send>>> {
     dec: OptionDecoder<CoreVecDecoderBytes>,
     /// Sender of the chunks and of the end of a pending stream, until it is closed
@@ -2619,7 +2619,7 @@ impl Decode for Pin<Box<dyn Stream<Item = Bytes>>> {
     type ListDecoder = ListDecoder<Self::Decoder>;
 }
 
-/// Decoder for `stream<list<u8>>` with [`AsyncRead`] support of type `T`
+/// Decoder for `stream<u8>` with [`AsyncRead`] support of type `T`
 pub struct StreamDecoderRead<T = Pin<Box<dyn AsyncRead + Send>>> {
     dec: StreamDecoderBytes,
     _items: PhantomData<fn() -> T>,
