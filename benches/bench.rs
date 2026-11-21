@@ -7,9 +7,14 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
 use anyhow::{Context as _, anyhow, ensure};
+use bytes::Bytes;
 use criterion::measurement::WallTime;
 use criterion::{BenchmarkGroup, Criterion};
+use http::request::Parts;
+use http_body_util::BodyExt;
+use http_body_util::combinators::UnsyncBoxBody;
 use hyper::body::Incoming;
+use hyper::client::conn::http2::SendRequest;
 use hyper_util::client::legacy::ResponseFuture;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
@@ -335,8 +340,9 @@ impl Tasks {
 
 /// Client invoking functions with HTTP/1 requests sent by a pooling client
 struct Http1<'a> {
-    clt: &'a hyper_util::client::legacy::Client<HttpConnector, Body>,
-    parts: http::request::Parts,
+    clt:
+        &'a hyper_util::client::legacy::Client<HttpConnector, UnsyncBoxBody<Bytes, std::io::Error>>,
+    parts: Parts,
 }
 
 impl<'a, E: Transmit + Send + 'static> Invoke<E> for Http1<'a> {
@@ -356,7 +362,7 @@ impl<'a, E: Transmit + Send + 'static> Invoke<E> for Http1<'a> {
         let Self { clt, parts } = self;
         Client {
             parts,
-            send: |req: http::Request<Body<E>>| clt.request(req.map(Body::boxed)),
+            send: |req: http::Request<Body<E>>| clt.request(req.map(BodyExt::boxed_unsync)),
         }
         .invoke(codec, instance, func, params)
     }
@@ -364,8 +370,8 @@ impl<'a, E: Transmit + Send + 'static> Invoke<E> for Http1<'a> {
 
 /// Client invoking functions with HTTP/2 requests sent on a connection
 struct Http2<'a> {
-    sender: &'a mut hyper::client::conn::http2::SendRequest<Body>,
-    parts: http::request::Parts,
+    sender: &'a mut SendRequest<UnsyncBoxBody<Bytes, std::io::Error>>,
+    parts: Parts,
 }
 
 impl<'a, E: Transmit + Send + 'static> Invoke<E> for Http2<'a> {
@@ -392,7 +398,7 @@ impl<'a, E: Transmit + Send + 'static> Invoke<E> for Http2<'a> {
             send: |req: http::Request<Body<E>>| {
                 Box::pin(async move {
                     sender.ready().await?;
-                    sender.send_request(req.map(Body::boxed)).await
+                    sender.send_request(req.map(BodyExt::boxed_unsync)).await
                 }) as Pin<Box<dyn Future<Output = _> + Send>>
             },
         }

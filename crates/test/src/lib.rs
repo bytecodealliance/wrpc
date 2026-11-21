@@ -605,7 +605,9 @@ where
 #[cfg(feature = "http")]
 pub async fn assert_http_invocation<B, E, Fut>(
     parts: http::request::Parts,
-    send: impl FnOnce(http::Request<wrpc_http::Body>) -> Fut,
+    send: impl FnOnce(
+        http::Request<http_body_util::combinators::UnsyncBoxBody<Bytes, std::io::Error>>,
+    ) -> Fut,
 ) -> anyhow::Result<()>
 where
     B: hyper::body::Body<Data = Bytes, Error: Into<Box<dyn core::error::Error + Send + Sync>>>
@@ -623,17 +625,16 @@ where
         "bar",
         (Bytes::from_static(b"testbar"), s),
     )?;
-    let res = send(req.map(wrpc_http::Body::boxed));
+    let res = send(req.map(http_body_util::BodyExt::boxed_unsync));
     let mut rx = FramedRead::new(wrpc_http::response(res), FrameDecoder::default());
     let ((results, s), io) = receive(<FooBar as Decode>::Decoder::default(), &mut rx)
         .await
         .context("failed to receive `foo.bar` results")?;
     assert_eq!(results, b"foo".as_slice());
-    let (buf, ()) = try_join!(
-        async { anyhow::Ok(s.collect::<Vec<_>>().await.concat()) },
-        async { io.await.context("`foo.bar` invocation failed") },
-    )?;
-    assert_eq!(buf, b"server->client");
+    let (buf, ()) = try_join!(async { anyhow::Ok(s.collect::<Vec<_>>().await) }, async {
+        io.await.context("`foo.bar` invocation failed")
+    },)?;
+    assert_eq!(buf.concat(), b"server->client");
     read_eof(&mut rx).await
 }
 
@@ -642,15 +643,16 @@ where
 pub async fn serve_http_invocation(
     Header { instance, name }: Header,
     rx: FramedRead<wrpc_http::BodyReader<hyper::body::Incoming>, FrameDecoder>,
-) -> anyhow::Result<http::Response<wrpc_http::Body>> {
+) -> anyhow::Result<http::Response<http_body_util::combinators::UnsyncBoxBody<Bytes, std::io::Error>>>
+{
     ensure!(
         instance == "foo" && name == "bar",
         "unexpected invocation of `{instance}.{name}`",
     );
     serve::<FooBar, FooBar, _, _, _>(wrpc_http::Server(rx), async |(testbar, s)| {
         assert_eq!(testbar, b"testbar".as_slice());
-        let buf = s.collect::<Vec<_>>().await.concat();
-        assert_eq!(buf, b"client->server");
+        let buf = s.collect::<Vec<_>>().await;
+        assert_eq!(buf.concat(), b"client->server");
         let results: BoxStream<'static, Bytes> =
             Box::pin(stream::iter([Bytes::from_static(b"server->client")]));
         Ok((Bytes::from_static(b"foo"), results))

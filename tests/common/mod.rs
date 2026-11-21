@@ -7,6 +7,8 @@ use futures::future::BoxFuture;
 use futures::{StreamExt as _, future, stream};
 use http::request::Parts;
 use http::{Request, Response};
+use http_body_util::BodyExt;
+use http_body_util::combinators::UnsyncBoxBody;
 use hyper::body::Incoming;
 use hyper::client::conn::http2::SendRequest;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt as _};
@@ -43,7 +45,7 @@ where
     }
 }
 
-impl Connection for (SendRequest<Body>, Parts) {
+impl Connection for (SendRequest<UnsyncBoxBody<Bytes, std::io::Error>>, Parts) {
     type Client<'a, E: Transmit + Send + 'static>
         = Client<
         Box<
@@ -62,7 +64,7 @@ impl Connection for (SendRequest<Body>, Parts) {
             send: Box::new(|req| {
                 Box::pin(async move {
                     sender.ready().await?;
-                    sender.send_request(req.map(Body::boxed)).await
+                    sender.send_request(req.map(BodyExt::boxed_unsync)).await
                 })
             }),
         }

@@ -91,10 +91,15 @@ async fn unread_params() -> anyhow::Result<()> {
             sender.ready().await?;
             let clt = Client {
                 parts,
-                send: |req: http::Request<Body<_>>| sender.send_request(req.map(Body::boxed)),
+                send: |req: http::Request<Body<_>>| {
+                    sender.send_request(req.map(BodyExt::boxed_unsync))
+                },
             };
-            let ((), io) = invoke::<_, (), _>(clt, "foo", "bar", (s,)).await?;
-            io.await
+            let res = async {
+                let ((), io) = invoke::<_, (), _>(clt, "foo", "bar", (s,)).await?;
+                io.await
+            };
+            res.await
                 .expect_err("unread parameters must fail the invocation");
             Ok(())
         },
@@ -167,10 +172,8 @@ async fn response_parts() -> anyhow::Result<()> {
             Ok(res)
         });
         let rx = FramedRead::new(rx, FrameDecoder::default());
-        let err = receive(<(Bytes,) as Decode>::Decoder::default(), rx)
-            .await
-            .err()
-            .context("receiving results should fail")?;
+        let res = receive(<(Bytes,) as Decode>::Decoder::default(), rx).await;
+        let err = res.err().context("receiving results should fail")?;
         assert_eq!(err.to_string(), "status `418 I'm a teapot`");
         Ok(())
     })

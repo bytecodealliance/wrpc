@@ -867,11 +867,14 @@ async fn rust_webtransport_stopped_mid_params() -> anyhow::Result<()> {
 async fn rust_http_bindgen_sync() -> anyhow::Result<()> {
     use std::sync::OnceLock;
 
+    use http::request::Parts;
+    use http_body_util::combinators::UnsyncBoxBody;
     use hyper::client::conn::http2::SendRequest;
     use hyper_util::rt::TokioIo;
     use wrpc_http::Server;
 
-    let conn: Arc<OnceLock<(SendRequest<wrpc_http::Body>, http::request::Parts)>> = Arc::default();
+    let conn: Arc<OnceLock<(SendRequest<UnsyncBoxBody<Bytes, std::io::Error>>, Parts)>> =
+        Arc::default();
     let handler = sync_bindgen::Handler {
         counts: Arc::default(),
         count: {
@@ -949,6 +952,7 @@ async fn rust_http_bindgen_async() -> anyhow::Result<()> {
 #[cfg(feature = "http")]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_http_dynamic() -> anyhow::Result<()> {
+    use http_body_util::BodyExt;
     use hyper_util::rt::TokioIo;
     use wrpc_http::{Body, Client, Server};
 
@@ -988,7 +992,9 @@ async fn rust_http_dynamic() -> anyhow::Result<()> {
             let res = invoke_blocking::<(String,), (String,), _>(
                 Client {
                     parts: parts.clone(),
-                    send: |req: http::Request<Body<_>>| sender.send_request(req.map(Body::boxed)),
+                    send: |req: http::Request<Body<_>>| {
+                        sender.send_request(req.map(BodyExt::boxed_unsync))
+                    },
                 },
                 "test",
                 "reset",
@@ -1000,7 +1006,9 @@ async fn rust_http_dynamic() -> anyhow::Result<()> {
             let res = invoke_blocking::<SyncValues, SyncValues, _>(
                 Client {
                     parts: parts.clone(),
-                    send: |req: http::Request<Body<_>>| sender.send_request(req.map(Body::boxed)),
+                    send: |req: http::Request<Body<_>>| {
+                        sender.send_request(req.map(BodyExt::boxed_unsync))
+                    },
                 },
                 "test",
                 "sync",
@@ -1012,7 +1020,9 @@ async fn rust_http_dynamic() -> anyhow::Result<()> {
             let (res, io) = invoke::<AsyncValues, AsyncValues, _>(
                 Client {
                     parts,
-                    send: |req: http::Request<Body<_>>| sender.send_request(req.map(Body::boxed)),
+                    send: |req: http::Request<Body<_>>| {
+                        sender.send_request(req.map(BodyExt::boxed_unsync))
+                    },
                 },
                 "test",
                 "async",

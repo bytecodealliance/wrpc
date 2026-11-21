@@ -12,8 +12,8 @@ use futures::{Stream, StreamExt as _, TryStreamExt as _};
 use http::HeaderValue;
 use http::header::CONTENT_TYPE;
 use http_body::{Frame, SizeHint};
-use http_body_util::combinators::MapErr;
-use http_body_util::{BodyDataStream, BodyExt as _};
+use http_body_util::combinators::{MapErr, UnsyncBoxBody};
+use http_body_util::{BodyDataStream, BodyExt};
 use tokio::io::{AsyncRead, ReadBuf};
 use tokio_util::codec::{Decoder, Encoder, FramedRead};
 use tokio_util::io::StreamReader;
@@ -25,6 +25,9 @@ use wrpc_transport::{
 /// Media type of wRPC request and response bodies
 pub const MEDIA_TYPE: &str = "application/vnd.bytecodealliance.wrpc";
 
+/// Size of the buffered data, at which a [Body] stops transmitting until the data is taken
+const MAX_BUFFERED: usize = 1 << 16;
+
 /// Reader of the data of a request or response body
 pub type BodyReader<T> = StreamReader<
     BodyDataStream<MapErr<T, fn(<T as http_body::Body>::Error) -> std::io::Error>>,
@@ -33,7 +36,7 @@ pub type BodyReader<T> = StreamReader<
 
 /// Body transmitting a value, the parameters of a [request] or the results of a [respond]
 /// response, and the asynchronous values nested in it, using `E`
-pub struct Body<E = BoxTransmit> {
+pub struct Body<E> {
     enc: E,
     path: Vec<usize>,
     buf: BytesMut,
@@ -70,51 +73,6 @@ impl<E> Body<E> {
             sent: SentSignal::default(),
         })
     }
-
-    fn map<T>(self, f: impl FnOnce(E) -> T) -> Body<T> {
-        let Self {
-            enc,
-            path,
-            buf,
-            sent,
-        } = self;
-        Body {
-            enc: f(enc),
-            path,
-            buf,
-            sent,
-        }
-    }
-}
-
-impl<E: Transmit + Send + 'static> Body<E> {
-    /// Returns the body with its encoder boxed, such as for sending it using an HTTP client
-    /// typed by its body
-    pub fn boxed(self) -> Body {
-        self.map(|enc| BoxTransmit(Box::new(enc)))
-    }
-}
-
-/// Boxed [`Send`] encoder of a [Body], see [`Body::boxed`]
-///
-/// Unlike `Box<dyn Transmit + Send>`, its type has no lifetime, which avoids
-/// [rust#96865](https://github.com/rust-lang/rust/issues/96865) errors in `Send` futures holding
-/// it.
-pub struct BoxTransmit(Box<dyn Transmit + Send>);
-
-impl Transmit for BoxTransmit {
-    fn poll_transmit(
-        &mut self,
-        cx: &mut Context<'_>,
-        path: &mut Vec<usize>,
-        dst: &mut BytesMut,
-    ) -> Poll<std::io::Result<()>> {
-        self.0.poll_transmit(cx, path, dst)
-    }
-
-    fn is_closed(&self) -> bool {
-        self.0.is_closed()
-    }
 }
 
 impl<E: Transmit> http_body::Body for Body<E> {
@@ -136,12 +94,12 @@ impl<E: Transmit> http_body::Body for Body<E> {
             && tx.poll_canceled(cx).is_ready()
         {
             return Poll::Ready(Some(Err(std::io::Error::new(
-                std::io::ErrorKind::Interrupted,
+                std::io::ErrorKind::BrokenPipe,
                 "invocation dropped",
             ))));
         }
         let mut closed = enc.is_closed();
-        while !closed {
+        while !closed && buf.len() < MAX_BUFFERED {
             let n = buf.len();
             match enc.poll_transmit(cx, path, buf) {
                 Poll::Ready(Ok(())) => closed = true,
@@ -383,14 +341,6 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let Self { sent, rx, rest } = self.get_mut();
-        if let Some(fut) = sent
-            && let Poll::Ready(res) = Pin::new(fut).poll(cx)
-        {
-            res.map_err(|_| {
-                std::io::Error::new(std::io::ErrorKind::BrokenPipe, "request body was not sent")
-            })?;
-            *sent = None;
-        }
         if let Some(fut) = rx
             && let Poll::Ready(res) = Pin::new(fut).poll(cx)
         {
@@ -399,6 +349,14 @@ where
         }
         if let Poll::Ready(Err(err)) = poll_eof(cx, rest) {
             return Poll::Ready(Err(err));
+        }
+        if let Some(fut) = sent
+            && let Poll::Ready(res) = Pin::new(fut).poll(cx)
+        {
+            res.map_err(|_| {
+                std::io::Error::new(std::io::ErrorKind::BrokenPipe, "request body was not sent")
+            })?;
+            *sent = None;
         }
         if sent.is_some() || rx.is_some() || rest.is_some() {
             return Poll::Pending;
@@ -462,7 +420,7 @@ where
         + Send
         + 'static,
 {
-    type Output = http::Response<Body>;
+    type Output = http::Response<UnsyncBoxBody<Bytes, std::io::Error>>;
 
     fn serve<E, D, R, Fut, Err>(
         self,
@@ -479,7 +437,7 @@ where
         let res = Server::serve(self, codec, async move |params| f(params).await);
         async move {
             let res = res.await?;
-            Ok(res.map(Body::boxed))
+            Ok(res.map(BodyExt::boxed_unsync))
         }
     }
 }

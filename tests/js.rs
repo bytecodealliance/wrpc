@@ -234,7 +234,10 @@ async fn js_http_client() -> anyhow::Result<()> {
         .context("failed to start TCP listener")?;
     let addr = lis.local_addr().context("failed to get server address")?;
     serve_echo(
-        async || lis.accept().await.map(|(stream, ..)| stream),
+        async || {
+            let (stream, ..) = lis.accept().await?;
+            std::io::Result::Ok(stream)
+        },
         |stream| {
             wrpc_test::serve_http1(stream, |_, Header { instance, name }, rx| async move {
                 let Ok(fut) = echo::handle(&echo::Echo, &instance, &name, Server(rx)) else {
