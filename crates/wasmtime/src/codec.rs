@@ -38,16 +38,13 @@ pub const DEFAULT_MAX_LEN: u32 = 1 << 24;
 /// Pending asynchronous values are transmitted using [`Transmit::poll_transmit`].
 pub struct TupleEncoder {
     tys: Arc<[Type]>,
-    nested: BTreeMap<usize, Box<dyn Transmit + Send>>,
+    nested: Option<Box<dyn Transmit + Send>>,
 }
 
 impl TupleEncoder {
     #[must_use]
     pub fn new(tys: Arc<[Type]>) -> Self {
-        Self {
-            tys,
-            nested: BTreeMap::default(),
-        }
+        Self { tys, nested: None }
     }
 }
 
@@ -61,14 +58,8 @@ impl Encoder<Vec<Val>> for TupleEncoder {
                 "value count mismatch",
             ));
         }
-        for (i, (v, ty)) in zip(vs, &*self.tys).enumerate() {
-            let t = encode_value(ty, v, dst)
-                .with_context(|| format!("failed to encode value {i}"))
-                .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
-            if let Some(t) = t {
-                self.nested.insert(i, t);
-            }
-        }
+        self.nested = encode_seq(&*self.tys, vs, dst)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
         Ok(())
     }
 }
@@ -80,11 +71,14 @@ impl Transmit for TupleEncoder {
         path: &mut Vec<usize>,
         dst: &mut BytesMut,
     ) -> Poll<std::io::Result<()>> {
-        self.nested.poll_transmit(cx, path, dst)
+        match &mut self.nested {
+            Some(nested) => nested.poll_transmit(cx, path, dst),
+            None => Poll::Ready(Ok(())),
+        }
     }
 
     fn is_complete(&self) -> bool {
-        self.nested.is_complete()
+        self.nested.as_ref().is_none_or(Transmit::is_complete)
     }
 }
 
