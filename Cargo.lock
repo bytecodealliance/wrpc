@@ -4542,19 +4542,11 @@ dependencies = [
  "wit-bindgen-wrpc-js",
  "wit-bindgen-wrpc-rust",
  "wit-bindgen-wrpc-test",
- "wrpc-cli",
  "wrpc-http",
  "wrpc-test",
  "wrpc-transport",
  "wrpc-wasmtime",
  "wrpc-wasmtime-cli",
-]
-
-[[package]]
-name = "wrpc-cli"
-version = "0.9.0"
-dependencies = [
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -4687,6 +4679,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "url",
  "uuid",
  "wasi-preview1-component-adapter-provider",
@@ -4696,7 +4689,6 @@ dependencies = [
  "wasmtime-wasi",
  "wasmtime-wasi-http",
  "wit-component 0.263.0",
- "wrpc-cli",
  "wrpc-transport",
  "wrpc-wasmtime",
 ]

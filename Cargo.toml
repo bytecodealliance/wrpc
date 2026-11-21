@@ -84,7 +84,6 @@ wit-bindgen-wrpc-go = { workspace = true, optional = true }
 wit-bindgen-wrpc-js = { workspace = true, optional = true }
 wit-bindgen-wrpc-rust = { workspace = true, optional = true }
 wit-bindgen-wrpc-test = { workspace = true, optional = true }
-wrpc-cli = { workspace = true, optional = true }
 wrpc-http = { workspace = true, optional = true }
 wrpc-transport = { workspace = true }
 wrpc-wasmtime = { workspace = true, optional = true }
@@ -197,7 +196,6 @@ wit-bindgen-wrpc-rust-macro = { version = "0.13", default-features = false, path
 wit-bindgen-wrpc-test = { version = "0.2", default-features = false, path = "./crates/wit-bindgen-test" }
 wit-component = { version = "0.263", default-features = false }
 wit-parser = { version = "0.254", default-features = false }
-wrpc-cli = { version = "0.9", path = "./crates/cli", default-features = false }
 wrpc-http = { version = "0.2", path = "./crates/http", default-features = false }
 wrpc-introspect = { version = "0.9", default-features = false, path = "./crates/introspect" }
 wrpc-test = { path = "./crates/test", default-features = false }

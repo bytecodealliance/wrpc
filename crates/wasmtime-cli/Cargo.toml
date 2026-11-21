@@ -26,6 +26,13 @@ humantime = { workspace = true }
 reqwest = { workspace = true }
 tokio = { workspace = true, features = ["fs", "macros", "net", "sync", "time"] }
 tracing = { workspace = true, features = ["attributes"] }
+tracing-subscriber = { workspace = true, features = [
+    "ansi",
+    "env-filter",
+    "fmt",
+    "smallvec",
+    "tracing-log",
+] }
 url = { workspace = true }
 uuid = { workspace = true, features = ["std", "v7"] }
 wasi-preview1-component-adapter-provider = { workspace = true }
@@ -66,7 +73,6 @@ wasmtime-cli-flags = { workspace = true, features = [
 wasmtime-wasi = { workspace = true, features = ["p2", "p3"] }
 wasmtime-wasi-http = { workspace = true, features = ["default-send-request", "p2", "p3"] }
 wit-component = { workspace = true }
-wrpc-cli = { workspace = true }
 wrpc-transport = { workspace = true }
 wrpc-wasmtime = { workspace = true, features = ["async"] }
 

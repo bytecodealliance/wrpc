@@ -14,6 +14,7 @@ use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::task::JoinSet;
 use tokio::{fs, select, time};
 use tracing::{Instrument as _, error, info, instrument, warn};
+use tracing_subscriber::EnvFilter;
 use url::Url;
 use uuid::Uuid;
 use wasi_preview1_component_adapter_provider::{
@@ -472,7 +473,12 @@ pub async fn serve(
 
 #[instrument(level = "trace", ret(level = "trace"))]
 pub async fn run() -> anyhow::Result<()> {
-    wrpc_cli::tracing::init();
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    tracing_subscriber::fmt()
+        .compact()
+        .without_time()
+        .with_env_filter(filter)
+        .init();
     match Command::parse() {
         Command::Tcp(args) => tcp::run(args).await,
     }
