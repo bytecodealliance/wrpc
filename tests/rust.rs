@@ -595,7 +595,7 @@ where
         async {
             for _ in 0..2 {
                 let (tx, rx) = connect().await?;
-                let res = invoke_blocking::<(&str,), (String,), _>(
+                let res = invoke_blocking::<(&str,), (String,)>(
                     Framed::new(tx, rx),
                     "test",
                     "reset",
@@ -614,7 +614,7 @@ where
             let mut clt = Framed::new(tx, rx);
             for params in [sync_values(), unpacked] {
                 let res =
-                    invoke_blocking::<SyncValues, SyncValues, _>(&mut clt, "test", "sync", params)
+                    invoke_blocking::<SyncValues, SyncValues>(&mut clt, "test", "sync", params)
                         .await?;
                 assert_eq!(res, sync_values());
             }
@@ -751,7 +751,7 @@ async fn rust_quic_stopped_mid_params() -> anyhow::Result<()> {
         let (res, srv) = join!(
             async {
                 let (tx, rx) = clt.open_bi().await.expect("failed to open stream");
-                invoke_blocking::<(BoxStream<'static, Bytes>,), (u32,), _>(
+                invoke_blocking::<(BoxStream<'static, Bytes>,), (u32,)>(
                     Framed::new(tx, rx),
                     "foo",
                     "bar",
@@ -833,7 +833,7 @@ async fn rust_webtransport_stopped_mid_params() -> anyhow::Result<()> {
         let (res, srv) = join!(
             async {
                 let (tx, rx) = clt.open_bi().await.expect("failed to open stream");
-                invoke_blocking::<(BoxStream<'static, Bytes>,), (u32,), _>(
+                invoke_blocking::<(BoxStream<'static, Bytes>,), (u32,)>(
                     Framed::new(tx, rx),
                     "foo",
                     "bar",
@@ -986,7 +986,7 @@ async fn rust_http_dynamic() -> anyhow::Result<()> {
         async move {
             let (parts, ()) = http::Request::new(()).into_parts();
             sender.ready().await?;
-            let res = invoke_blocking::<SyncValues, SyncValues, _>(
+            let res = invoke_blocking::<SyncValues, SyncValues>(
                 OutgoingRequest {
                     parts: parts.clone(),
                     send: |req: http::Request<Body<_>>| {
@@ -1015,7 +1015,7 @@ async fn rust_http_dynamic() -> anyhow::Result<()> {
             assert_async_values(res, io).await?;
 
             sender.ready().await?;
-            let res = invoke_blocking::<(String,), (String,), _>(
+            let res = invoke_blocking::<(String,), (String,)>(
                 OutgoingRequest {
                     parts,
                     send: |req: http::Request<Body<_>>| {
@@ -1043,7 +1043,7 @@ async fn assert_oneshot(
 ) -> anyhow::Result<()> {
     join!(
         async {
-            let (a,) = invoke_blocking::<(u32,), (String,), _>(
+            let (a,) = invoke_blocking::<(u32,), (String,)>(
                 Framed::new(clt_tx, clt_rx),
                 "foo",
                 "bar",
@@ -1127,8 +1127,7 @@ async fn rust_reuse_streams() -> anyhow::Result<()> {
         async {
             let mut clt = Framed::new(clt_tx, clt_rx);
             for n in [1u32, 2] {
-                let (m,) =
-                    invoke_blocking::<(u32,), (u32,), _>(&mut clt, "foo", "bar", (n,)).await?;
+                let (m,) = invoke_blocking::<(u32,), (u32,)>(&mut clt, "foo", "bar", (n,)).await?;
                 ensure!(m == n + 1);
             }
             for n in [3u32, 4] {
@@ -1263,7 +1262,7 @@ async fn rust_oneshot_raw() -> anyhow::Result<()> {
         async {
             let (rx, tx) = split(&mut clt);
             let (a,) =
-                invoke_blocking::<(u32,), (String,), _>(Framed::new(tx, rx), "foo", "bar", (42,))
+                invoke_blocking::<(u32,), (String,)>(Framed::new(tx, rx), "foo", "bar", (42,))
                     .await
                     .expect("failed to invoke `foo.bar`");
             assert_eq!(a, "test");
@@ -1414,7 +1413,7 @@ async fn rust_oneshot_raw_strings_invalid_utf8_result() -> anyhow::Result<()> {
         let (rx, tx) = split(srv);
         join!(
             async {
-                invoke_blocking::<(), (String,), _>(
+                invoke_blocking::<(), (String,)>(
                     Framed::new(clt_tx, clt_rx),
                     "wrpc-test:raw-strings/strings",
                     func,
@@ -1496,7 +1495,7 @@ async fn rust_oneshot_borrowed() -> anyhow::Result<()> {
     };
     fut.await?;
     drop(lis);
-    let (greeting,) = invoke_blocking::<(&str,), (String,), _>(
+    let (greeting,) = invoke_blocking::<(&str,), (String,)>(
         Framed::new(sink(), res.as_slice()),
         "",
         "greet",

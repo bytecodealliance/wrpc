@@ -159,28 +159,6 @@ where
         }
         .in_current_span()
     }
-
-    /// Invokes function `func` on instance `instance`, see [`Codec::invoke`]
-    ///
-    /// This is like [`Codec::invoke`], but it only resolves once all I/O is done
-    pub async fn invoke_blocking<I, O, T>(
-        self,
-        tx: impl BorrowMut<FramedWrite<O, FrameEncoder>>,
-        rx: impl BorrowMut<FramedRead<I, FrameDecoder>>,
-        instance: &str,
-        func: &str,
-        params: T,
-    ) -> std::io::Result<D::Item>
-    where
-        I: AsyncRead + Unpin,
-        O: AsyncWrite + Unpin,
-        E: Encoder<T, Error = std::io::Error>,
-    {
-        let (ret, io) = self.invoke(tx, rx, instance, func, params).await?;
-        trace!("awaiting I/O completion");
-        io.await?;
-        Ok(ret)
-    }
 }
 
 /// Invokes function `func` on instance `instance` using `clt` and the default codecs of `params`
@@ -205,15 +183,16 @@ where
 }
 
 /// Invokes function `func` on instance `instance` using `clt` and the default codecs of `params`
-/// and results `R`, see [`Codec::invoke_blocking`]
-pub async fn invoke_blocking<P, R, C>(
-    clt: C,
+/// and results `R`, see [`Codec::invoke`]
+///
+/// This is like [`invoke()`], but it only resolves once all I/O is done
+pub async fn invoke_blocking<P, R>(
+    clt: impl Invoke<P::Encoder>,
     instance: &str,
     func: &str,
     params: P,
 ) -> std::io::Result<R>
 where
-    C: Invoke<P::Encoder>,
     P: Encode,
     R: Decode,
 {

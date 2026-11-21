@@ -202,8 +202,7 @@ async fn shared_store_trap() -> anyhow::Result<()> {
                 srv,
                 async {
                     let (tx, rx) = wrpc_test::tcp_streams(addr).await?;
-                    let res =
-                        invoke_blocking::<(), (), _>(Framed::new(tx, rx), "", "run", ()).await;
+                    let res = invoke_blocking::<(), ()>(Framed::new(tx, rx), "", "run", ()).await;
                     res.expect_err("`run` invocation succeeded");
                     Ok(())
                 },
@@ -249,11 +248,11 @@ async fn shared_resources() -> anyhow::Result<()> {
                     let (tx, rx) = wrpc_test::tcp_streams(addr).await?;
                     let mut clt = Framed::new(tx, rx);
                     let (r,) =
-                        invoke_blocking::<(u32,), (Bytes,), _>(&mut clt, "", "r", (42,)).await?;
+                        invoke_blocking::<(u32,), (Bytes,)>(&mut clt, "", "r", (42,)).await?;
                     let (v,) =
-                        invoke_blocking::<(Bytes,), (u32,), _>(&mut clt, "", "r.get", (r,)).await?;
+                        invoke_blocking::<(Bytes,), (u32,)>(&mut clt, "", "r.get", (r,)).await?;
                     assert_eq!(v, 42);
-                    invoke_blocking::<(Bytes,), (u32,), _>(
+                    invoke_blocking::<(Bytes,), (u32,)>(
                         clt,
                         "",
                         "r.get",
@@ -505,7 +504,7 @@ async fn async_params_after_return() -> anyhow::Result<()> {
                 io.await?;
 
                 for _ in 0..100 {
-                    let (n,) = invoke_blocking::<(), (u32,), _>(&mut clt, "", "count", ()).await?;
+                    let (n,) = invoke_blocking::<(), (u32,)>(&mut clt, "", "count", ()).await?;
                     if n == 3 {
                         return Ok(());
                     }

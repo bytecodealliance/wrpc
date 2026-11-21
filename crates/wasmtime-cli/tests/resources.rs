@@ -62,26 +62,26 @@ async fn invalid_resource_handles() -> anyhow::Result<()> {
     );
     let clt = async {
         let mut clt = connect().await?;
-        let (r,) = invoke_blocking::<(u32,), (Bytes,), _>(&mut clt, "", "r", (42,)).await?;
-        invoke_blocking::<(Bytes,), (), _>(&mut clt, "", "r.consume", (r.clone(),)).await?;
-        invoke_blocking::<(Bytes,), (), _>(clt, "", "r.consume", (r,))
+        let (r,) = invoke_blocking::<(u32,), (Bytes,)>(&mut clt, "", "r", (42,)).await?;
+        invoke_blocking::<(Bytes,), ()>(&mut clt, "", "r.consume", (r.clone(),)).await?;
+        invoke_blocking::<(Bytes,), ()>(clt, "", "r.consume", (r,))
             .await
             .expect_err("consumed resource accepted");
 
         let mut clt = connect().await?;
-        let (r,) = invoke_blocking::<(u32,), (Bytes,), _>(&mut clt, "", "r", (42,)).await?;
-        let (s,) = invoke_blocking::<(u32,), (Bytes,), _>(&mut clt, "", "s", (42,)).await?;
-        invoke_blocking::<(Bytes,), (u32,), _>(clt, "", "r.get", (s,))
+        let (r,) = invoke_blocking::<(u32,), (Bytes,)>(&mut clt, "", "r", (42,)).await?;
+        let (s,) = invoke_blocking::<(u32,), (Bytes,)>(&mut clt, "", "s", (42,)).await?;
+        invoke_blocking::<(Bytes,), (u32,)>(clt, "", "r.get", (s,))
             .await
             .expect_err("resource of a different type accepted");
 
         let clt = connect().await?;
-        invoke_blocking::<(Bytes, Bytes), (), _>(clt, "", "r.both", (r.clone(), r.clone()))
+        invoke_blocking::<(Bytes, Bytes), ()>(clt, "", "r.both", (r.clone(), r.clone()))
             .await
             .expect_err("borrowed resource moved");
 
         let clt = connect().await?;
-        let (v,) = invoke_blocking::<(Bytes,), (u32,), _>(clt, "", "r.get", (r,)).await?;
+        let (v,) = invoke_blocking::<(Bytes,), (u32,)>(clt, "", "r.get", (r,)).await?;
         assert_eq!(v, 42);
         anyhow::Ok(())
     };
