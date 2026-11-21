@@ -25,6 +25,7 @@ futures = { workspace = true, features = ["alloc"] }
 humantime = { workspace = true }
 reqwest = { workspace = true }
 tokio = { workspace = true, features = ["fs", "macros", "net", "sync", "time"] }
+tokio-io-timeout = { workspace = true }
 tracing = { workspace = true, features = ["attributes"] }
 tracing-subscriber = { workspace = true, features = [
     "ansi",

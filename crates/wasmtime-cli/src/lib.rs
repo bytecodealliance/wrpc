@@ -1,4 +1,5 @@
 use core::future::poll_fn;
+use core::pin::Pin;
 use core::time::Duration;
 
 use std::collections::HashMap;
@@ -12,7 +13,8 @@ use futures::stream::FuturesUnordered;
 use tokio::net::TcpListener;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::task::JoinSet;
-use tokio::{fs, select, time};
+use tokio::{fs, select};
+use tokio_io_timeout::{TimeoutReader, TimeoutWriter};
 use tracing::{Instrument as _, error, info, instrument, warn};
 use tracing_subscriber::EnvFilter;
 use url::Url;
@@ -34,6 +36,9 @@ mod tcp;
 
 /// Maximum number of connections served concurrently
 const MAX_CONNECTIONS: usize = 1 << 10;
+
+type Conn =
+    Listener<Pin<Box<TimeoutReader<OwnedReadHalf>>>, Pin<Box<TimeoutWriter<OwnedWriteHalf>>>>;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -277,14 +282,18 @@ fn new_store(
     )
 }
 
-async fn accept(lis: &TcpListener) -> std::io::Result<Listener<OwnedReadHalf, OwnedWriteHalf>> {
+async fn accept(lis: &TcpListener, timeout: Duration) -> std::io::Result<Conn> {
     let (stream, addr) = lis.accept().await?;
     info!(?addr, "accepted connection");
     if let Err(err) = stream.set_nodelay(true) {
         warn!(?err, "failed to set `TCP_NODELAY`");
     }
     let (rx, tx) = stream.into_split();
-    Ok(Listener::new(tx, rx))
+    let mut rx = TimeoutReader::new(rx);
+    rx.set_timeout(Some(timeout));
+    let mut tx = TimeoutWriter::new(tx);
+    tx.set_timeout(Some(timeout));
+    Ok(Listener::new(Box::pin(tx), Box::pin(rx)))
 }
 
 async fn call(
@@ -326,17 +335,19 @@ async fn call(
 }
 
 async fn serve_conn(
-    mut conn: Listener<OwnedReadHalf, OwnedWriteHalf>,
-    timeout: Duration,
+    mut conn: Conn,
     max_len: u32,
     pre: &InstancePre<Ctx>,
     envs: &[(Box<str>, Box<str>)],
     exports: &Exports,
     guest: &[ResourceType],
 ) -> anyhow::Result<()> {
-    while let Ok(next) = time::timeout(timeout, conn.accept()).await {
-        let Some((header, srv)) = next.context("failed to read invocation header")? else {
-            break;
+    loop {
+        let (header, srv) = match conn.accept().await {
+            Ok(Some(next)) => next,
+            Ok(None) => break,
+            Err(err) if err.kind() == std::io::ErrorKind::TimedOut => break,
+            Err(err) => return Err(err).context("failed to read invocation header"),
         };
         let export = exports
             .get(&header.instance, &header.name)
@@ -370,16 +381,18 @@ async fn serve_conn(
 
 async fn serve_conn_shared(
     store: &Accessor<Ctx>,
-    mut conn: Listener<OwnedReadHalf, OwnedWriteHalf>,
-    timeout: Duration,
+    mut conn: Conn,
     max_len: u32,
     instance: Instance,
     exports: &Exports,
     guest: &[ResourceType],
 ) -> anyhow::Result<()> {
-    while let Ok(next) = time::timeout(timeout, conn.accept()).await {
-        let Some((header, srv)) = next.context("failed to read invocation header")? else {
-            break;
+    loop {
+        let (header, srv) = match conn.accept().await {
+            Ok(Some(next)) => next,
+            Ok(None) => break,
+            Err(err) if err.kind() == std::io::ErrorKind::TimedOut => break,
+            Err(err) => return Err(err).context("failed to read invocation header"),
         };
         let export = exports
             .get(&header.instance, &header.name)
@@ -413,7 +426,7 @@ pub async fn serve(
         let mut tasks = JoinSet::default();
         loop {
             select! {
-                res = accept(&lis), if tasks.len() < MAX_CONNECTIONS => match res {
+                res = accept(&lis, timeout), if tasks.len() < MAX_CONNECTIONS => match res {
                     Ok(conn) => {
                         let pre = pre.clone();
                         let envs = Arc::clone(&envs);
@@ -422,7 +435,7 @@ pub async fn serve(
                         tasks.spawn(
                             async move {
                                 let res =
-                                    serve_conn(conn, timeout, max_len, &pre, &envs, &exports, &guest)
+                                    serve_conn(conn, max_len, &pre, &envs, &exports, &guest)
                                         .await;
                                 if let Err(err) = res {
                                     warn!(?err, "failed to serve connection");
@@ -452,9 +465,9 @@ pub async fn serve(
             let mut conns = FuturesUnordered::default();
             loop {
                 select! {
-                    res = accept(&lis), if conns.len() < MAX_CONNECTIONS => match res {
+                    res = accept(&lis, timeout), if conns.len() < MAX_CONNECTIONS => match res {
                         Ok(conn) => conns.push(serve_conn_shared(
-                            store, conn, timeout, max_len, instance, &exports, &guest,
+                            store, conn, max_len, instance, &exports, &guest,
                         )),
                         Err(err) => error!(?err, "failed to accept connection"),
                     },

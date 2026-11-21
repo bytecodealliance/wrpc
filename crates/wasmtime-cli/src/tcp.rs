@@ -15,7 +15,7 @@ pub enum Command {
 /// Serve a reactor component
 #[derive(Parser, Debug)]
 pub struct ServeArgs {
-    /// Limit on how long a connection may stay idle waiting for its next invocation header
+    /// Limit on how long a read from or a write to a connection may wait on the peer
     #[arg(long, default_value = DEFAULT_TIMEOUT)]
     timeout: humantime::Duration,
 
