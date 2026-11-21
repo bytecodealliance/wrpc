@@ -40,6 +40,9 @@ use crate::{
 /// Size of chunks read from byte streams
 pub const READ_CHUNK_SIZE: usize = 8192;
 
+/// Number of bytes or elements of a stream, after which encoding it eagerly stops
+const MAX_READY: usize = u32::MAX as _;
+
 fn encode_ready_bytes(chunks: &[impl AsRef<[u8]>], dst: &mut BytesMut) -> std::io::Result<()> {
     let n = chunks.iter().map(|chunk| chunk.as_ref().len()).sum();
     let len = u32::try_from(n)
@@ -2128,7 +2131,7 @@ where
     #[instrument(level = "trace", skip(self, items), fields(ty = "stream"))]
     fn encode(&mut self, mut items: S, dst: &mut BytesMut) -> std::io::Result<()> {
         let mut ready = Vec::default();
-        loop {
+        while ready.len() < MAX_READY {
             match items.next().now_or_never() {
                 Some(Some(chunk)) => ready.extend(chunk),
                 Some(None) => {
@@ -2227,9 +2230,13 @@ where
     fn encode(&mut self, mut items: T, dst: &mut BytesMut) -> std::io::Result<()> {
         self.items = None;
         let mut ready = Vec::default();
-        loop {
+        let mut n = 0;
+        while n < MAX_READY {
             match items.next().now_or_never() {
-                Some(Some(chunk)) => ready.push(chunk),
+                Some(Some(chunk)) => {
+                    n = n.saturating_add(chunk.len());
+                    ready.push(chunk);
+                }
                 Some(None) => return encode_ready_bytes(&ready, dst),
                 None => break,
             }
@@ -2251,16 +2258,13 @@ impl Encode for Pin<Box<dyn Stream<Item = Bytes>>> {
 
 /// Encoder for `stream<list<u8>>` with [`AsyncRead`] support of type `T`, whose chunks are
 /// transmitted on its path
-///
-/// At most `MAX_READY` bytes are read from the stream on encode, any remaining
-/// bytes are transmitted asynchronously.
-pub struct StreamEncoderRead<T, const MAX_READY: usize = { usize::MAX }> {
+pub struct StreamEncoderRead<T> {
     items: Option<T>,
     /// Data read, but not transmitted yet
     buf: BytesMut,
 }
 
-impl<T, const MAX_READY: usize> Default for StreamEncoderRead<T, MAX_READY> {
+impl<T> Default for StreamEncoderRead<T> {
     fn default() -> Self {
         Self {
             items: None,
@@ -2269,7 +2273,7 @@ impl<T, const MAX_READY: usize> Default for StreamEncoderRead<T, MAX_READY> {
     }
 }
 
-impl<T, const MAX_READY: usize> Transmit for StreamEncoderRead<T, MAX_READY>
+impl<T> Transmit for StreamEncoderRead<T>
 where
     T: AsyncRead + Unpin,
 {
@@ -2305,7 +2309,7 @@ where
     }
 }
 
-impl<T, const MAX_READY: usize> tokio_util::codec::Encoder<T> for StreamEncoderRead<T, MAX_READY>
+impl<T> tokio_util::codec::Encoder<T> for StreamEncoderRead<T>
 where
     T: AsyncRead + Unpin,
 {
@@ -2315,12 +2319,9 @@ where
     fn encode(&mut self, mut items: T, dst: &mut BytesMut) -> std::io::Result<()> {
         self.items = None;
         let mut ready = BytesMut::default();
-        loop {
-            let n = MAX_READY.saturating_sub(ready.len());
-            if n == 0 {
-                break;
-            }
-            ready.reserve(n.min(READ_CHUNK_SIZE));
+        while ready.len() < MAX_READY {
+            let n = MAX_READY.saturating_sub(ready.len()).min(READ_CHUNK_SIZE);
+            ready.reserve(n);
             match items.read_buf(&mut (&mut ready).limit(n)).now_or_never() {
                 Some(Ok(0)) => return encode_ready_bytes(&[ready], dst),
                 Some(Ok(..)) => {}
