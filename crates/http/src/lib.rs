@@ -400,16 +400,11 @@ where
             if send.poll_canceled(cx).is_ready() {
                 return Poll::Ready(Ok(None));
             }
-            if let Some(fut) = &mut rx
-                && let Poll::Ready(res) = Pin::new(fut).poll(cx)
-            {
-                match res {
-                    Ok(()) => rest = rx.take().map(Receipt::into_inner),
-                    Err(err) if err.kind() == std::io::ErrorKind::ConnectionReset => {
-                        return Poll::Ready(Ok(None));
-                    }
-                    Err(err) => return Poll::Ready(Err(err.into())),
+            if let Poll::Ready(Err(err)) = poll_end(cx, &mut rx, &mut rest) {
+                if err.kind() == std::io::ErrorKind::ConnectionReset {
+                    return Poll::Ready(Ok(None));
                 }
+                return Poll::Ready(Err(err.into()));
             }
             results.as_mut().poll(cx).map(|res| res.map(Some))
         })
