@@ -1,4 +1,4 @@
-#![cfg(all(unix, feature = "net"))]
+#![cfg(unix)]
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn loopback() -> anyhow::Result<()> {

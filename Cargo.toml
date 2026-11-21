@@ -28,7 +28,6 @@ members = [
 default = [
     "bin",
     "http",
-    "net",
     "wasmtime",
     "wasmtime-async",
 ]
@@ -46,7 +45,6 @@ bin-bindgen = [
 ]
 bin-wasmtime = ["dep:tokio", "dep:wrpc-wasmtime-cli", "tokio/rt-multi-thread"]
 http = ["dep:wrpc-http"]
-net = ["wrpc-transport/net"]
 wasmtime = ["dep:wrpc-wasmtime"]
 wasmtime-async = ["wrpc-wasmtime?/async"]
 
@@ -132,7 +130,6 @@ wrpc-test = { workspace = true, features = [
     "webtransport",
 ] }
 wrpc-http = { workspace = true }
-wrpc-transport = { workspace = true, features = ["net"] }
 
 [workspace.dependencies]
 anyhow = { version = "1", default-features = false }

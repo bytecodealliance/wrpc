@@ -9,12 +9,6 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
-[features]
-default = ["fs", "net", "io-std"]
-fs = ["tokio/fs"]
-net = ["tokio/net", "wrpc-test/net"]
-io-std = ["tokio/io-std"]
-
 [dependencies]
 bytes = { workspace = true }
 futures = { workspace = true, features = ["std"] }
@@ -26,5 +20,5 @@ wasm-tokio = { workspace = true, features = ["tracing"] }
 [dev-dependencies]
 anyhow = { workspace = true, features = ["std"] }
 test-log = { workspace = true, features = ["color", "log", "trace"] }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
-wrpc-test = { workspace = true }
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "time"] }
+wrpc-test = { workspace = true, features = ["net"] }
