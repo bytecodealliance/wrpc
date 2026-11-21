@@ -56,7 +56,8 @@ impl Receive for FutureReceiver {
         if src.is_empty() {
             self.closed = true;
         } else {
-            self.buf.unsplit(src.split());
+            self.buf.extend_from_slice(src);
+            src.clear();
         }
         let v = if let Some(ty) = &self.ty {
             let v = self.dec.decode_val(&mut self.buf, ty)?;
@@ -194,7 +195,8 @@ impl Receive for StreamReceiver {
             return Poll::Ready(Err(error_data_after_end()));
         };
         ready!(tx.poll_reserve(cx)).map_err(|_| error_receiver_closed())?;
-        self.buf.unsplit(src.split());
+        self.buf.extend_from_slice(src);
+        src.clear();
         let chunk = self.decode_chunk()?;
         if !chunk.is_empty()
             && let Some((tx, ..)) = &mut self.tx

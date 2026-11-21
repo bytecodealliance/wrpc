@@ -2023,8 +2023,8 @@ where
             self.closed = true;
             self.dec.get_mut().decode_eof(&mut self.buf)
         } else {
-            self.buf.unsplit(src.split());
-            self.dec.get_mut().decode(&mut self.buf)
+            let dec = self.dec.get_mut();
+            decode_buffered(&mut self.buf, src, |buf| dec.decode(buf))
         };
         let Some(v) = v? else {
             if self.closed {
@@ -2481,6 +2481,22 @@ fn receive_pending_stream<T>(
     })
 }
 
+fn decode_buffered<T>(
+    buf: &mut BytesMut,
+    src: &mut BytesMut,
+    decode: impl FnOnce(&mut BytesMut) -> std::io::Result<T>,
+) -> std::io::Result<T> {
+    if !buf.is_empty() {
+        buf.extend_from_slice(src);
+        src.clear();
+        return decode(buf);
+    }
+    let v = decode(src)?;
+    buf.extend_from_slice(src);
+    src.clear();
+    Ok(v)
+}
+
 fn poll_receive_stream<D, T>(
     cx: &mut Context<'_>,
     tx: &mut Option<(mpsc::Sender<T>, oneshot::Sender<()>)>,
@@ -2504,8 +2520,7 @@ where
         return Poll::Ready(Err(error_data_after_end()));
     };
     ready!(tx.poll_ready(cx)).map_err(|_| error_receiver_closed())?;
-    buf.unsplit(src.split());
-    if let Some(chunk) = decode(dec, buf)? {
+    if let Some(chunk) = decode_buffered(buf, src, |buf| decode(dec, buf))? {
         tx.start_send(chunk).map_err(|_| error_receiver_closed())?;
     }
     Poll::Ready(Ok(()))
