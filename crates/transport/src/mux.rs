@@ -14,17 +14,13 @@ use crate::{
     error_data_after_end, error_unknown_path,
 };
 
-/// Receives a value, the parameters when serving and the results when invoking, from the frames
-/// read by `rx`, which may be borrowed, decoding the value of the root path using `dec`.
+/// Receives a value from the frames read by `rx`, decoding it using `dec`
 ///
-/// Returns the value along with a future, which receives the asynchronous values nested in it
-/// using `dec` and resolves once all paths are closed. `rx` is read only while one of them is
-/// polled and not past the frame closing the last open path. A frame is read once the decoder of
-/// its path took the previous one, so a decoder, which cannot take data, such as one of a stream,
-/// whose chunks are not consumed, stalls ingress. Ingress fails on a frame on a path, which is not
-/// pending, on data after the end of a value, on `rx` ending before all paths are closed and on an
-/// error of `rx`.
-pub async fn receive<D, F, I>(mut dec: D, mut rx: F) -> std::io::Result<(D::Item, Receipt<F, I, D>)>
+/// Returns the value and the [Receipt] receiving the asynchronous values nested in it. Ingress
+/// fails on a frame on a path, which is not pending, on data after the end of a value, on `rx`
+/// ending before all paths are closed and on an error of `rx`. A decoder, which cannot take data,
+/// such as one of a stream whose chunks are not consumed, stalls ingress.
+pub async fn receive<D, F, I>(mut dec: D, mut rx: F) -> std::io::Result<(D::Item, Receipt<D, F, I>)>
 where
     F: BorrowMut<FramedRead<I, FrameDecoder>>,
     I: AsyncRead + Unpin,
@@ -87,7 +83,7 @@ where
 ///
 /// Resolves once all paths are closed.
 #[must_use]
-pub struct Receipt<F, I, D> {
+pub struct Receipt<D, F, I> {
     rx: F,
     dec: D,
     closed: bool,
@@ -96,16 +92,16 @@ pub struct Receipt<F, I, D> {
     _rx: PhantomData<fn() -> I>,
 }
 
-impl<F, I, D> Unpin for Receipt<F, I, D> {}
+impl<D, F, I> Unpin for Receipt<D, F, I> {}
 
-impl<F, I, D> Receipt<F, I, D> {
+impl<D, F, I> Receipt<D, F, I> {
     /// Returns the frame reader, past the frame closing the last open path once this resolved
     pub fn into_inner(self) -> F {
         self.rx
     }
 }
 
-impl<F, I, D> Future for Receipt<F, I, D>
+impl<D, F, I> Future for Receipt<D, F, I>
 where
     F: BorrowMut<FramedRead<I, FrameDecoder>>,
     I: AsyncRead + Unpin,
@@ -159,10 +155,10 @@ where
 ///
 /// The value is encoded before this returns. Returns the [Transmission] of the value and of the
 /// asynchronous values nested in it.
-pub fn transmit<E, F, O, T>(mut enc: E, tx: F, value: T) -> std::io::Result<Transmission<F, O, E>>
+pub fn transmit<E, W, O, T>(mut enc: E, tx: W, value: T) -> std::io::Result<Transmission<E, W, O>>
 where
     E: Encoder<T, Error = std::io::Error> + Transmit,
-    F: BorrowMut<FramedWrite<O, FrameEncoder>>,
+    W: BorrowMut<FramedWrite<O, FrameEncoder>>,
     O: AsyncWrite + Unpin,
 {
     let mut data = BytesMut::default();
@@ -171,13 +167,13 @@ where
 }
 
 /// Sends a value encoded as `data` using `enc` into the frames written by `tx`, see [`transmit`]
-pub(crate) fn transmit_encoded<E, F, O>(
+pub(crate) fn transmit_encoded<E, W, O>(
     enc: E,
-    mut tx: F,
+    mut tx: W,
     data: BytesMut,
-) -> std::io::Result<Transmission<F, O, E>>
+) -> std::io::Result<Transmission<E, W, O>>
 where
-    F: BorrowMut<FramedWrite<O, FrameEncoder>>,
+    W: BorrowMut<FramedWrite<O, FrameEncoder>>,
 {
     let buf = tx.borrow_mut().write_buffer_mut();
     encode_frames(&[], data, &mut *buf)?;
@@ -195,18 +191,18 @@ where
 /// Resolves once all paths are closed and all data was flushed, `tx` is neither shut down nor
 /// dropped before.
 #[must_use]
-pub struct Transmission<F, O, E> {
-    tx: F,
+pub struct Transmission<E, W, O> {
+    tx: W,
     path: Vec<usize>,
     enc: E,
     _tx: PhantomData<fn() -> O>,
 }
 
-impl<F, O, E> Unpin for Transmission<F, O, E> {}
+impl<E, W, O> Unpin for Transmission<E, W, O> {}
 
-impl<F, O, E> Future for Transmission<F, O, E>
+impl<E, W, O> Future for Transmission<E, W, O>
 where
-    F: BorrowMut<FramedWrite<O, FrameEncoder>>,
+    W: BorrowMut<FramedWrite<O, FrameEncoder>>,
     O: AsyncWrite + Unpin,
     E: Transmit,
 {
