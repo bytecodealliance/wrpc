@@ -567,11 +567,7 @@ where
 #[cfg(feature = "http")]
 pub async fn serve_http1<B, Fut>(
     stream: TcpStream,
-    f: impl Fn(
-        http::request::Parts,
-        Header,
-        FramedRead<wrpc_http::BodyReader<hyper::body::Incoming>, FrameDecoder>,
-    ) -> Fut
+    f: impl Fn(http::request::Parts, Header, wrpc_http::Server<hyper::body::Incoming>) -> Fut
     + Clone
     + Send
     + 'static,
@@ -589,8 +585,8 @@ where
                 let f = f.clone();
                 async move {
                     let (parts, body) = req.into_parts();
-                    let (header, rx) = wrpc_http::accept(body).await?;
-                    f(parts, header, rx).await
+                    let (header, srv) = wrpc_http::accept(body).await?;
+                    f(parts, header, srv).await
                 }
             }),
         )
@@ -642,14 +638,14 @@ where
 #[cfg(feature = "http")]
 pub async fn serve_http_invocation(
     Header { instance, name }: Header,
-    rx: FramedRead<wrpc_http::BodyReader<hyper::body::Incoming>, FrameDecoder>,
+    srv: wrpc_http::Server<hyper::body::Incoming>,
 ) -> anyhow::Result<http::Response<http_body_util::combinators::UnsyncBoxBody<Bytes, std::io::Error>>>
 {
     ensure!(
         instance == "foo" && name == "bar",
         "unexpected invocation of `{instance}.{name}`",
     );
-    serve::<FooBar, FooBar, _, _, _>(wrpc_http::Server(rx), async |(testbar, s)| {
+    serve::<FooBar, FooBar, _, _, _>(srv, async |(testbar, s)| {
         assert_eq!(testbar, b"testbar".as_slice());
         let buf = s.collect::<Vec<_>>().await;
         assert_eq!(buf.concat(), b"client->server");

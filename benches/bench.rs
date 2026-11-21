@@ -27,7 +27,7 @@ use tokio::try_join;
 use tokio_util::codec::{Decoder, Encoder};
 use wasmtime::component::{Component, Linker, ResourceTable};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
-use wrpc_http::{Body, Client, Server};
+use wrpc_http::{Body, Client};
 use wrpc_transport::{Codec, Encode, Framed, Header, Invoke, Listener, Receive, Serve, Transmit};
 
 mod ping_bindings_wrpc {
@@ -595,8 +595,8 @@ fn bench_http1(
                 let handler = handler.clone();
                 tasks.spawn(wrpc_test::serve_http1(
                     stream,
-                    move |_, Header { instance, name }, rx| {
-                        func.handle(&handler, &instance, &name, Server(rx))
+                    move |_, Header { instance, name }, srv| {
+                        func.handle(&handler, &instance, &name, srv)
                     },
                 ));
             }
@@ -646,9 +646,7 @@ fn bench_http2(
     tasks.spawn(async move {
         wrpc_http::serve(
             WithHyperIo::new(stream),
-            move |_, Header { instance, name }, rx| {
-                func.handle(&handler, &instance, &name, Server(rx))
-            },
+            move |_, Header { instance, name }, srv| func.handle(&handler, &instance, &name, srv),
         )
         .await
         .context("failed to serve HTTP/2 connection")

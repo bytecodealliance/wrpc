@@ -195,14 +195,12 @@ where
     Ok(res)
 }
 
-/// Receives the invocation header of a request with `body`, returning it along with the frames
+/// Receives the invocation header of a request with `body`, returning it along with the [Server]
 /// of the invocation
 ///
-/// Receive the parameters from the frames to their end before dropping them: dropping them
+/// Receive the parameters from its frames to their end before dropping them: dropping them
 /// earlier may cancel the response before the peer received it.
-pub async fn accept<T>(
-    body: T,
-) -> std::io::Result<(Header, FramedRead<BodyReader<T>, FrameDecoder>)>
+pub async fn accept<T>(body: T) -> std::io::Result<(Header, Server<T>)>
 where
     T: http_body::Body<Error: Into<Box<dyn core::error::Error + Send + Sync>>> + Unpin,
 {
@@ -211,7 +209,8 @@ where
     let Some(header) = rx.try_next().await? else {
         return Err(std::io::ErrorKind::UnexpectedEof.into());
     };
-    Ok((header, rx.map_decoder(|_| FrameDecoder::default())))
+    let rx = rx.map_decoder(|_| FrameDecoder::default());
+    Ok((header, Server { rx }))
 }
 
 /// Returns a reader of the body of the response `res` resolves to
@@ -365,12 +364,15 @@ where
     }
 }
 
-/// Server serving the invocation, which a request body carries, from the frames [accept] returns
-/// for it, with the response transmitting the results
+/// Server serving the invocation, which a request body carries, see [accept], with the response
+/// transmitting the results
 ///
 /// The rest of the request body is received while the response body is polled, which fails on
 /// an ingress error or on data following the invocation.
-pub struct Server<T: http_body::Body>(pub FramedRead<BodyReader<T>, FrameDecoder>);
+pub struct Server<T: http_body::Body> {
+    /// Frames of the invocation following its header
+    pub rx: FramedRead<BodyReader<T>, FrameDecoder>,
+}
 
 impl<T> Server<T>
 where
@@ -390,7 +392,7 @@ where
         D: Decoder<Error = std::io::Error> + Receive,
         Err: From<std::io::Error>,
     {
-        let Self(rx) = self;
+        let Self { rx } = self;
         let Codec { enc, dec } = codec;
         let (params, rx) = receive(dec, rx).await?;
         let mut rx = Some(rx);
@@ -498,18 +500,14 @@ where
 }
 
 /// Serves wRPC requests on HTTP/2 connection `io`, calling `f` with the parts of each and the
-/// invocation header and frames [accept] returns for its body, which a [Server] serves, and
-/// sending the response `f` resolves to
+/// invocation header and [Server] [accept] returns for its body, and sending the response `f`
+/// resolves to
 ///
 /// The stream of a request is reset if [accept] or `f` fails.
 #[cfg(feature = "server")]
 pub fn serve<B, Fut, Err>(
     io: impl hyper::rt::Read + hyper::rt::Write + Unpin,
-    f: impl Fn(
-        http::request::Parts,
-        Header,
-        FramedRead<BodyReader<hyper::body::Incoming>, FrameDecoder>,
-    ) -> Fut
+    f: impl Fn(http::request::Parts, Header, Server<hyper::body::Incoming>) -> Fut
     + Clone
     + Send
     + 'static,
@@ -528,8 +526,8 @@ where
                 let f = f.clone();
                 async move {
                     let (parts, body) = req.into_parts();
-                    let (header, rx) = accept(body).await?;
-                    let res = f(parts, header, rx).await.map_err(Into::into)?;
+                    let (header, srv) = accept(body).await?;
+                    let res = f(parts, header, srv).await.map_err(Into::into)?;
                     Ok::<_, Box<dyn core::error::Error + Send + Sync>>(res)
                 }
             }),

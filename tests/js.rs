@@ -17,7 +17,6 @@ use tokio::time::timeout;
 use tokio::{select, spawn};
 use tokio_util::codec::Encoder as _;
 use tracing::{info, instrument};
-use wrpc_http::Server;
 use wrpc_transport::{FrameEncoder, FrameRef, Framed, Header, HeaderEncoder, HeaderRef, Listener};
 
 pub mod common;
@@ -239,8 +238,8 @@ async fn js_http_client() -> anyhow::Result<()> {
             std::io::Result::Ok(stream)
         },
         |stream| {
-            wrpc_test::serve_http1(stream, |_, Header { instance, name }, rx| async move {
-                let Ok(fut) = echo::handle(&echo::Echo, &instance, &name, Server(rx)) else {
+            wrpc_test::serve_http1(stream, |_, Header { instance, name }, srv| async move {
+                let Ok(fut) = echo::handle(&echo::Echo, &instance, &name, srv) else {
                     bail!("`{instance}#{name}` is not exported");
                 };
                 fut.await

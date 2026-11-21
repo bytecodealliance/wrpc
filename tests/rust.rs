@@ -871,7 +871,6 @@ async fn rust_http_bindgen_sync() -> anyhow::Result<()> {
     use http_body_util::combinators::UnsyncBoxBody;
     use hyper::client::conn::http2::SendRequest;
     use hyper_util::rt::TokioIo;
-    use wrpc_http::Server;
 
     let conn: Arc<OnceLock<(SendRequest<UnsyncBoxBody<Bytes, std::io::Error>>, Parts)>> =
         Arc::default();
@@ -892,15 +891,12 @@ async fn rust_http_bindgen_sync() -> anyhow::Result<()> {
         async |stream| {
             wrpc_http::serve(
                 TokioIo::new(stream),
-                move |_, Header { instance, name }, rx| {
+                move |_, Header { instance, name }, srv| {
                     let handler = handler.clone();
                     async move {
-                        let Ok(fut) = sync_bindgen::sync_server::handle(
-                            &handler,
-                            &instance,
-                            &name,
-                            Server(rx),
-                        ) else {
+                        let Ok(fut) =
+                            sync_bindgen::sync_server::handle(&handler, &instance, &name, srv)
+                        else {
                             bail!("`{instance}#{name}` is not exported");
                         };
                         fut.await
@@ -923,18 +919,17 @@ async fn rust_http_bindgen_sync() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_http_bindgen_async() -> anyhow::Result<()> {
     use hyper_util::rt::TokioIo;
-    use wrpc_http::Server;
 
     wrpc_test::with_http2(
         async |stream| {
             wrpc_http::serve(
                 TokioIo::new(stream),
-                |_, Header { instance, name }, rx| async move {
+                |_, Header { instance, name }, srv| async move {
                     let Ok(fut) = async_bindgen::bindings::handle(
                         &async_bindgen::Handler,
                         &instance,
                         &name,
-                        Server(rx),
+                        srv,
                     ) else {
                         bail!("`{instance}#{name}` is not exported");
                     };
@@ -954,30 +949,27 @@ async fn rust_http_bindgen_async() -> anyhow::Result<()> {
 async fn rust_http_dynamic() -> anyhow::Result<()> {
     use http_body_util::BodyExt;
     use hyper_util::rt::TokioIo;
-    use wrpc_http::{Body, Client, Server};
+    use wrpc_http::{Body, Client};
 
     wrpc_test::with_http2(
         async |stream| {
             wrpc_http::serve(
                 TokioIo::new(stream),
-                |_, Header { instance, name }, rx| async move {
+                |_, Header { instance, name }, srv| async move {
                     ensure!(instance == "test", "unexpected instance `{instance}`");
                     match name.as_str() {
                         "sync" => {
-                            serve::<SyncValues, SyncValues, _, _, _>(Server(rx), async |params| {
+                            serve::<SyncValues, SyncValues, _, _, _>(srv, async |params| {
                                 assert_eq!(params, sync_values());
                                 anyhow::Ok(sync_values())
                             })
                             .await
                         }
                         "async" => {
-                            serve::<AsyncValues, AsyncValues, _, _, _>(
-                                Server(rx),
-                                |params| async move {
-                                    assert_async_values(params, future::ready(Ok(()))).await?;
-                                    anyhow::Ok(async_values())
-                                },
-                            )
+                            serve::<AsyncValues, AsyncValues, _, _, _>(srv, |params| async move {
+                                assert_async_values(params, future::ready(Ok(()))).await?;
+                                anyhow::Ok(async_values())
+                            })
                             .await
                         }
                         _ => bail!("`{instance}.{name}` is not exported"),

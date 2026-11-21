@@ -16,7 +16,7 @@ use tokio::io::AsyncReadExt as _;
 use tokio::time::sleep;
 use tokio::{spawn, try_join};
 use tokio_util::codec::{Encoder as _, FramedRead};
-use wrpc_http::{Body, Client, Server};
+use wrpc_http::{Body, Client};
 use wrpc_transport::{
     Codec, Decode, Encode, FrameDecoder, FrameEncoder, FrameRef, Header, HeaderEncoder, HeaderRef,
     invoke, invoke_blocking, receive, serve,
@@ -26,11 +26,11 @@ use wrpc_transport::{
 async fn http2() -> anyhow::Result<()> {
     wrpc_test::with_http2(
         async |stream| {
-            wrpc_http::serve(TokioIo::new(stream), |_, header, rx| async move {
+            wrpc_http::serve(TokioIo::new(stream), |_, header, srv| async move {
                 if header.name == "baz" {
-                    return serve::<(), (), _, _, _>(Server(rx), async |()| anyhow::Ok(())).await;
+                    return serve::<(), (), _, _, _>(srv, async |()| anyhow::Ok(())).await;
                 }
-                wrpc_test::serve_http_invocation(header, rx).await
+                wrpc_test::serve_http_invocation(header, srv).await
             })
             .await
             .context("failed to serve HTTP/2 connection")
@@ -72,8 +72,8 @@ async fn http2() -> anyhow::Result<()> {
 async fn unread_params() -> anyhow::Result<()> {
     wrpc_test::with_http2(
         async |stream| {
-            wrpc_http::serve(TokioIo::new(stream), |_, _, rx| {
-                serve::<(BoxStream<'static, Bytes>,), (), _, _, _>(Server(rx), async |(s,)| {
+            wrpc_http::serve(TokioIo::new(stream), |_, _, srv| {
+                serve::<(BoxStream<'static, Bytes>,), (), _, _, _>(srv, async |(s,)| {
                     drop(s);
                     anyhow::Ok(())
                 })
@@ -113,8 +113,8 @@ async fn pooling() -> anyhow::Result<()> {
         let accept = async {
             let (conn, addr) = lis.accept().await.context("failed to accept connection")?;
             assert!(addr.ip().is_loopback());
-            anyhow::Ok(spawn(wrpc_test::serve_http1(conn, |_, header, rx| {
-                wrpc_test::serve_http_invocation(header, rx)
+            anyhow::Ok(spawn(wrpc_test::serve_http1(conn, |_, header, srv| {
+                wrpc_test::serve_http_invocation(header, srv)
             })))
         };
         let (conn, ()) = try_join!(
@@ -130,11 +130,10 @@ async fn pooling() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn response_parts() -> anyhow::Result<()> {
     let serve = async |stream| {
-        wrpc_http::serve(TokioIo::new(stream), |req, _, rx| async move {
-            let mut res = serve::<(), _, _, _, _>(Server(rx), async |()| {
-                anyhow::Ok((Bytes::from_static(b"baz"),))
-            })
-            .await?;
+        wrpc_http::serve(TokioIo::new(stream), |req, _, srv| async move {
+            let mut res =
+                serve::<(), _, _, _, _>(srv, async |()| anyhow::Ok((Bytes::from_static(b"baz"),)))
+                    .await?;
             *res.status_mut() = StatusCode::IM_A_TEAPOT;
             let headers = res.headers_mut();
             headers.insert("foo", HeaderValue::from_static("bar"));
@@ -197,9 +196,9 @@ async fn buffered() -> anyhow::Result<()> {
         let body = body.collect().await?;
         let body = body.to_bytes();
         ensure!(size == u64::try_from(body.len()).ok());
-        let (Header { instance, name }, rx) = wrpc_http::accept(Full::new(body)).await?;
+        let (Header { instance, name }, srv) = wrpc_http::accept(Full::new(body)).await?;
         ensure!(instance == "foo" && name == "bar");
-        let res = serve::<Bytes, _, _, _, _>(Server(rx), async |params| anyhow::Ok(params)).await?;
+        let res = serve::<Bytes, _, _, _, _>(srv, async |params| anyhow::Ok(params)).await?;
         let (res, body) = res.into_parts();
         let body = body.collect().await?;
         ensure!(parts.headers[CONTENT_TYPE] == res.headers[CONTENT_TYPE]);
@@ -224,18 +223,17 @@ async fn local() -> anyhow::Result<()> {
                     instance,
                     name: func,
                 },
-                rx,
+                srv,
             ) = wrpc_http::accept(req.into_body()).await?;
             ensure!(instance == "foo" && func == "bar");
-            Server(rx)
-                .serve(
-                    Codec::<
-                        <(String,) as Encode>::Encoder,
-                        <(LocalBoxFuture<'static, String>,) as Decode>::Decoder,
-                    >::default(),
-                    async |(greeting,)| anyhow::Ok((format!("{}, {name}", greeting.await),)),
-                )
-                .await
+            srv.serve(
+                Codec::<
+                    <(String,) as Encode>::Encoder,
+                    <(LocalBoxFuture<'static, String>,) as Decode>::Decoder,
+                >::default(),
+                async |(greeting,)| anyhow::Ok((format!("{}, {name}", greeting.await),)),
+            )
+            .await
         },
     };
     let greeting: LocalBoxFuture<'static, String> = Box::pin(async { "Hello".into() });
