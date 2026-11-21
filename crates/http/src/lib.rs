@@ -309,7 +309,7 @@ where
 #[must_use]
 pub struct Invocation<F, B: http_body::Body, D> {
     sent: Option<oneshot::Receiver<std::io::Result<()>>>,
-    rx: Option<Receipt<FramedRead<ResponseReader<F, B>, FrameDecoder>, ResponseReader<F, B>, D>>,
+    rx: Option<Receipt<D, FramedRead<ResponseReader<F, B>, FrameDecoder>, ResponseReader<F, B>>>,
     rest: Option<FramedRead<ResponseReader<F, B>, FrameDecoder>>,
 }
 
@@ -608,7 +608,7 @@ fn sent_error(
 /// Polls `rx` and then the frames following it for their end, failing on data
 fn poll_end<I: AsyncRead + Unpin, D: Receive>(
     cx: &mut Context<'_>,
-    rx: &mut Option<Receipt<FramedRead<I, FrameDecoder>, I, D>>,
+    rx: &mut Option<Receipt<D, FramedRead<I, FrameDecoder>, I>>,
     rest: &mut Option<FramedRead<I, FrameDecoder>>,
 ) -> Poll<std::io::Result<()>> {
     if let Some(fut) = rx {

@@ -42,8 +42,8 @@ where
     E: Transmit,
 {
     type Invocation<D: Receive> = Invocation<
-        Transmission<FramedWrite<O, FrameEncoder>, O, E>,
-        Receipt<FramedRead<I, FrameDecoder>, I, D>,
+        Transmission<E, FramedWrite<O, FrameEncoder>, O>,
+        Receipt<D, FramedRead<I, FrameDecoder>, I>,
     >;
 
     fn invoke<D, T>(
@@ -69,8 +69,8 @@ where
     E: Transmit,
 {
     type Invocation<D: Receive> = Invocation<
-        Transmission<&'a mut FramedWrite<O, FrameEncoder>, O, E>,
-        Receipt<&'a mut FramedRead<I, FrameDecoder>, I, D>,
+        Transmission<E, &'a mut FramedWrite<O, FrameEncoder>, O>,
+        Receipt<D, &'a mut FramedRead<I, FrameDecoder>, I>,
     >;
 
     fn invoke<D, T>(
@@ -117,7 +117,7 @@ where
         func: &str,
         params: T,
     ) -> impl Future<
-        Output = std::io::Result<(D::Item, Invocation<Transmission<W, O, E>, Receipt<F, I, D>>)>,
+        Output = std::io::Result<(D::Item, Invocation<Transmission<E, W, O>, Receipt<D, F, I>>)>,
     > + use<F, W, I, O, E, T, D>
     where
         F: BorrowMut<FramedRead<I, FrameDecoder>>,
