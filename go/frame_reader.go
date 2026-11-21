@@ -13,7 +13,10 @@ import (
 	"sync/atomic"
 )
 
-const maxUnclaimedElements = 64
+const (
+	maxUnclaimedElements = 64
+	maxInitialCapacity   = 1 << 20
+)
 
 func indexPath(path ...uint32) string {
 	p := make([]byte, len(path)*4)

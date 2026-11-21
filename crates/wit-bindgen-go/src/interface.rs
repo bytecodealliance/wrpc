@@ -626,10 +626,10 @@ impl InterfaceGenerator<'_> {
         }}
         if b < 0x80 {{
             x = x | uint32(b)<<s
-            vs := {wrpc}.NewSlice["#,
+            vs := make("#,
         );
         self.print_list(ty);
-        uwrite!(self.src, "](x)\n");
+        uwrite!(self.src, ", 0)\n");
         if deferred {
             let context = self.deps.context();
             uwrite!(self.src, "var ds []func({context}.Context) error\n");

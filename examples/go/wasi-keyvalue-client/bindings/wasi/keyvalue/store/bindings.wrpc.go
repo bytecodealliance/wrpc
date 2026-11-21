@@ -1537,7 +1537,7 @@ func Bucket_ListKeys(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borro
 						}
 						if b < 0x80 {
 							x = x | uint32(b)<<s
-							vs := wrpc.NewSlice[[]string](x)
+							vs := make([]string, 0)
 							for i := range x {
 								slog.Debug("reading list element", "i", i)
 								v, err := func(r interface {
