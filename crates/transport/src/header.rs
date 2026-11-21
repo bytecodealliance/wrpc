@@ -12,7 +12,7 @@ pub const PROTOCOL: u8 = 1;
 const DEFAULT_MAX_NAME_LEN: u32 = 1 << 10;
 
 /// Owned wRPC invocation header
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Header {
     /// Instance name of the function being called
     pub instance: String,
@@ -22,7 +22,7 @@ pub struct Header {
 }
 
 /// wRPC invocation header reference
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct HeaderRef<'a> {
     /// Instance name of the function being called
     pub instance: &'a str,
