@@ -13,9 +13,10 @@ use wasmtime::component::{
     StreamProducer, StreamReader, StreamResult, Type, VecBuffer,
 };
 use wasmtime::{AsContextMut, StoreContextMut, bail, format_err};
-use wrpc_transport::READ_CHUNK_SIZE;
 
 use crate::Val;
+
+const READ_CHUNK_SIZE: usize = 8192;
 
 /// Payload of a `future` or `stream`, a static type as Wasmtime requires
 trait Payload: Lift + Lower + Send + Sync + Sized + 'static {

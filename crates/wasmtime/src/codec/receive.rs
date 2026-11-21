@@ -11,17 +11,9 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::PollSender;
 use tracing::error;
 use wasmtime::component::Type;
-use wrpc_transport::{Receive, error_unknown_path};
+use wrpc_transport::{Receive, error_data_after_end, error_receiver_closed, error_unknown_path};
 
 use crate::{TupleDecoder, Val};
-
-fn error_data_after_end() -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::InvalidData, "data received after end")
-}
-
-fn error_receiver_closed() -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::BrokenPipe, "receiver closed")
-}
 
 /// Receives the payload of a pending `future` on its path and the values nested in it below `0`
 struct FutureReceiver {
