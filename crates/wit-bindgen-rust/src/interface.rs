@@ -1983,7 +1983,7 @@ mod {mod_name} {{
                 }
                 uwriteln!(
                     self.src,
-                    r#"_ => Err(::std::io::Error::new(::std::io::ErrorKind::InvalidInput, format!("unknown variant discriminant `{{disc}}`"))),
+                    r#"_ => Err(::std::io::Error::new(::std::io::ErrorKind::InvalidData, format!("unknown variant discriminant `{{disc}}`"))),
             }}
         }}
     }}
@@ -2313,7 +2313,7 @@ mod {mod_name} {{
                 uwrite!(
                     self.src,
                     r#"
-                    _ => return Err(::std::io::Error::new(::std::io::ErrorKind::InvalidInput, format!("unknown variant discriminant `{{disc}}`"))),
+                    _ => return Err(::std::io::Error::new(::std::io::ErrorKind::InvalidData, format!("unknown variant discriminant `{{disc}}`"))),
                 }}
             }};
 
@@ -2554,7 +2554,7 @@ mod {mod_name} {{
             }
             uwriteln!(
                 self.src,
-                r#"_ => Err(::std::io::Error::new(::std::io::ErrorKind::InvalidInput, format!("unknown enum discriminant `{{disc}}`"))),
+                r#"_ => Err(::std::io::Error::new(::std::io::ErrorKind::InvalidData, format!("unknown enum discriminant `{{disc}}`"))),
             }}
         }}
     }}
