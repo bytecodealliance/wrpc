@@ -1,4 +1,5 @@
 #![allow(clippy::type_complexity)]
+#![deny(missing_docs)]
 
 //! wRPC HTTP transport
 
