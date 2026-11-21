@@ -8,7 +8,7 @@ use wasm_tokio::{Leb128DecoderU32, Leb128Encoder};
 pub(crate) const DEFAULT_MAX_DEPTH: u32 = 64;
 
 /// wRPC frame reference
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FrameRef<'a> {
     /// Frame path
     pub path: &'a [usize],
@@ -17,7 +17,7 @@ pub struct FrameRef<'a> {
 }
 
 /// wRPC frame header reference
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FrameHeaderRef<'a> {
     /// Frame path
     pub path: &'a [usize],

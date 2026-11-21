@@ -65,6 +65,7 @@ pub struct Codec<E, D> {
 }
 
 /// Frames written to and read from a byte stream pair
+#[derive(Debug)]
 pub struct Framed<I, O> {
     /// Writer of the frames sent
     pub tx: FramedWrite<O, FrameEncoder>,

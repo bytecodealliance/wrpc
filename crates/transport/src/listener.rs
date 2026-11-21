@@ -9,6 +9,7 @@ use tokio_util::codec::{FramedRead, FramedWrite};
 
 use crate::{FrameDecoder, FrameEncoder, Header, HeaderDecoder, Server, error_connection_failed};
 
+#[derive(Debug)]
 enum Rx<I> {
     Header(FramedRead<I, HeaderDecoder>),
     Served(oneshot::Receiver<FramedRead<I, FrameDecoder>>),
@@ -16,6 +17,7 @@ enum Rx<I> {
 }
 
 /// Accepts the invocations sent over a byte stream pair one after another
+#[derive(Debug)]
 pub struct Listener<I, O> {
     rx: Rx<I>,
     tx_rx: oneshot::Receiver<FramedWrite<O, FrameEncoder>>,
