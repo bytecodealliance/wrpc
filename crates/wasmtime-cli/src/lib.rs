@@ -325,7 +325,7 @@ async fn call(
 }
 
 async fn serve_conn(
-    mut lis: Listener<OwnedReadHalf, OwnedWriteHalf>,
+    mut conn: Listener<OwnedReadHalf, OwnedWriteHalf>,
     timeout: Duration,
     max_len: u32,
     pre: &InstancePre<Ctx>,
@@ -333,7 +333,7 @@ async fn serve_conn(
     exports: &Exports,
     guest: &[ResourceType],
 ) -> anyhow::Result<()> {
-    while let Ok(next) = time::timeout(timeout, lis.accept()).await {
+    while let Ok(next) = time::timeout(timeout, conn.accept()).await {
         let Some((header, srv)) = next.context("failed to read invocation header")? else {
             break;
         };
@@ -355,10 +355,7 @@ async fn serve_conn(
                     enc: TupleEncoder::new(Arc::clone(&export.results)),
                     dec: TupleDecoder::new(Arc::clone(&export.params)).with_max_len(max_len),
                 };
-                codec
-                    .serve(&mut srv.tx, &mut srv.rx, async |params| {
-                        call(store, func, export, guest, params).await
-                    })
+                srv.serve(codec, |params| call(store, func, export, guest, params))
                     .await?;
                 poll_fn(|cx| store.poll_no_interesting_tasks(cx)).await;
                 anyhow::Ok(())
@@ -372,14 +369,14 @@ async fn serve_conn(
 
 async fn serve_conn_shared(
     store: &Accessor<Ctx>,
-    mut lis: Listener<OwnedReadHalf, OwnedWriteHalf>,
+    mut conn: Listener<OwnedReadHalf, OwnedWriteHalf>,
     timeout: Duration,
     max_len: u32,
     instance: Instance,
     exports: &Exports,
     guest: &[ResourceType],
 ) -> anyhow::Result<()> {
-    while let Ok(next) = time::timeout(timeout, lis.accept()).await {
+    while let Ok(next) = time::timeout(timeout, conn.accept()).await {
         let Some((header, srv)) = next.context("failed to read invocation header")? else {
             break;
         };
@@ -393,10 +390,7 @@ async fn serve_conn_shared(
             enc: TupleEncoder::new(Arc::clone(&export.results)),
             dec: TupleDecoder::new(Arc::clone(&export.params)).with_max_len(max_len),
         };
-        codec
-            .serve(&mut srv.tx, &mut srv.rx, async |params| {
-                call(store, func, export, guest, params).await
-            })
+        srv.serve(codec, |params| call(store, func, export, guest, params))
             .await?;
     }
     Ok(())

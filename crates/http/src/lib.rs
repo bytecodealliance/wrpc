@@ -362,7 +362,7 @@ where
     T: http_body::Body<Error: Into<Box<dyn core::error::Error + Send + Sync>>> + Unpin,
 {
     /// Serves the invocation using `codec` by calling `f` with its parameters, see
-    /// [`Codec::serve`]
+    /// [`wrpc_transport::Server::serve`]
     ///
     /// It resolves once the response body was sent and the rest of the request body was received,
     /// failing with the first error, or once the peer canceled the request, when the receiver of

@@ -13,15 +13,15 @@ use anyhow::{Context as _, bail, ensure};
 use bytes::{Bytes, BytesMut};
 use common::{assert_async, assert_eof, assert_sync};
 use futures::future::BoxFuture;
-use futures::stream::BoxStream;
+use futures::stream::{BoxStream, FuturesUnordered};
 use futures::{StreamExt as _, TryStreamExt as _, future, stream};
 use tokio::io::{
     AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _, duplex, sink, split,
 };
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{Notify, mpsc, oneshot};
 use tokio::task::yield_now;
 use tokio::time;
-use tokio::{join, spawn, try_join};
+use tokio::{join, select, spawn, try_join};
 use tokio_util::codec::{Encoder as _, FramedParts, FramedRead, FramedWrite};
 use tokio_util::io::StreamReader;
 use tracing::instrument;
@@ -1145,6 +1145,94 @@ async fn rust_reuse_streams() -> anyhow::Result<()> {
             anyhow::Ok(())
         },
     )?;
+    Ok(())
+}
+
+#[test_log::test(tokio::test)]
+async fn rust_pipelining() -> anyhow::Result<()> {
+    const MAX_INVOCATIONS: usize = 2;
+
+    mod bindings {
+        wit_bindgen_wrpc::generate!({
+            inline: "
+                package wrpc-test:pipelining;
+
+                interface handler {
+                    f: func(n: u32) -> u32;
+                }
+
+                world pipelining {
+                    export handler;
+                }
+            ",
+        });
+    }
+
+    #[derive(Clone)]
+    struct Handler(Arc<Notify>);
+
+    impl bindings::exports::wrpc_test::pipelining::handler::Handler for Handler {
+        async fn f(&self, n: u32) -> anyhow::Result<u32> {
+            if n == 1 {
+                self.0.notified().await;
+            } else {
+                self.0.notify_one();
+            }
+            Ok(n)
+        }
+    }
+
+    let (clt, srv) = duplex(1024);
+    let (clt_rx, clt_tx) = split(clt);
+    let (srv_rx, srv_tx) = split(srv);
+    let fut = async {
+        try_join!(
+            async {
+                let mut clt = Framed::new(clt_tx, clt_rx);
+                for n in [1u32, 2] {
+                    HeaderEncoder.encode(
+                        HeaderRef {
+                            instance: "wrpc-test:pipelining/handler",
+                            name: "f",
+                        },
+                        clt.tx.write_buffer_mut(),
+                    )?;
+                    let tx = transmit(<(u32,) as Encode>::Encoder::default(), &mut clt.tx, (n,))?;
+                    tx.await?;
+                }
+                for n in [1u32, 2] {
+                    let dec = <(u32,) as Decode>::Decoder::default();
+                    let ((m,), io) = receive(dec, &mut clt.rx).await?;
+                    io.await?;
+                    ensure!(m == n);
+                }
+                anyhow::Ok(())
+            },
+            async {
+                let handler = Handler(Arc::default());
+                let mut lis = Listener::new(srv_tx, srv_rx);
+                let mut invocations = FuturesUnordered::default();
+                loop {
+                    select! {
+                        next = lis.accept(), if invocations.len() < MAX_INVOCATIONS => {
+                            let Some((Header { instance, name }, srv)) = next? else {
+                                break;
+                            };
+                            let Ok(fut) = bindings::handle(&handler, &instance, &name, srv) else {
+                                bail!("`{instance}#{name}` is not exported");
+                            };
+                            invocations.push(fut);
+                        }
+                        Some(res) = invocations.next() => res?,
+                    }
+                }
+                invocations.try_collect::<()>().await
+            },
+        )
+    };
+    time::timeout(Duration::from_secs(10), fut)
+        .await
+        .context("pipelined invocation blocked")??;
     Ok(())
 }
 

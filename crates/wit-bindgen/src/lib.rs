@@ -576,11 +576,12 @@
 /// the generated bindings. It takes a value that implements the generated
 /// `Handler` traits, the instance and function name of the invocation header
 /// and a [`Serve`](wrpc_transport::Serve) server, such as the
-/// [`Framed`](wrpc_transport::Framed) returned by `wrpc_transport::Listener::accept`. It returns a
+/// [`Server`](wrpc_transport::Server) returned by `wrpc_transport::Listener::accept`. It returns a
 /// future serving the invocation if the world exports the invoked function, and
 /// the server back otherwise, so that it can be passed to the `handle` function of another
 /// world to serve several of them on one connection. Nothing is spawned and the caller
-/// accepts the connections and drives them:
+/// accepts the connections and drives them, polling the futures of several invocations
+/// concurrently, up to a bound of its choice, pipelines them:
 ///
 /// ```
 /// use tokio::io::{AsyncRead, AsyncWrite};
