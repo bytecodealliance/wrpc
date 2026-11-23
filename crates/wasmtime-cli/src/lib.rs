@@ -23,7 +23,7 @@ use wasmtime::component::{
     self, Accessor, Component, Func, Instance, InstancePre, Linker, ResourceAny, ResourceTable,
     ResourceType, Type, types,
 };
-use wasmtime::{Config, Engine, Memory, MemoryType, Store, format_err};
+use wasmtime::{Config, Engine, Memory, MemoryType, Store};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpCtxView, WasiHttpView};
 use wrpc_transport::{Codec, Listener};
@@ -54,12 +54,35 @@ pub struct Ctx {
     pub resources: HashMap<Uuid, ResourceAny>,
 }
 
-fn lift_resource(cx: &mut Ctx, _: &Type, id: Bytes) -> wasmtime::Result<ResourceAny> {
-    let id = Uuid::from_slice_le(&id)?;
-    cx.resources
-        .get(&id)
-        .copied()
-        .ok_or_else(|| format_err!("resource `{id}` not found"))
+fn error_invalid_data(msg: String) -> wasmtime::Error {
+    std::io::Error::new(std::io::ErrorKind::InvalidData, msg).into()
+}
+
+fn lift_resource(
+    cx: &Ctx,
+    used: &mut HashMap<Uuid, bool>,
+    ty: &Type,
+    id: Bytes,
+) -> wasmtime::Result<ResourceAny> {
+    let (Type::Own(expected) | Type::Borrow(expected)) = ty else {
+        wasmtime::bail!("value type mismatch")
+    };
+    let id = Uuid::from_slice_le(&id).map_err(|err| error_invalid_data(err.to_string()))?;
+    let Some(resource) = cx.resources.get(&id).copied() else {
+        return Err(error_invalid_data(format!("resource `{id}` not found")));
+    };
+    if resource.ty() != *expected {
+        return Err(error_invalid_data(format!("resource `{id}` type mismatch")));
+    }
+    let own = matches!(ty, Type::Own(..));
+    if let Some(prev) = used.insert(id, own)
+        && (own || prev)
+    {
+        return Err(error_invalid_data(format!(
+            "owned resource `{id}` used more than once"
+        )));
+    }
+    Ok(resource)
 }
 
 fn lower_resource(
@@ -270,7 +293,23 @@ async fn call(
     guest: &[ResourceType],
     params: Vec<Val>,
 ) -> anyhow::Result<Vec<Val>> {
-    let params = store.with(|store| lift(store, export.params.iter(), params, lift_resource))?;
+    let params = store.with(|mut store| -> wasmtime::Result<_> {
+        let ty = func.ty(&store);
+        let mut used = HashMap::default();
+        let params = lift(
+            &mut store,
+            ty.params().map(|(.., ty)| ty),
+            params,
+            |cx, ty, id| lift_resource(cx, &mut used, ty, id),
+        )?;
+        let cx = store.data_mut();
+        for (id, own) in used {
+            if own {
+                cx.resources.remove(&id);
+            }
+        }
+        Ok(params)
+    })?;
     let mut results = vec![component::Val::Bool(false); export.results.len()];
     func.call_concurrent(store, &params, &mut results)
         .await
