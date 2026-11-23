@@ -110,7 +110,7 @@ pub fn handle_interface<S__, H__>(
     func: &str,
     srv: S__,
 ) -> ::core::result::Result<
-    impl ::core::future::Future<Output = {anyhow}::Result<()>> + ::core::marker::Send + use<S__, H__>,
+    impl ::core::future::Future<Output = ::core::result::Result<(), {wrpc_core}::ServeError<{anyhow}::Error>>> + ::core::marker::Send + use<S__, H__>,
     S__,
 >
 where
@@ -148,7 +148,7 @@ pub(crate) async fn serve__<S__, H__>(
     handler: H__,
     func: usize,
     srv: S__,
-) -> {anyhow}::Result<()>
+) -> ::core::result::Result<(), {wrpc_core}::ServeError<{anyhow}::Error>>
 where
     S__: {wrpc_core}::Serve,
     H__: Handler{resource_traits} + ::core::marker::Send + ::core::marker::Sync,
@@ -159,11 +159,6 @@ where
             wrpc_core = self.r#gen.wrpc_core_path(),
         );
         for (i, func) in funcs_to_export.iter().enumerate() {
-            let fqn = if instance.is_empty() {
-                func.name.to_string()
-            } else {
-                format!("{instance}.{}", func.name)
-            };
             let params_ty = func
                 .params
                 .iter()
@@ -241,10 +236,7 @@ where
                 r#"
                     ::core::result::Result::Ok::<_, {anyhow}::Error>({results})
             }});
-            {anyhow}::Context::context(
-                res.await,
-                "failed to serve `{fqn}` invocation",
-            )
+            res.await
         }}"#,
                 anyhow = self.r#gen.anyhow_path(),
             );

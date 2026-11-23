@@ -242,7 +242,8 @@ async fn invoke_tuple() -> anyhow::Result<()> {
                 assert_eq!(got, params);
                 anyhow::Ok(results.as_slice())
             })
-            .await
+            .await?;
+            anyhow::Ok(())
         },
     )?;
     assert_eq!(got, results);

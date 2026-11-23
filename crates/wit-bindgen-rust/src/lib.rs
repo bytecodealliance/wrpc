@@ -477,7 +477,7 @@ pub fn handle<S__, H__>(
     func: &str,
     srv: S__,
 ) -> ::core::result::Result<
-    impl ::core::future::Future<Output = {anyhow}::Result<()>> + ::core::marker::Send + use<S__, H__>,
+    impl ::core::future::Future<Output = ::core::result::Result<(), {wrpc_core}::ServeError<{anyhow}::Error>>> + ::core::marker::Send + use<S__, H__>,
     S__,
 >
 where

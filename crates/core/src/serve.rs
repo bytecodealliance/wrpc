@@ -1,5 +1,8 @@
 //! wRPC transport server handle
 
+use core::error::Error;
+use core::fmt;
+
 use bytes::BytesMut;
 use futures::future;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -13,6 +16,37 @@ use crate::{
     receive,
 };
 
+/// Error of serving an invocation, by the side at fault
+#[derive(Debug)]
+pub enum ServeError<E> {
+    /// Receiving the parameters or the rest of the invocation failed, such as on malformed,
+    /// truncated or unexpected data, or on data for an asynchronous parameter the handler dropped
+    Request(std::io::Error),
+    /// The handler failed
+    Handler(E),
+    /// Encoding or transmitting the results failed
+    Response(std::io::Error),
+}
+
+impl<E: fmt::Display> fmt::Display for ServeError<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Request(..) => f.write_str("failed to receive request"),
+            Self::Handler(err) => write!(f, "{err:#}"),
+            Self::Response(..) => f.write_str("failed to send response"),
+        }
+    }
+}
+
+impl<E: fmt::Debug + fmt::Display> Error for ServeError<E> {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Request(err) | Self::Response(err) => Some(err),
+            Self::Handler(..) => None,
+        }
+    }
+}
+
 /// Server serving invocations with [`Send`] futures, such as [`Server`], see [`Server::serve`]
 pub trait Serve {
     /// Serves an invocation using `codec` by calling `f` with its parameters, see
@@ -23,13 +57,12 @@ pub trait Serve {
         self,
         codec: Codec<E, D>,
         f: impl FnOnce(D::Item) -> Fut + Send,
-    ) -> impl Future<Output = Result<(), Err>> + Send
+    ) -> impl Future<Output = Result<(), ServeError<Err>>> + Send
     where
         E: Transmit + Encoder<T, Error = std::io::Error> + Send + 'static,
         D: Decoder<Error = std::io::Error> + Receive + Send + 'static,
         D::Item: Send,
-        Fut: Future<Output = Result<T, Err>> + Send,
-        Err: From<std::io::Error>;
+        Fut: Future<Output = Result<T, Err>> + Send;
 }
 
 /// Server serving an invocation accepted by a [`Listener`](crate::Listener)
@@ -59,11 +92,10 @@ where
         self,
         codec: Codec<E, D>,
         f: impl AsyncFnOnce(D::Item) -> Result<T, Err>,
-    ) -> Result<(), Err>
+    ) -> Result<(), ServeError<Err>>
     where
         E: Transmit + Encoder<T, Error = std::io::Error>,
         D: Decoder<Error = std::io::Error> + Receive,
-        Err: From<std::io::Error>,
     {
         let Self {
             tx_rx,
@@ -72,24 +104,30 @@ where
             listener_rx_tx,
         } = self;
         let Codec { mut enc, dec } = codec;
-        let (params, mut rx) = receive(dec, rx).await?;
+        let (params, mut rx) = receive(dec, rx).await.map_err(ServeError::Request)?;
         trace!("received sync parameters");
         future::try_join(
             async {
-                (&mut rx).await?;
+                (&mut rx).await.map_err(ServeError::Request)?;
                 _ = listener_rx_tx.send(rx.into_inner());
-                Ok::<_, Err>(())
+                Ok(())
             },
             async {
-                let results = f(params).in_current_span().await?;
+                let results = f(params)
+                    .in_current_span()
+                    .await
+                    .map_err(ServeError::Handler)?;
                 let mut data = BytesMut::default();
-                enc.encode(results, &mut data)?;
-                let mut tx = tx_rx.await.map_err(|_| error_writer_lost())?;
+                enc.encode(results, &mut data)
+                    .map_err(ServeError::Response)?;
+                let mut tx = tx_rx
+                    .await
+                    .map_err(|_| ServeError::Response(error_writer_lost()))?;
                 debug!("transmitting results");
-                let fut = transmit_encoded(enc, &mut tx, data)?;
-                fut.await?;
+                let fut = transmit_encoded(enc, &mut tx, data).map_err(ServeError::Response)?;
+                fut.await.map_err(ServeError::Response)?;
                 _ = next_tx_tx.send(tx);
-                Ok::<_, Err>(())
+                Ok(())
             },
         )
         .await?;
@@ -106,13 +144,12 @@ where
         self,
         codec: Codec<E, D>,
         f: impl FnOnce(D::Item) -> Fut + Send,
-    ) -> impl Future<Output = Result<(), Err>> + Send
+    ) -> impl Future<Output = Result<(), ServeError<Err>>> + Send
     where
         E: Transmit + Encoder<T, Error = std::io::Error> + Send + 'static,
         D: Decoder<Error = std::io::Error> + Receive + Send + 'static,
         D::Item: Send,
         Fut: Future<Output = Result<T, Err>> + Send,
-        Err: From<std::io::Error>,
     {
         Server::serve(self, codec, async move |params| f(params).await)
     }
@@ -123,13 +160,12 @@ where
 pub fn serve<P, R, S, Fut, Err>(
     srv: S,
     f: impl FnOnce(P) -> Fut + Send,
-) -> impl Future<Output = Result<(), Err>> + Send
+) -> impl Future<Output = Result<(), ServeError<Err>>> + Send
 where
     S: Serve,
     P: Decode<Decoder: Send + 'static> + Send,
     R: Encode<Encoder: Send + 'static>,
     Fut: Future<Output = Result<R, Err>> + Send,
-    Err: From<std::io::Error>,
 {
     srv.serve(Codec::<R::Encoder, P::Decoder>::default(), f)
 }

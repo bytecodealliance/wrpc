@@ -6,10 +6,10 @@ use std::rc::Rc;
 
 use anyhow::{Context as _, ensure};
 use bytes::{Bytes, BytesMut};
-use futures::StreamExt as _;
 use futures::channel::{mpsc, oneshot};
 use futures::future::LocalBoxFuture;
 use futures::stream::{self, BoxStream};
+use futures::{StreamExt as _, TryFutureExt as _};
 use http::header::CONTENT_TYPE;
 use http::{HeaderValue, StatusCode};
 use http_body::Body as _;
@@ -152,7 +152,8 @@ async fn peer_cancel() -> anyhow::Result<()> {
                         spawn(s.collect::<Vec<_>>());
                         anyhow::Ok(())
                     })
-                    .await
+                    .await?;
+                    Ok(())
                 }
             })
             .await
@@ -210,7 +211,9 @@ async fn response_parts() -> anyhow::Result<()> {
             let headers = &mut req.parts.headers;
             headers.insert("foo", HeaderValue::from_static("bar"));
             headers.insert("req-content-type", parts.headers[CONTENT_TYPE].clone());
-            serve::<(), _, _, _, _>(req, async |()| anyhow::Ok((Bytes::from_static(b"baz"),))).await
+            serve::<(), _, _, _, _>(req, async |()| anyhow::Ok((Bytes::from_static(b"baz"),)))
+                .await?;
+            Ok(())
         })
         .await
         .context("failed to serve HTTP/2 connection")
@@ -263,7 +266,8 @@ async fn buffered() -> anyhow::Result<()> {
             let (Header { instance, name }, srv, res) = wrpc_http::accept(Full::new(body)).await?;
             ensure!(instance == "foo" && name == "bar");
             let ((), (res, body)) = try_join!(
-                serve::<Bytes, _, _, _, _>(srv, async |params| anyhow::Ok(params)),
+                serve::<Bytes, _, _, _, _>(srv, async |params| anyhow::Ok(params))
+                    .map_err(anyhow::Error::from),
                 async {
                     let res = res.await?;
                     let (res, body) = res.into_parts();
@@ -303,7 +307,8 @@ async fn local() -> anyhow::Result<()> {
                         <(LocalBoxFuture<'static, String>,) as Decode>::Decoder,
                     >::default(),
                     async |(greeting,)| anyhow::Ok((format!("{}, {name}", greeting.await),)),
-                ),
+                )
+                .map_err(anyhow::Error::from),
                 async {
                     let res = res.await?;
                     let (res, body) = res.into_parts();

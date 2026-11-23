@@ -666,7 +666,8 @@ pub async fn serve_http_invocation(
         assert_eq!(buf.concat(), b"client->server");
         let results: BoxStream<'static, Bytes> =
             Box::pin(stream::iter([Bytes::from_static(b"server->client")]));
-        Ok((Bytes::from_static(b"foo"), results))
+        anyhow::Ok((Bytes::from_static(b"foo"), results))
     })
-    .await
+    .await?;
+    Ok(())
 }

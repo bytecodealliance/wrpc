@@ -242,7 +242,8 @@ async fn js_http_client() -> anyhow::Result<()> {
                 let Ok(fut) = echo::handle(&echo::Echo, &instance, &name, srv) else {
                     bail!("`{instance}#{name}` is not exported");
                 };
-                fut.await
+                fut.await?;
+                Ok(())
             })
         },
         &format!("http://{addr}"),

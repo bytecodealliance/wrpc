@@ -26,7 +26,7 @@ use tokio_util::codec::{Decoder, Encoder, FramedRead};
 use tokio_util::io::StreamReader;
 use wrpc_core::{
     Codec, FrameDecoder, FrameEncoder, FrameRef, Header, HeaderDecoder, HeaderEncoder, HeaderRef,
-    Invoke, Receipt, Receive, Serve, Transmit, error_data_after_end, receive,
+    Invoke, Receipt, Receive, Serve, ServeError, Transmit, error_data_after_end, receive,
 };
 
 /// Media type of wRPC request and response bodies
@@ -378,11 +378,10 @@ where
         self,
         codec: Codec<E, D>,
         f: impl AsyncFnOnce(D::Item) -> Result<R, Err>,
-    ) -> Result<(), Err>
+    ) -> Result<(), ServeError<Err>>
     where
         E: Transmit + Encoder<R, Error = std::io::Error> + Send + 'static,
         D: Decoder<Error = std::io::Error> + Receive,
-        Err: From<std::io::Error>,
     {
         let Self {
             rx,
@@ -393,7 +392,7 @@ where
         let (params, rx) = match receive(dec, rx).await {
             Ok(res) => res,
             Err(err) if err.kind() == std::io::ErrorKind::ConnectionReset => return Ok(()),
-            Err(err) => return Err(err.into()),
+            Err(err) => return Err(ServeError::Request(err)),
         };
         let mut rx = Some(rx);
         let mut rest = None;
@@ -406,15 +405,19 @@ where
                 if err.kind() == std::io::ErrorKind::ConnectionReset {
                     return Poll::Ready(Ok(None));
                 }
-                return Poll::Ready(Err(err.into()));
+                return Poll::Ready(Err(ServeError::Request(err)));
             }
-            results.as_mut().poll(cx).map(|res| res.map(Some))
+            results
+                .as_mut()
+                .poll(cx)
+                .map(|res| res.map(Some).map_err(ServeError::Handler))
         })
         .await?
         else {
             return Ok(());
         };
-        let mut body = Body::new(enc, BytesMut::default(), results)?;
+        let mut body =
+            Body::new(enc, BytesMut::default(), results).map_err(ServeError::Response)?;
         let (tx, sent) = oneshot::channel();
         body.sent.tx = Some(tx);
         parts
@@ -429,13 +432,19 @@ where
         }
         let mut sent = Some(sent);
         poll_fn(|cx| {
-            let canceled = poll_sent(cx, &mut sent)?;
+            let canceled = poll_sent(cx, &mut sent).map_err(ServeError::Response)?;
             let end = match poll_end(cx, &mut rx, &mut rest) {
                 Poll::Ready(Ok(())) => true,
                 Poll::Ready(Err(err)) if err.kind() == std::io::ErrorKind::ConnectionReset => {
                     return Poll::Ready(Ok(()));
                 }
-                Poll::Ready(Err(err)) => return Poll::Ready(Err(sent_error(&mut sent, err))),
+                Poll::Ready(Err(err)) => {
+                    if let Some(Ok(Some(Err(err)))) = sent.as_mut().map(oneshot::Receiver::try_recv)
+                    {
+                        return Poll::Ready(Err(ServeError::Response(err)));
+                    }
+                    return Poll::Ready(Err(ServeError::Request(err)));
+                }
                 Poll::Pending => false,
             };
             if canceled {
@@ -446,8 +455,7 @@ where
             }
             Poll::Ready(Ok(()))
         })
-        .await?;
-        Ok(())
+        .await
     }
 }
 
@@ -462,13 +470,12 @@ where
         self,
         codec: Codec<E, D>,
         f: impl FnOnce(D::Item) -> Fut + Send,
-    ) -> impl Future<Output = Result<(), Err>> + Send
+    ) -> impl Future<Output = Result<(), ServeError<Err>>> + Send
     where
         E: Transmit + Encoder<R, Error = std::io::Error> + Send + 'static,
         D: Decoder<Error = std::io::Error> + Receive + Send + 'static,
         D::Item: Send,
         Fut: Future<Output = Result<R, Err>> + Send,
-        Err: From<std::io::Error>,
     {
         IncomingRequest::serve(self, codec, async move |params| f(params).await)
     }

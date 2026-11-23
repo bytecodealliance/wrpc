@@ -10,6 +10,7 @@ use anyhow::{Context as _, anyhow, ensure};
 use bytes::Bytes;
 use criterion::measurement::WallTime;
 use criterion::{BenchmarkGroup, Criterion};
+use futures::TryFutureExt as _;
 use http::request::Parts;
 use http_body_util::BodyExt;
 use http_body_util::combinators::UnsyncBoxBody;
@@ -119,9 +120,9 @@ impl Func {
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'a>> {
         let res = match self {
             Self::Ping => ping_bindings_wrpc::handle(handler, instance, name, srv)
-                .map(|fut| Box::pin(fut) as Pin<Box<dyn Future<Output = _> + Send>>),
+                .map(|fut| Box::pin(fut.err_into()) as Pin<Box<dyn Future<Output = _> + Send>>),
             Self::Greet => greet_bindings_wrpc::handle(handler, instance, name, srv)
-                .map(|fut| Box::pin(fut) as Pin<Box<dyn Future<Output = _> + Send>>),
+                .map(|fut| Box::pin(fut.err_into()) as Pin<Box<dyn Future<Output = _> + Send>>),
         };
         res.unwrap_or_else(|_| {
             let err = anyhow!("`{instance}#{name}` is not exported");
