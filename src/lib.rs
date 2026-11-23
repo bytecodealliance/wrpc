@@ -9,3 +9,6 @@ pub use wrpc_http as http;
 
 #[cfg(feature = "wasmtime")]
 pub use wrpc_wasmtime as wasmtime;
+
+#[cfg(feature = "wave")]
+pub use wrpc_wave as wave;
