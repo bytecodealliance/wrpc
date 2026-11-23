@@ -4,28 +4,29 @@ use core::time::Duration;
 use std::io::ErrorKind;
 use std::rc::Rc;
 
-use anyhow::{Context as _, ensure};
+use anyhow::{Context as _, bail, ensure};
 use bytes::{Bytes, BytesMut};
+use futures::StreamExt as _;
 use futures::channel::{mpsc, oneshot};
-use futures::future::LocalBoxFuture;
+use futures::future::{self, LocalBoxFuture};
 use futures::stream::{self, BoxStream};
-use futures::{StreamExt as _, TryFutureExt as _};
 use http::header::CONTENT_TYPE;
 use http::{HeaderValue, StatusCode};
 use http_body::Body as _;
 use http_body_util::combinators::UnsyncBoxBody;
 use http_body_util::{BodyExt, Full};
+use hyper::body::Incoming;
 use hyper::client::conn::http2::{SendRequest, handshake};
 use hyper::server::conn::http2::Builder;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use tokio::io::{AsyncRead, copy, duplex, sink};
 use tokio::time::sleep;
-use tokio::{join, spawn, try_join};
+use tokio::{join, select, spawn, try_join};
 use tokio_util::codec::Encoder as _;
 use tokio_util::io::StreamReader;
 use wrpc_core::{
-    Codec, Decode, Encode, FrameEncoder, FrameRef, Header, HeaderEncoder, HeaderRef, invoke,
-    invoke_blocking, serve,
+    Codec, Decode, Encode, FrameEncoder, FrameRef, Header, HeaderEncoder, HeaderRef, ServeError,
+    invoke, invoke_blocking, serve,
 };
 use wrpc_http::{Body, Listener, OutgoingRequest};
 
@@ -64,7 +65,11 @@ async fn http2() -> anyhow::Result<()> {
                     serve::<(), (), _, _, _>(req, async |()| anyhow::Ok(())),
                     lis.next()
                 );
-                res.expect_err("invalid data must fail the invocation");
+                match res {
+                    Err(ServeError::Request(..)) => {}
+                    Ok(()) if path.is_empty() => {}
+                    res => bail!("unexpected result `{res:?}`"),
+                }
                 ensure!(next.is_none(), "connection must close cleanly");
                 Ok(())
             },
@@ -72,11 +77,13 @@ async fn http2() -> anyhow::Result<()> {
                 let body = Full::new(buf.freeze()).map_err(|err| match err {});
                 let req = http::Request::new(body.boxed_unsync());
                 sender.ready().await?;
-                _ = async {
+                let res = async {
                     let res = sender.send_request(req).await?;
-                    res.into_body().collect().await
-                }
-                .await;
+                    let body = res.into_body().collect().await?;
+                    anyhow::Ok(body)
+                };
+                res.await
+                    .expect_err("invalid data must fail the invocation");
                 Ok(())
             },
         )?;
@@ -97,7 +104,7 @@ async fn unread_params() -> anyhow::Result<()> {
                 }),
                 lis.next()
             );
-            res.expect_err("unread parameters must fail the invocation");
+            res?;
             ensure!(next.is_none(), "connection must close cleanly");
             Ok(())
         },
@@ -139,18 +146,20 @@ async fn peer_cancel() -> anyhow::Result<()> {
     }
 
     let (done_tx, mut done_rx) = mpsc::unbounded();
+    let (started_tx, mut started_rx) = mpsc::unbounded();
     wrpc_test::with_http2(
         async |stream| {
             wrpc_test::serve_http(stream, move |_, header, req| {
                 let done = Done(done_tx.clone());
+                let started_tx = started_tx.clone();
                 async move {
                     if header.name != "stream" {
                         return wrpc_test::serve_http_invocation(header, req).await;
                     }
                     let _done = done;
-                    serve::<(BoxStream<'static, Bytes>,), (), _, _, _>(req, async |(s,)| {
-                        spawn(s.collect::<Vec<_>>());
-                        anyhow::Ok(())
+                    serve::<(BoxStream<'static, Bytes>,), (), _, _, _>(req, async |(_s,)| {
+                        started_tx.unbounded_send(())?;
+                        future::pending::<anyhow::Result<()>>().await
                     })
                     .await?;
                     Ok(())
@@ -173,8 +182,12 @@ async fn peer_cancel() -> anyhow::Result<()> {
                     sender.send_request(req.map(BodyExt::boxed_unsync))
                 },
             };
-            let ((), io) = invoke::<_, (), _>(clt, "foo", "stream", (s,)).await?;
-            drop(io);
+            select! {
+                _ = invoke::<_, (), _>(clt, "foo", "stream", (s,)) => {
+                    bail!("invocation must not complete");
+                }
+                _ = started_rx.next() => {}
+            }
             done_rx.next().await.context("invocation was not served")?;
             sender.ready().await?;
             wrpc_test::assert_http_invocation(parts, |req| sender.send_request(req)).await
@@ -207,8 +220,8 @@ async fn pooling() -> anyhow::Result<()> {
 async fn response_parts() -> anyhow::Result<()> {
     let serve = async |stream| {
         wrpc_test::serve_http(stream, |parts, _, mut req| async move {
-            req.parts.status = StatusCode::IM_A_TEAPOT;
-            let headers = &mut req.parts.headers;
+            req.req.parts.status = StatusCode::IM_A_TEAPOT;
+            let headers = &mut req.req.parts.headers;
             headers.insert("foo", HeaderValue::from_static("bar"));
             headers.insert("req-content-type", parts.headers[CONTENT_TYPE].clone());
             serve::<(), _, _, _, _>(req, async |()| anyhow::Ok((Bytes::from_static(b"baz"),)))
@@ -263,18 +276,11 @@ async fn buffered() -> anyhow::Result<()> {
             let body = body.collect().await?;
             let body = body.to_bytes();
             ensure!(size == u64::try_from(body.len()).ok());
-            let (Header { instance, name }, srv, res) = wrpc_http::accept(Full::new(body)).await?;
+            let (Header { instance, name }, srv) = wrpc_http::accept(Full::new(body)).await?;
             ensure!(instance == "foo" && name == "bar");
-            let ((), (res, body)) = try_join!(
-                serve::<Bytes, _, _, _, _>(srv, async |params| anyhow::Ok(params))
-                    .map_err(anyhow::Error::from),
-                async {
-                    let res = res.await?;
-                    let (res, body) = res.into_parts();
-                    let body = body.collect().await?;
-                    anyhow::Ok((res, body))
-                },
-            )?;
+            let res = serve::<Bytes, _, _, _, _>(srv, async |params| anyhow::Ok(params)).await?;
+            let (res, body) = res.into_parts();
+            let body = body.collect().await?;
             ensure!(parts.headers[CONTENT_TYPE] == res.headers[CONTENT_TYPE]);
             Ok(http::Response::from_parts(res, Full::new(body.to_bytes())))
         },
@@ -297,25 +303,19 @@ async fn local() -> anyhow::Result<()> {
                     name: func,
                 },
                 srv,
-                res,
             ) = wrpc_http::accept(req.into_body()).await?;
             ensure!(instance == "foo" && func == "bar");
-            let ((), (res, body)) = try_join!(
-                srv.serve(
+            let res = srv
+                .serve(
                     Codec::<
                         <(String,) as Encode>::Encoder,
                         <(LocalBoxFuture<'static, String>,) as Decode>::Decoder,
                     >::default(),
                     async |(greeting,)| anyhow::Ok((format!("{}, {name}", greeting.await),)),
                 )
-                .map_err(anyhow::Error::from),
-                async {
-                    let res = res.await?;
-                    let (res, body) = res.into_parts();
-                    let body = body.collect().await?;
-                    anyhow::Ok((res, body))
-                },
-            )?;
+                .await?;
+            let (res, body) = res.into_parts();
+            let body = body.collect().await?;
             Ok(http::Response::from_parts(res, Full::new(body.to_bytes())))
         },
     };
@@ -367,5 +367,49 @@ async fn params_error() -> anyhow::Result<()> {
             Ok(())
         },
     )?;
+    Ok(())
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn service_fn() -> anyhow::Result<()> {
+    let (clt, srv) = duplex(65536);
+    let (mut sender, conn) = handshake(TokioExecutor::default(), TokioIo::new(clt)).await?;
+    spawn(conn);
+    let svc = hyper::service::service_fn(|req: http::Request<Incoming>| async move {
+        let (Header { instance, name }, req) = wrpc_http::accept(req.into_body()).await?;
+        ensure!(instance == "foo" && name == "echo");
+        let res =
+            serve::<(BoxStream<'static, Bytes>,), _, _, _, _>(req, async |(s,)| anyhow::Ok((s,)))
+                .await?;
+        anyhow::Ok(res)
+    });
+    spawn(Builder::new(TokioExecutor::default()).serve_connection(TokioIo::new(srv), svc));
+
+    let (tx, rx) = mpsc::unbounded();
+    tx.unbounded_send(Bytes::from_static(b"foo"))?;
+    sender.ready().await?;
+    let (parts, ()) = http::Request::new(()).into_parts();
+    let clt = OutgoingRequest {
+        parts,
+        send: |req: http::Request<Body<_>>| sender.send_request(req.map(BodyExt::boxed_unsync)),
+    };
+    let ((mut s,), io) =
+        invoke::<_, (BoxStream<'static, Bytes>,), _>(clt, "foo", "echo", (rx.boxed(),)).await?;
+    let fut = async {
+        try_join!(
+            async { io.await.context("invocation failed") },
+            async move {
+                assert_eq!(s.next().await, Some(Bytes::from_static(b"foo")));
+                tx.unbounded_send(Bytes::from_static(b"bar"))?;
+                assert_eq!(s.next().await, Some(Bytes::from_static(b"bar")));
+                drop(tx);
+                assert_eq!(s.next().await, None);
+                Ok(())
+            }
+        )
+    };
+    tokio::time::timeout(Duration::from_secs(10), fut)
+        .await
+        .context("response was not streamed")??;
     Ok(())
 }

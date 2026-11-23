@@ -38,8 +38,8 @@ pub type BodyReader<T> = StreamReader<
     <T as http_body::Body>::Data,
 >;
 
-/// Body transmitting a value, the parameters of an [OutgoingRequest] or the results of the response
-/// to an [IncomingRequest], and the asynchronous values nested in it, using `E`
+/// Body transmitting a value, the parameters of an [OutgoingRequest], and the asynchronous values
+/// nested in it, using `E`
 pub struct Body<E> {
     enc: E,
     path: Vec<usize>,
@@ -157,17 +157,8 @@ impl Drop for SentSignal {
 }
 
 /// Receives the invocation header of a request with `body`, returning it along with the
-/// [IncomingRequest] of the invocation and the receiver of the response it sends
-///
-/// Receive the response while [`IncomingRequest::serve`] runs: it resolves only once the response
-/// body was sent.
-pub async fn accept<T>(
-    body: T,
-) -> std::io::Result<(
-    Header,
-    IncomingRequest<T>,
-    oneshot::Receiver<http::Response<UnsyncBoxBody<Bytes, std::io::Error>>>,
-)>
+/// [IncomingRequest] of the invocation
+pub async fn accept<T>(body: T) -> std::io::Result<(Header, IncomingRequest<T>)>
 where
     T: http_body::Body<Error: Into<Box<dyn core::error::Error + Send + Sync>>> + Unpin,
 {
@@ -178,8 +169,7 @@ where
     };
     let rx = rx.map_decoder(|_| FrameDecoder::default());
     let (parts, ()) = http::Response::new(()).into_parts();
-    let (send, res) = oneshot::channel();
-    Ok((header, IncomingRequest { rx, parts, send }, res))
+    Ok((header, IncomingRequest { rx, parts }))
 }
 
 /// Reader of the data of the body of the response a future resolves to, which it awaits on first
@@ -345,18 +335,13 @@ where
     }
 }
 
-/// Incoming request serving the invocation it carries, see [accept], by sending the
-/// response transmitting the results with `send`, with content type [`MEDIA_TYPE`] unless
-/// `parts` set one
-///
-/// Serving resolves only once the response body was sent, so receive the response meanwhile.
+/// Incoming request carrying an invocation, see [accept], served by responding with the
+/// results, with content type [`MEDIA_TYPE`] unless `parts` set one
 pub struct IncomingRequest<T: http_body::Body> {
     /// Frames of the invocation following its header
     pub rx: FramedRead<BodyReader<T>, FrameDecoder>,
     /// Parts of the response
     pub parts: http::response::Parts,
-    /// Sender of the response
-    pub send: oneshot::Sender<http::Response<UnsyncBoxBody<Bytes, std::io::Error>>>,
 }
 
 impl<T> IncomingRequest<T>
@@ -366,96 +351,43 @@ where
     /// Serves the invocation using `codec` by calling `f` with its parameters, see
     /// [`wrpc_core::Server::serve`]
     ///
-    /// It resolves once the response body was sent and the rest of the request body was received,
-    /// failing with the first error, or once the peer canceled the request, when the receiver of
-    /// the response or the response body is dropped before its end or the peer reset the request
-    /// stream. It must be polled for the asynchronous parameters to arrive, and dropping it
-    /// earlier fails the response body.
+    /// Receives the asynchronous parameters while `f` runs and resolves to the response once the
+    /// results `f` returns are encoded. Its [ResponseBody] transmits the asynchronous results and
+    /// receives the rest of the request. A peer resetting the request fails with
+    /// [`ServeError::Request`] of kind [`ConnectionReset`](std::io::ErrorKind::ConnectionReset).
     ///
-    /// Unlike [`Serve`], this does not require [`Send`] parameters and futures, only a [`Send`]
-    /// results encoder.
+    /// Unlike [`Serve`], this does not require [`Send`] values and futures.
     pub async fn serve<E, D, R, Err>(
         self,
         codec: Codec<E, D>,
         f: impl AsyncFnOnce(D::Item) -> Result<R, Err>,
-    ) -> Result<(), ServeError<Err>>
+    ) -> Result<http::Response<ResponseBody<E, D, T>>, ServeError<Err>>
     where
-        E: Transmit + Encoder<R, Error = std::io::Error> + Send + 'static,
+        E: Transmit + Encoder<R, Error = std::io::Error>,
         D: Decoder<Error = std::io::Error> + Receive,
     {
-        let Self {
-            rx,
-            mut parts,
-            mut send,
-        } = self;
+        let Self { rx, mut parts } = self;
         let Codec { enc, dec } = codec;
-        let (params, rx) = match receive(dec, rx).await {
-            Ok(res) => res,
-            Err(err) if err.kind() == std::io::ErrorKind::ConnectionReset => return Ok(()),
-            Err(err) => return Err(ServeError::Request(err)),
-        };
+        let (params, rx) = receive(dec, rx).await.map_err(ServeError::Request)?;
         let mut rx = Some(rx);
         let mut rest = None;
         let mut results = pin!(f(params));
-        let Some(results) = poll_fn(|cx| {
-            if send.poll_canceled(cx).is_ready() {
-                return Poll::Ready(Ok(None));
-            }
+        let results = poll_fn(|cx| {
             if let Poll::Ready(Err(err)) = poll_end(cx, &mut rx, &mut rest) {
-                if err.kind() == std::io::ErrorKind::ConnectionReset {
-                    return Poll::Ready(Ok(None));
-                }
                 return Poll::Ready(Err(ServeError::Request(err)));
             }
-            results
-                .as_mut()
-                .poll(cx)
-                .map(|res| res.map(Some).map_err(ServeError::Handler))
+            results.as_mut().poll(cx).map_err(ServeError::Handler)
         })
-        .await?
-        else {
-            return Ok(());
-        };
-        let mut body =
-            Body::new(enc, BytesMut::default(), results).map_err(ServeError::Response)?;
-        let (tx, sent) = oneshot::channel();
-        body.sent.tx = Some(tx);
+        .await?;
+        let body = Body::new(enc, BytesMut::default(), results).map_err(ServeError::Response)?;
         parts
             .headers
             .entry(CONTENT_TYPE)
             .or_insert(HeaderValue::from_static(MEDIA_TYPE));
-        if send
-            .send(http::Response::from_parts(parts, body.boxed_unsync()))
-            .is_err()
-        {
-            return Ok(());
-        }
-        let mut sent = Some(sent);
-        poll_fn(|cx| {
-            let canceled = poll_sent(cx, &mut sent).map_err(ServeError::Response)?;
-            let end = match poll_end(cx, &mut rx, &mut rest) {
-                Poll::Ready(Ok(())) => true,
-                Poll::Ready(Err(err)) if err.kind() == std::io::ErrorKind::ConnectionReset => {
-                    return Poll::Ready(Ok(()));
-                }
-                Poll::Ready(Err(err)) => {
-                    if let Some(Ok(Some(Err(err)))) = sent.as_mut().map(oneshot::Receiver::try_recv)
-                    {
-                        return Poll::Ready(Err(ServeError::Response(err)));
-                    }
-                    return Poll::Ready(Err(ServeError::Request(err)));
-                }
-                Poll::Pending => false,
-            };
-            if canceled {
-                return Poll::Ready(Ok(()));
-            }
-            if sent.is_some() || !end {
-                return Poll::Pending;
-            }
-            Poll::Ready(Ok(()))
-        })
-        .await
+        Ok(http::Response::from_parts(
+            parts,
+            ResponseBody { body, rx, rest },
+        ))
     }
 }
 
@@ -466,6 +398,122 @@ where
         + Send
         + 'static,
 {
+    type Output = http::Response<UnsyncBoxBody<Bytes, std::io::Error>>;
+
+    fn serve<E, D, R, Fut, Err>(
+        self,
+        codec: Codec<E, D>,
+        f: impl FnOnce(D::Item) -> Fut + Send,
+    ) -> impl Future<Output = Result<Self::Output, ServeError<Err>>> + Send
+    where
+        E: Transmit + Encoder<R, Error = std::io::Error> + Send + 'static,
+        D: Decoder<Error = std::io::Error> + Receive + Send + 'static,
+        D::Item: Send,
+        Fut: Future<Output = Result<R, Err>> + Send,
+    {
+        IncomingRequest::serve(self, codec, async move |params| f(params).await)
+            .map_ok(|res| res.map(BodyExt::boxed_unsync))
+    }
+}
+
+/// Body of the response to an [IncomingRequest], transmitting the results using `E` and receiving
+/// the rest of the request using `D`
+///
+/// It fails on the first error of either and ends once both are done. The rest of the request is
+/// received only while it is polled, which HTTP/2 does only while the response has flow-control
+/// capacity.
+pub struct ResponseBody<E, D, T: http_body::Body> {
+    body: Body<E>,
+    rx: Option<Receipt<D, FramedRead<BodyReader<T>, FrameDecoder>, BodyReader<T>>>,
+    rest: Option<FramedRead<BodyReader<T>, FrameDecoder>>,
+}
+
+impl<E, D, T> http_body::Body for ResponseBody<E, D, T>
+where
+    E: Transmit,
+    D: Receive,
+    T: http_body::Body<Error: Into<Box<dyn core::error::Error + Send + Sync>>> + Unpin,
+{
+    type Data = Bytes;
+    type Error = std::io::Error;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+        let Self { body, rx, rest } = self.get_mut();
+        if let Poll::Ready(Err(err)) = poll_end(cx, rx, rest) {
+            return Poll::Ready(Some(Err(err)));
+        }
+        match ready!(Pin::new(body).poll_frame(cx)) {
+            None if rx.is_some() || rest.is_some() => Poll::Pending,
+            frame => Poll::Ready(frame),
+        }
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.rx.is_none() && self.rest.is_none() && self.body.is_end_stream()
+    }
+
+    fn size_hint(&self) -> SizeHint {
+        let hint = self.body.size_hint();
+        if self.rx.is_none() && self.rest.is_none() {
+            return hint;
+        }
+        let mut lower = SizeHint::default();
+        lower.set_lower(hint.lower());
+        lower
+    }
+}
+
+/// Request of an invocation yielded by a [Listener], which responds to it once served
+pub struct ListenerRequest {
+    /// Incoming request
+    pub req: IncomingRequest<hyper::body::Incoming>,
+    res: oneshot::Sender<http::Response<UnsyncBoxBody<Bytes, std::io::Error>>>,
+}
+
+impl ListenerRequest {
+    /// Serves the invocation using `codec` by calling `f` with its parameters and responds with
+    /// the results, see [`IncomingRequest::serve`]
+    ///
+    /// It resolves early once the peer canceled the request.
+    ///
+    /// Unlike [`Serve`], this does not require [`Send`] parameters and futures.
+    pub async fn serve<E, D, R, Err>(
+        self,
+        codec: Codec<E, D>,
+        f: impl AsyncFnOnce(D::Item) -> Result<R, Err>,
+    ) -> Result<(), ServeError<Err>>
+    where
+        E: Transmit + Encoder<R, Error = std::io::Error> + Send + 'static,
+        D: Decoder<Error = std::io::Error> + Receive + Send + 'static,
+    {
+        let Self { req, mut res } = self;
+        let mut fut = pin!(req.serve(codec, f));
+        let ret = poll_fn(|cx| {
+            if res.poll_canceled(cx).is_ready() {
+                return Poll::Ready(Ok(None));
+            }
+            fut.as_mut().poll(cx).map_ok(Some)
+        })
+        .await;
+        let ret = match ret {
+            Ok(Some(ret)) => ret,
+            Ok(None) => return Ok(()),
+            Err(ServeError::Request(err)) if err.kind() == std::io::ErrorKind::ConnectionReset => {
+                return Ok(());
+            }
+            Err(err) => return Err(err),
+        };
+        _ = res.send(ret.map(BodyExt::boxed_unsync));
+        Ok(())
+    }
+}
+
+impl Serve for ListenerRequest {
+    type Output = ();
+
     fn serve<E, D, R, Fut, Err>(
         self,
         codec: Codec<E, D>,
@@ -477,7 +525,7 @@ where
         D::Item: Send,
         Fut: Future<Output = Result<R, Err>> + Send,
     {
-        IncomingRequest::serve(self, codec, async move |params| f(params).await)
+        ListenerRequest::serve(self, codec, async move |params| f(params).await)
     }
 }
 
@@ -486,23 +534,18 @@ where
 /// It drives the connection while polled, so keep polling it while serving the invocations it
 /// yields: forwarding it into a sink that waits for room, such as a bounded worker pool, stalls
 /// the connection while the sink is full. It yields the parts of each request along with the
-/// invocation header and [IncomingRequest] [accept] returns for its body. Requests whose
-/// invocation header can't be read fail and their error is yielded, unless the peer reset them.
-/// Requests without a response sent by their [IncomingRequest] fail. Failing a request resets
-/// its HTTP/2 stream, but fails an HTTP/1 connection. The error of a failed connection is yielded
-/// last, after the items queued before it failed. Limits come from the builder, such as HTTP/2
+/// invocation header and the [ListenerRequest] of the [IncomingRequest] [accept] returns for its
+/// body. Requests whose invocation header can't be read fail and their error is yielded, unless
+/// the peer reset them. Requests whose [ListenerRequest] is dropped or fails before responding
+/// fail. Failing a request resets its HTTP/2 stream, but fails an HTTP/1 connection. The error of
+/// a failed connection is yielded last, after the items queued before it failed. Limits come from
+/// the builder, such as HTTP/2
 /// [`max_concurrent_streams`](auto::Http2Builder::max_concurrent_streams), beyond which streams are
 /// refused with `REFUSED_STREAM`.
 pub struct Listener<'a> {
     conn: Option<BoxFuture<'a, std::io::Result<()>>>,
     err: Option<std::io::Error>,
-    rx: mpsc::Receiver<
-        std::io::Result<(
-            http::request::Parts,
-            Header,
-            IncomingRequest<hyper::body::Incoming>,
-        )>,
-    >,
+    rx: mpsc::Receiver<std::io::Result<(http::request::Parts, Header, ListenerRequest)>>,
 }
 
 impl<'a> Listener<'a> {
@@ -546,11 +589,7 @@ impl<'a> Listener<'a> {
 }
 
 impl Stream for Listener<'_> {
-    type Item = std::io::Result<(
-        http::request::Parts,
-        Header,
-        IncomingRequest<hyper::body::Incoming>,
-    )>;
+    type Item = std::io::Result<(http::request::Parts, Header, ListenerRequest)>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let Self { conn, err, rx } = self.get_mut();
@@ -566,13 +605,7 @@ impl Stream for Listener<'_> {
 }
 
 struct ListenerService {
-    tx: mpsc::Sender<
-        std::io::Result<(
-            http::request::Parts,
-            Header,
-            IncomingRequest<hyper::body::Incoming>,
-        )>,
-    >,
+    tx: mpsc::Sender<std::io::Result<(http::request::Parts, Header, ListenerRequest)>>,
 }
 
 impl hyper::service::Service<http::Request<hyper::body::Incoming>> for ListenerService {
@@ -585,11 +618,14 @@ impl hyper::service::Service<http::Request<hyper::body::Incoming>> for ListenerS
         Box::pin(async move {
             let (parts, body) = req.into_parts();
             match accept(body).await {
-                Ok((header, req, res)) => {
-                    tx.send(Ok((parts, header, req))).await.map_err(|_| {
-                        std::io::Error::new(std::io::ErrorKind::BrokenPipe, "listener dropped")
-                    })?;
-                    res.await.map_err(|oneshot::Canceled| {
+                Ok((header, req)) => {
+                    let (res, rx) = oneshot::channel();
+                    tx.send(Ok((parts, header, ListenerRequest { req, res })))
+                        .await
+                        .map_err(|_| {
+                            std::io::Error::new(std::io::ErrorKind::BrokenPipe, "listener dropped")
+                        })?;
+                    rx.await.map_err(|oneshot::Canceled| {
                         std::io::Error::new(std::io::ErrorKind::BrokenPipe, "response was not sent")
                     })
                 }
