@@ -4359,7 +4359,7 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen-wrpc"
-version = "0.13.0"
+version = "0.13.0-rc.1"
 dependencies = [
  "anyhow",
  "bitflags",
@@ -4375,7 +4375,7 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen-wrpc-go"
-version = "0.15.0"
+version = "0.15.0-rc.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -4386,7 +4386,7 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen-wrpc-js"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -4396,7 +4396,7 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen-wrpc-rust"
-version = "0.13.0"
+version = "0.13.0-rc.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4416,7 +4416,7 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen-wrpc-rust-macro"
-version = "0.13.0"
+version = "0.13.0-rc.1"
 dependencies = [
  "anyhow",
  "macro-string",
@@ -4430,7 +4430,7 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen-wrpc-test"
-version = "0.2.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -4527,7 +4527,7 @@ checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 
 [[package]]
 name = "wrpc"
-version = "0.19.0"
+version = "0.19.0-rc.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4561,7 +4561,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-core"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4576,7 +4576,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-http"
-version = "0.2.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4596,14 +4596,14 @@ dependencies = [
 
 [[package]]
 name = "wrpc-introspect"
-version = "0.9.0"
+version = "0.9.0-rc.1"
 dependencies = [
  "wit-parser 0.254.2",
 ]
 
 [[package]]
 name = "wrpc-test"
-version = "0.5.0"
+version = "0.5.0-rc.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4627,14 +4627,14 @@ dependencies = [
 
 [[package]]
 name = "wrpc-wasi-keyvalue"
-version = "0.4.0"
+version = "0.4.0-rc.1"
 dependencies = [
  "wit-bindgen-wrpc",
 ]
 
 [[package]]
 name = "wrpc-wasi-keyvalue-mem"
-version = "0.4.0"
+version = "0.4.0-rc.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4646,7 +4646,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-wasi-keyvalue-redis"
-version = "0.4.0"
+version = "0.4.0-rc.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4660,7 +4660,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-wasmtime"
-version = "0.2.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4678,7 +4678,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-wasmtime-cli"
-version = "0.11.0"
+version = "0.11.0-rc.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4706,7 +4706,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-wave"
-version = "0.2.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "anyhow",
  "bytes",

@@ -1,7 +1,7 @@
 [package]
 description = "WebAssembly component-native RPC framework based on WIT"
 name = "wrpc"
-version = "0.19.0"
+version = "0.19.0-rc.1"
 
 authors.workspace = true
 categories.workspace = true
@@ -189,20 +189,20 @@ wasmtime-wasi-http = { version = "51", default-features = false }
 web-transport-quinn = { version = "0.13.5", default-features = false }
 wit-bindgen = { version = "0.60", default-features = false }
 wit-bindgen-core = { version = "0.60", default-features = false }
-wit-bindgen-wrpc = { version = "0.13", default-features = false, path = "./crates/wit-bindgen" }
-wit-bindgen-wrpc-go = { version = "0.15", default-features = false, path = "./crates/wit-bindgen-go" }
-wit-bindgen-wrpc-js = { version = "0.1", default-features = false, path = "./crates/wit-bindgen-js" }
-wit-bindgen-wrpc-rust = { version = "0.13", default-features = false, path = "./crates/wit-bindgen-rust" }
-wit-bindgen-wrpc-rust-macro = { version = "0.13", default-features = false, path = "./crates/wit-bindgen-rust-macro" }
-wit-bindgen-wrpc-test = { version = "0.2", default-features = false, path = "./crates/wit-bindgen-test" }
+wit-bindgen-wrpc = { version = "0.13.0-rc.1", default-features = false, path = "./crates/wit-bindgen" }
+wit-bindgen-wrpc-go = { version = "0.15.0-rc.1", default-features = false, path = "./crates/wit-bindgen-go" }
+wit-bindgen-wrpc-js = { version = "0.1.0-rc.1", default-features = false, path = "./crates/wit-bindgen-js" }
+wit-bindgen-wrpc-rust = { version = "0.13.0-rc.1", default-features = false, path = "./crates/wit-bindgen-rust" }
+wit-bindgen-wrpc-rust-macro = { version = "0.13.0-rc.1", default-features = false, path = "./crates/wit-bindgen-rust-macro" }
+wit-bindgen-wrpc-test = { version = "0.2.0-rc.1", default-features = false, path = "./crates/wit-bindgen-test" }
 wit-component = { version = "0.263", default-features = false }
 wit-parser = { version = "0.254", default-features = false }
-wrpc-core = { version = "0.1", path = "./crates/core", default-features = false }
-wrpc-http = { version = "0.2", path = "./crates/http", default-features = false }
-wrpc-introspect = { version = "0.9", default-features = false, path = "./crates/introspect" }
+wrpc-core = { version = "0.1.0-rc.1", path = "./crates/core", default-features = false }
+wrpc-http = { version = "0.2.0-rc.1", path = "./crates/http", default-features = false }
+wrpc-introspect = { version = "0.9.0-rc.1", default-features = false, path = "./crates/introspect" }
 wrpc-test = { path = "./crates/test", default-features = false }
-wrpc-wasi-keyvalue = { version = "0.4", path = "./crates/wasi-keyvalue", default-features = false }
-wrpc-wasi-keyvalue-mem = { version = "0.4", path = "./crates/wasi-keyvalue-mem", default-features = false }
-wrpc-wasi-keyvalue-redis = { version = "0.4", path = "./crates/wasi-keyvalue-redis", default-features = false }
-wrpc-wasmtime = { version = "0.2", path = "./crates/wasmtime", default-features = false }
-wrpc-wasmtime-cli = { version = "0.11", path = "./crates/wasmtime-cli", default-features = false }
+wrpc-wasi-keyvalue = { version = "0.4.0-rc.1", path = "./crates/wasi-keyvalue", default-features = false }
+wrpc-wasi-keyvalue-mem = { version = "0.4.0-rc.1", path = "./crates/wasi-keyvalue-mem", default-features = false }
+wrpc-wasi-keyvalue-redis = { version = "0.4.0-rc.1", path = "./crates/wasi-keyvalue-redis", default-features = false }
+wrpc-wasmtime = { version = "0.2.0-rc.1", path = "./crates/wasmtime", default-features = false }
+wrpc-wasmtime-cli = { version = "0.11.0-rc.1", path = "./crates/wasmtime-cli", default-features = false }

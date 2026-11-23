@@ -1,6 +1,6 @@
 [package]
 name = "wrpc-wave"
-version = "0.2.0"
+version = "0.2.0-rc.1"
 description = "wRPC runtime-agnostic encoding and decoding support for wasm-wave traits"
 
 authors.workspace = true
