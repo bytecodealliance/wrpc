@@ -9,6 +9,10 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[package.metadata.docs.rs]
+features = ["http", "wasmtime", "wasmtime-async", "wave"]
+rustdoc-args = ["--cfg", "docsrs"]
+
 [workspace.package]
 authors = ["Roman Volosatovs <rvolosatovs@riseup.net>"]
 categories = ["wasm"]
