@@ -1875,7 +1875,7 @@ where
     dec: OptionDecoder<T::Decoder>,
     /// Sender of the value of a pending future, until it is received
     tx: Option<oneshot::Sender<T>>,
-    buf: BytesMut,
+    buffer: BytesMut,
     closed: bool,
     _fut: PhantomData<fn() -> F>,
 }
@@ -1888,7 +1888,7 @@ where
         Self {
             dec: OptionDecoder::default(),
             tx: None,
-            buf: BytesMut::default(),
+            buffer: BytesMut::default(),
             closed: true,
             _fut: PhantomData,
         }
@@ -1943,10 +1943,10 @@ where
         };
         let v = if src.is_empty() {
             self.closed = true;
-            self.dec.get_mut().decode_eof(&mut self.buf)
+            self.dec.get_mut().decode_eof(&mut self.buffer)
         } else {
             let dec = self.dec.get_mut();
-            decode_buffered(&mut self.buf, src, |buf| dec.decode(buf))
+            decode_buffered(&mut self.buffer, src, |buf| dec.decode(buf))
         };
         let Some(v) = v? else {
             if self.closed {
@@ -1958,7 +1958,7 @@ where
             self.tx = Some(tx);
             return Poll::Ready(Ok(()));
         };
-        if !self.buf.is_empty() {
+        if !self.buffer.is_empty() {
             return Poll::Ready(Err(error_data_after_end()));
         }
         if tx.send(v).is_err() {
@@ -2261,14 +2261,14 @@ impl Encode for Pin<Box<dyn Stream<Item = Bytes>>> {
 pub struct StreamEncoderRead<T> {
     items: Option<T>,
     /// Data read, but not transmitted yet
-    buf: BytesMut,
+    buffer: BytesMut,
 }
 
 impl<T> Default for StreamEncoderRead<T> {
     fn default() -> Self {
         Self {
             items: None,
-            buf: BytesMut::default(),
+            buffer: BytesMut::default(),
         }
     }
 }
@@ -2286,12 +2286,12 @@ where
         let Some(items) = &mut self.items else {
             return Poll::Ready(Ok(()));
         };
-        if self.buf.is_empty() {
-            self.buf.reserve(READ_CHUNK_SIZE);
+        if self.buffer.is_empty() {
+            self.buffer.reserve(READ_CHUNK_SIZE);
             let n = ready!(poll_read_buf(
                 Pin::new(items),
                 cx,
-                &mut (&mut self.buf).limit(READ_CHUNK_SIZE)
+                &mut (&mut self.buffer).limit(READ_CHUNK_SIZE)
             ))?;
             if n == 0 {
                 self.items = None;
@@ -2299,8 +2299,8 @@ where
                 return Poll::Ready(Ok(()));
             }
         }
-        encode_bytes_frames(path, &self.buf, dst)?;
-        self.buf.clear();
+        encode_bytes_frames(path, &self.buffer, dst)?;
+        self.buffer.clear();
         Poll::Pending
     }
 
@@ -2331,7 +2331,7 @@ where
         }
         dst.put_u8(0x00);
         self.items = Some(items);
-        self.buf = ready;
+        self.buffer = ready;
         Ok(())
     }
 }
@@ -2475,7 +2475,7 @@ where
     dec: OptionDecoder<ChunkDecoder<T>>,
     /// Sender of the chunks and of the end of a pending stream, until it is closed
     tx: Option<(mpsc::Sender<Vec<T>>, oneshot::Sender<()>)>,
-    buf: BytesMut,
+    buffer: BytesMut,
     /// Index of the next element
     offset: usize,
     nested: BTreeMap<usize, T::Decoder>,
@@ -2490,7 +2490,7 @@ where
         Self {
             dec: OptionDecoder::default(),
             tx: None,
-            buf: BytesMut::default(),
+            buffer: BytesMut::default(),
             offset: 0,
             nested: BTreeMap::default(),
             _items: PhantomData,
@@ -2532,7 +2532,7 @@ where
             cx,
             &mut self.tx,
             self.dec.get_mut(),
-            &mut self.buf,
+            &mut self.buffer,
             src,
             |dec, buf| {
                 let mut chunk = Vec::default();
@@ -2629,7 +2629,7 @@ pub struct StreamDecoderBytes<T = Pin<Box<dyn Stream<Item = Bytes> + Send>>> {
     dec: OptionDecoder<CoreVecDecoderBytes>,
     /// Sender of the chunks and of the end of a pending stream, until it is closed
     tx: Option<(mpsc::Sender<Bytes>, oneshot::Sender<()>)>,
-    buf: BytesMut,
+    buffer: BytesMut,
     _items: PhantomData<fn() -> T>,
 }
 
@@ -2638,7 +2638,7 @@ impl<T> Default for StreamDecoderBytes<T> {
         Self {
             dec: OptionDecoder::default(),
             tx: None,
-            buf: BytesMut::default(),
+            buffer: BytesMut::default(),
             _items: PhantomData,
         }
     }
@@ -2672,7 +2672,7 @@ impl<T> Receive for StreamDecoderBytes<T> {
             cx,
             &mut self.tx,
             self.dec.get_mut(),
-            &mut self.buf,
+            &mut self.buffer,
             src,
             |dec, buf| {
                 let Some(mut chunk) = dec.decode(buf)? else {
