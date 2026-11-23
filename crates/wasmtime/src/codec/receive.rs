@@ -11,7 +11,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::PollSender;
 use tracing::error;
 use wasmtime::component::Type;
-use wrpc_core::{Receive, error_data_after_end, error_receiver_closed, error_unknown_path};
+use wrpc_core::{Receive, ReceiveError, error_data_after_end, error_unknown_path};
 
 use crate::{TupleDecoder, Val};
 
@@ -31,16 +31,16 @@ impl Receive for FutureReceiver {
         cx: &mut Context<'_>,
         path: &[usize],
         src: &mut BytesMut,
-    ) -> Poll<std::io::Result<()>> {
+    ) -> Poll<Result<(), ReceiveError>> {
         if let Some((i, rest)) = path.split_first() {
             if *i != 0 || self.tx.is_some() {
-                return Poll::Ready(Err(error_unknown_path(path)));
+                return Poll::Ready(Err(error_unknown_path(path).into()));
             }
             return self.dec.poll_receive(cx, rest, src);
         }
         let Some(tx) = self.tx.take() else {
             if !src.is_empty() || self.closed {
-                return Poll::Ready(Err(error_data_after_end()));
+                return Poll::Ready(Err(error_data_after_end().into()));
             }
             self.closed = true;
             return Poll::Ready(Ok(()));
@@ -62,16 +62,17 @@ impl Receive for FutureReceiver {
                 return Poll::Ready(Err(std::io::Error::new(
                     std::io::ErrorKind::UnexpectedEof,
                     "future closed without a value",
-                )));
+                )
+                .into()));
             }
             self.tx = Some(tx);
             return Poll::Ready(Ok(()));
         };
         if !self.buffer.is_empty() {
-            return Poll::Ready(Err(error_data_after_end()));
+            return Poll::Ready(Err(error_data_after_end().into()));
         }
         if tx.send(v).is_err() {
-            return Poll::Ready(Err(error_receiver_closed()));
+            return Poll::Ready(Err(ReceiveError::Unread));
         }
         Poll::Ready(Ok(()))
     }
@@ -166,34 +167,35 @@ impl Receive for StreamReceiver {
         cx: &mut Context<'_>,
         path: &[usize],
         src: &mut BytesMut,
-    ) -> Poll<std::io::Result<()>> {
+    ) -> Poll<Result<(), ReceiveError>> {
         if !path.is_empty() {
             return self.nested.poll_receive(cx, path, src);
         }
         if src.is_empty() {
             let Some((.., end)) = self.tx.take() else {
-                return Poll::Ready(Err(error_data_after_end()));
+                return Poll::Ready(Err(error_data_after_end().into()));
             };
             if self.list.is_some() || !self.buffer.is_empty() {
                 return Poll::Ready(Err(std::io::Error::new(
                     std::io::ErrorKind::UnexpectedEof,
                     "stream closed within a chunk",
-                )));
+                )
+                .into()));
             }
             _ = end.send(());
             return Poll::Ready(Ok(()));
         }
         let Some((tx, ..)) = &mut self.tx else {
-            return Poll::Ready(Err(error_data_after_end()));
+            return Poll::Ready(Err(error_data_after_end().into()));
         };
-        ready!(tx.poll_reserve(cx)).map_err(|_| error_receiver_closed())?;
+        ready!(tx.poll_reserve(cx)).map_err(|_| ReceiveError::Unread)?;
         self.buffer.extend_from_slice(src);
         src.clear();
         let chunk = self.decode_chunk()?;
         if !chunk.is_empty()
             && let Some((tx, ..)) = &mut self.tx
         {
-            tx.send_item(chunk).map_err(|_| error_receiver_closed())?;
+            tx.send_item(chunk).map_err(|_| ReceiveError::Unread)?;
         }
         Poll::Ready(Ok(()))
     }

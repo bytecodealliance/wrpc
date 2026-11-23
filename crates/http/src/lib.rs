@@ -26,7 +26,8 @@ use tokio_util::codec::{Decoder, Encoder, FramedRead};
 use tokio_util::io::StreamReader;
 use wrpc_core::{
     Codec, FrameDecoder, FrameEncoder, FrameRef, Header, HeaderDecoder, HeaderEncoder, HeaderRef,
-    Invoke, Receipt, Receive, Serve, ServeError, Transmit, error_data_after_end, receive,
+    Invoke, Receipt, Receive, ReceiveError, Serve, ServeError, Transmit, error_data_after_end,
+    receive,
 };
 
 /// Media type of wRPC request and response bodies
@@ -278,7 +279,7 @@ where
                     if let Ok(Some(Err(err))) = sent.try_recv() {
                         return Err(err);
                     }
-                    return Err(err);
+                    return Err(err.into());
                 }
             };
             Ok((
@@ -319,7 +320,7 @@ where
         let canceled = poll_sent(cx, sent)?;
         let end = match poll_end(cx, rx, rest) {
             Poll::Ready(Ok(())) => true,
-            Poll::Ready(Err(err)) => return Poll::Ready(Err(sent_error(sent, err))),
+            Poll::Ready(Err(err)) => return Poll::Ready(Err(sent_error(sent, err.into()))),
             Poll::Pending => false,
         };
         if canceled && end {
@@ -355,6 +356,9 @@ where
     /// results `f` returns are encoded. Its [ResponseBody] transmits the asynchronous results and
     /// receives the rest of the request. A peer resetting the request fails with
     /// [`ServeError::Request`] of kind [`ConnectionReset`](std::io::ErrorKind::ConnectionReset).
+    /// Data for an asynchronous parameter `f` dropped fails with [`ServeError::Unread`] until
+    /// this resolves and fails the [ResponseBody] with
+    /// [`BrokenPipe`](std::io::ErrorKind::BrokenPipe) after.
     ///
     /// Unlike [`Serve`], this does not require [`Send`] values and futures.
     pub async fn serve<E, D, R, Err>(
@@ -368,13 +372,13 @@ where
     {
         let Self { rx, mut parts } = self;
         let Codec { enc, dec } = codec;
-        let (params, rx) = receive(dec, rx).await.map_err(ServeError::Request)?;
+        let (params, rx) = receive(dec, rx).await?;
         let mut rx = Some(rx);
         let mut rest = None;
         let mut results = pin!(f(params));
         let results = poll_fn(|cx| {
             if let Poll::Ready(Err(err)) = poll_end(cx, &mut rx, &mut rest) {
-                return Poll::Ready(Err(ServeError::Request(err)));
+                return Poll::Ready(Err(err.into()));
             }
             results.as_mut().poll(cx).map_err(ServeError::Handler)
         })
@@ -443,7 +447,7 @@ where
     ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
         let Self { body, rx, rest } = self.get_mut();
         if let Poll::Ready(Err(err)) = poll_end(cx, rx, rest) {
-            return Poll::Ready(Some(Err(err)));
+            return Poll::Ready(Some(Err(err.into())));
         }
         match ready!(Pin::new(body).poll_frame(cx)) {
             None if rx.is_some() || rest.is_some() => Poll::Pending,
@@ -672,7 +676,7 @@ fn poll_end<I: AsyncRead + Unpin, D: Receive>(
     cx: &mut Context<'_>,
     rx: &mut Option<Receipt<D, FramedRead<I, FrameDecoder>, I>>,
     rest: &mut Option<FramedRead<I, FrameDecoder>>,
-) -> Poll<std::io::Result<()>> {
+) -> Poll<Result<(), ReceiveError>> {
     if let Some(fut) = rx {
         ready!(Pin::new(fut).poll(cx))?;
         *rest = rx.take().map(Receipt::into_inner);
@@ -680,7 +684,7 @@ fn poll_end<I: AsyncRead + Unpin, D: Receive>(
     if let Some(frames) = rest {
         let frame = ready!(frames.poll_next_unpin(cx)).transpose()?;
         if frame.is_some() {
-            return Poll::Ready(Err(error_data_after_end()));
+            return Poll::Ready(Err(error_data_after_end().into()));
         }
         *rest = None;
     }

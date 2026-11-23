@@ -12,16 +12,20 @@ use tracing::{Instrument as _, debug, trace};
 
 use crate::mux::transmit_encoded;
 use crate::{
-    Codec, Decode, Encode, FrameDecoder, FrameEncoder, Receive, Transmit, error_writer_lost,
-    receive,
+    Codec, Decode, Encode, FrameDecoder, FrameEncoder, Receive, ReceiveError, Transmit,
+    error_writer_lost, receive,
 };
 
 /// Error of serving an invocation, by the side at fault
 #[derive(Debug)]
 pub enum ServeError<E> {
     /// Receiving the parameters or the rest of the invocation failed, such as on malformed,
-    /// truncated or unexpected data, or on data for an asynchronous parameter the handler dropped
+    /// truncated or unexpected data
     Request(std::io::Error),
+    /// The handler dropped an asynchronous parameter, for which the peer was still sending data
+    ///
+    /// The handler, not the peer, is at fault.
+    Unread,
     /// The handler failed
     Handler(E),
     /// Encoding or transmitting the results failed
@@ -32,6 +36,7 @@ impl<E: fmt::Display> fmt::Display for ServeError<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Request(..) => f.write_str("failed to receive request"),
+            Self::Unread => f.write_str("handler dropped an unread parameter"),
             Self::Handler(err) => write!(f, "{err:#}"),
             Self::Response(..) => f.write_str("failed to send response"),
         }
@@ -42,7 +47,16 @@ impl<E: fmt::Debug + fmt::Display> Error for ServeError<E> {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Request(err) | Self::Response(err) => Some(err),
-            Self::Handler(..) => None,
+            Self::Unread | Self::Handler(..) => None,
+        }
+    }
+}
+
+impl<E> From<ReceiveError> for ServeError<E> {
+    fn from(err: ReceiveError) -> Self {
+        match err {
+            ReceiveError::Unread => Self::Unread,
+            ReceiveError::Io(err) => Self::Request(err),
         }
     }
 }
@@ -108,13 +122,13 @@ where
             listener_rx_tx,
         } = self;
         let Codec { mut enc, dec } = codec;
-        let (params, mut rx) = receive(dec, rx).await.map_err(ServeError::Request)?;
+        let (params, mut rx) = receive(dec, rx).await?;
         trace!("received sync parameters");
         future::try_join(
             async {
-                (&mut rx).await.map_err(ServeError::Request)?;
+                (&mut rx).await?;
                 _ = listener_rx_tx.send(rx.into_inner());
-                Ok(())
+                Ok::<_, ServeError<Err>>(())
             },
             async {
                 let results = f(params)

@@ -11,7 +11,7 @@ use tracing::{Instrument as _, debug, instrument, trace};
 
 use crate::{
     Codec, Decode, Encode, FrameDecoder, FrameEncoder, Framed, HeaderEncoder, HeaderRef, Receipt,
-    Receive, Transmission, Transmit, receive, transmit,
+    Receive, ReceiveError, Transmission, Transmit, receive, transmit,
 };
 
 /// Client invoking functions with parameters encoded by `E`, such as [`Framed`], see
@@ -213,7 +213,7 @@ pub struct Invocation<T, U> {
 impl<T, U> Future for Invocation<T, U>
 where
     T: Future<Output = std::io::Result<()>> + Unpin,
-    U: Future<Output = std::io::Result<()>> + Unpin,
+    U: Future<Output = Result<(), ReceiveError>> + Unpin,
 {
     type Output = std::io::Result<()>;
 

@@ -10,17 +10,21 @@ use tokio_util::codec::{Decoder, Encoder, FramedRead, FramedWrite};
 use tracing::debug;
 
 use crate::{
-    FrameDecoder, FrameEncoder, FrameRef, Receive, Transmit, encode_close, encode_frames,
-    error_data_after_end, error_unknown_path,
+    FrameDecoder, FrameEncoder, FrameRef, Receive, ReceiveError, Transmit, encode_close,
+    encode_frames, error_data_after_end, error_unknown_path,
 };
 
 /// Receives a value from the frames read by `rx`, decoding it using `dec`
 ///
 /// Returns the value and the [Receipt] receiving the asynchronous values nested in it. Ingress
 /// fails on a frame on a path, which is not pending, on data after the end of a value, on `rx`
-/// ending before all paths are closed and on an error of `rx`. A decoder, which cannot take data,
+/// ending before all paths are closed, on an error of `rx` and, with [`ReceiveError::Unread`], on
+/// data for an asynchronous value whose consumer was dropped. A decoder, which cannot take data,
 /// such as one of a stream whose chunks are not consumed, stalls ingress.
-pub async fn receive<D, F, I>(mut dec: D, mut rx: F) -> std::io::Result<(D::Item, Receipt<D, F, I>)>
+pub async fn receive<D, F, I>(
+    mut dec: D,
+    mut rx: F,
+) -> Result<(D::Item, Receipt<D, F, I>), ReceiveError>
 where
     F: BorrowMut<FramedRead<I, FrameDecoder>>,
     I: AsyncRead + Unpin,
@@ -34,12 +38,13 @@ where
             return Err(std::io::Error::new(
                 std::io::ErrorKind::UnexpectedEof,
                 "ingress ended before the root path was closed",
-            ));
+            )
+            .into());
         };
         let path = rx.decoder().path();
         if !path.is_empty() {
             let Some(item) = item else {
-                return Err(error_unknown_path(path));
+                return Err(error_unknown_path(path).into());
             };
             break (item, Some(data));
         }
@@ -52,17 +57,18 @@ where
                 dec.decode(&mut buf)?
             };
             if item.is_some() && !buf.is_empty() {
-                return Err(error_data_after_end());
+                return Err(error_data_after_end().into());
             }
         } else if !closed {
-            return Err(error_data_after_end());
+            return Err(error_data_after_end().into());
         }
         if closed {
             let Some(item) = item else {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::UnexpectedEof,
                     "path closed without a value",
-                ));
+                )
+                .into());
             };
             break (item, None);
         }
@@ -107,7 +113,7 @@ where
     I: AsyncRead + Unpin,
     D: Receive,
 {
-    type Output = std::io::Result<()>;
+    type Output = Result<(), ReceiveError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let Self {
@@ -125,7 +131,8 @@ where
                     return Poll::Ready(Err(std::io::Error::new(
                         std::io::ErrorKind::InvalidInput,
                         "decoder did not take all data",
-                    )));
+                    )
+                    .into()));
                 }
                 *data = None;
             }
@@ -137,12 +144,13 @@ where
                 return Poll::Ready(Err(std::io::Error::new(
                     std::io::ErrorKind::UnexpectedEof,
                     "ingress ended before all paths were closed",
-                )));
+                )
+                .into()));
             };
             if !rx.decoder().path().is_empty() {
                 *data = Some(buf);
             } else if *closed || !buf.is_empty() {
-                return Poll::Ready(Err(error_data_after_end()));
+                return Poll::Ready(Err(error_data_after_end().into()));
             } else {
                 *closed = true;
             }

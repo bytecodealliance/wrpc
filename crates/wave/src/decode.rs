@@ -18,7 +18,7 @@ use wasm_tokio::{
     Leb128DecoderI64, Leb128DecoderU16, Leb128DecoderU32, Leb128DecoderU64, Utf8Codec,
 };
 use wasm_wave::wasm::{WasmType, WasmTypeKind, WasmValue};
-use wrpc_core::{Receive, error_unknown_path};
+use wrpc_core::{Receive, ReceiveError, error_unknown_path};
 
 /// Default `max_len` of [`ValueDecoder`] and [`TupleDecoder`]
 pub const DEFAULT_MAX_LEN: u32 = 1 << 24;
@@ -91,8 +91,8 @@ impl<V: WasmValue> Receive for ValueDecoder<V> {
         _cx: &mut Context<'_>,
         path: &[usize],
         _src: &mut BytesMut,
-    ) -> Poll<std::io::Result<()>> {
-        Poll::Ready(Err(error_unknown_path(path)))
+    ) -> Poll<Result<(), ReceiveError>> {
+        Poll::Ready(Err(error_unknown_path(path).into()))
     }
 
     fn is_complete(&self) -> bool {
@@ -158,8 +158,8 @@ impl<V: WasmValue> Receive for TupleDecoder<V> {
         _cx: &mut Context<'_>,
         path: &[usize],
         _src: &mut BytesMut,
-    ) -> Poll<std::io::Result<()>> {
-        Poll::Ready(Err(error_unknown_path(path)))
+    ) -> Poll<Result<(), ReceiveError>> {
+        Poll::Ready(Err(error_unknown_path(path).into()))
     }
 
     fn is_complete(&self) -> bool {
