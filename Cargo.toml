@@ -147,8 +147,6 @@ humantime = { version = "2.1", default-features = false }
 hyper = { version = "1", default-features = false }
 hyper-util = { version = "0.1", default-features = false }
 macro-string = { version = "0.2", default-features = false }
-nuid = { version = "0.6", default-features = false }
-pin-project-lite = { version = "0.2", default-features = false }
 prettyplease = { version = "0.2.37", default-features = false }
 proc-macro2 = { version = "1", default-features = false }
 quinn = { version = "0.11.6", default-features = false }
@@ -163,7 +161,6 @@ serde = { version = "1", default-features = false }
 serde_json = { version = "1", default-features = false }
 syn = { version = "2", default-features = false, features = ["printing"] }
 tempfile = { version = "3", default-features = false }
-test-helpers = { default-features = false, path = "./crates/test-helpers" }
 test-log = { version = "0.2", default-features = false }
 time = { version = "0.3", default-features = false }
 tokio = { version = "1.50", default-features = false }
