@@ -1,5 +1,4 @@
-use core::convert::Infallible;
-use core::future;
+use core::pin::Pin;
 
 use std::fs;
 use std::path::PathBuf;
@@ -7,10 +6,17 @@ use std::process::Command;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
-use anyhow::{Context as _, bail, ensure};
+use anyhow::{Context as _, anyhow, ensure};
+use bytes::Bytes;
 use criterion::measurement::WallTime;
 use criterion::{BenchmarkGroup, Criterion};
-use hyper::service;
+use http::request::Parts;
+use http_body_util::BodyExt;
+use http_body_util::combinators::UnsyncBoxBody;
+use hyper::body::Incoming;
+use hyper::client::conn::http2::SendRequest;
+use hyper_util::client::legacy::ResponseFuture;
+use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::tokio::WithHyperIo;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -18,9 +24,11 @@ use tokio::net::{TcpStream, UnixListener};
 use tokio::runtime::{Handle, Runtime};
 use tokio::task::JoinHandle;
 use tokio::try_join;
+use tokio_util::codec::{Decoder, Encoder};
 use wasmtime::component::{Component, Linker, ResourceTable};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
-use wrpc_transport::{Framed, Header, Listener};
+use wrpc_http::{Body, OutgoingRequest};
+use wrpc_transport::{Codec, Encode, Framed, Header, Invoke, Listener, Receive, Serve, Transmit};
 
 mod ping_bindings_wrpc {
     wit_bindgen_wrpc::generate!({
@@ -81,19 +89,18 @@ enum Func {
 }
 
 impl Func {
-    async fn call(
-        self,
-        clt: &mut Framed<impl AsyncRead + Send + Unpin, impl AsyncWrite + Send + Unpin>,
-    ) -> anyhow::Result<()> {
+    async fn call<C>(self, clt: C) -> anyhow::Result<()>
+    where
+        C: Invoke<<() as Encode>::Encoder> + Invoke<<(&'static str,) as Encode>::Encoder>,
+    {
         match self {
-            Self::Ping => ping_bindings_wrpc::wrpc_bench::bench::ping::ping(&mut *clt)
+            Self::Ping => ping_bindings_wrpc::wrpc_bench::bench::ping::ping(clt)
                 .await
                 .context("failed to call `ping`"),
             Self::Greet => {
-                let greeting =
-                    greet_bindings_wrpc::wrpc_bench::bench::greet::greet(&mut *clt, "test")
-                        .await
-                        .context("failed to call `greet`")?;
+                let greeting = greet_bindings_wrpc::wrpc_bench::bench::greet::greet(clt, "test")
+                    .await
+                    .context("failed to call `greet`")?;
                 ensure!(
                     greeting == "Hello, test",
                     "unexpected greeting `{greeting}`"
@@ -101,6 +108,25 @@ impl Func {
                 Ok(())
             }
         }
+    }
+
+    fn handle<'a, S: Serve + Send + 'a>(
+        self,
+        handler: &impl Handler,
+        instance: &str,
+        name: &str,
+        srv: S,
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'a>> {
+        let res = match self {
+            Self::Ping => ping_bindings_wrpc::handle(handler, instance, name, srv)
+                .map(|fut| Box::pin(fut) as Pin<Box<dyn Future<Output = _> + Send>>),
+            Self::Greet => greet_bindings_wrpc::handle(handler, instance, name, srv)
+                .map(|fut| Box::pin(fut) as Pin<Box<dyn Future<Output = _> + Send>>),
+        };
+        res.unwrap_or_else(|_| {
+            let err = anyhow!("`{instance}#{name}` is not exported");
+            Box::pin(async { Err(err) })
+        })
     }
 
     async fn call_direct(self, handler: &WasmHandler) {
@@ -297,22 +323,7 @@ impl Tasks {
         self.spawn(async move {
             let mut lis = Listener::new(tx, rx);
             while let Some((Header { instance, name }, srv)) = lis.accept().await? {
-                match func {
-                    Func::Ping => {
-                        let Ok(fut) = ping_bindings_wrpc::handle(&handler, &instance, &name, srv)
-                        else {
-                            bail!("`{instance}#{name}` is not exported");
-                        };
-                        fut.await?;
-                    }
-                    Func::Greet => {
-                        let Ok(fut) = greet_bindings_wrpc::handle(&handler, &instance, &name, srv)
-                        else {
-                            bail!("`{instance}#{name}` is not exported");
-                        };
-                        fut.await?;
-                    }
-                }
+                func.handle(&handler, &instance, &name, srv).await?;
             }
             Ok(())
         });
@@ -324,6 +335,74 @@ impl Tasks {
             Some(err) => Err(err.context("server task failed")),
             None => Ok(()),
         }
+    }
+}
+
+/// Client invoking functions with HTTP/1 requests sent by a pooling client
+struct Http1<'a> {
+    clt:
+        &'a hyper_util::client::legacy::Client<HttpConnector, UnsyncBoxBody<Bytes, std::io::Error>>,
+    parts: Parts,
+}
+
+impl<'a, E: Transmit + Send + 'static> Invoke<E> for Http1<'a> {
+    type Invocation<D: Receive> = wrpc_http::Invocation<ResponseFuture, Incoming, D>;
+
+    fn invoke<D, T>(
+        self,
+        codec: Codec<E, D>,
+        instance: &str,
+        func: &str,
+        params: T,
+    ) -> impl Future<Output = std::io::Result<(D::Item, Self::Invocation<D>)>> + use<'a, E, D, T>
+    where
+        E: Encoder<T, Error = std::io::Error>,
+        D: Decoder<Error = std::io::Error> + Receive,
+    {
+        let Self { clt, parts } = self;
+        OutgoingRequest {
+            parts,
+            send: |req: http::Request<Body<E>>| clt.request(req.map(BodyExt::boxed_unsync)),
+        }
+        .invoke(codec, instance, func, params)
+    }
+}
+
+/// Client invoking functions with HTTP/2 requests sent on a connection
+struct Http2<'a> {
+    sender: &'a mut SendRequest<UnsyncBoxBody<Bytes, std::io::Error>>,
+    parts: Parts,
+}
+
+impl<'a, E: Transmit + Send + 'static> Invoke<E> for Http2<'a> {
+    type Invocation<D: Receive> = wrpc_http::Invocation<
+        Pin<Box<dyn Future<Output = hyper::Result<http::Response<Incoming>>> + Send + 'a>>,
+        Incoming,
+        D,
+    >;
+
+    fn invoke<D, T>(
+        self,
+        codec: Codec<E, D>,
+        instance: &str,
+        func: &str,
+        params: T,
+    ) -> impl Future<Output = std::io::Result<(D::Item, Self::Invocation<D>)>> + use<'a, E, D, T>
+    where
+        E: Encoder<T, Error = std::io::Error>,
+        D: Decoder<Error = std::io::Error> + Receive,
+    {
+        let Self { sender, parts } = self;
+        OutgoingRequest {
+            parts,
+            send: |req: http::Request<Body<E>>| {
+                Box::pin(async move {
+                    sender.ready().await?;
+                    sender.send_request(req.map(BodyExt::boxed_unsync)).await
+                }) as Pin<Box<dyn Future<Output = _> + Send>>
+            },
+        }
+        .invoke(codec, instance, func, params)
     }
 }
 
@@ -342,12 +421,22 @@ fn bench_invoke(
 ) -> anyhow::Result<()> {
     let (tx, rx) = rt.block_on(connect)?;
     let mut clt = Framed::new(tx, rx);
+    bench_calls(g, rt, tasks, transport, async || func.call(&mut clt).await)
+}
+
+fn bench_calls(
+    g: &mut BenchmarkGroup<WallTime>,
+    rt: &Runtime,
+    tasks: &Tasks,
+    transport: &str,
+    mut call: impl AsyncFnMut() -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
     g.bench_function(transport, |b| {
         b.iter_custom(|n| {
             rt.block_on(async {
                 let start = Instant::now();
                 for _ in 0..n {
-                    if let Err(err) = func.call(&mut clt).await {
+                    if let Err(err) = call().await {
                         panic!("{:?}", tasks.check().err().unwrap_or(err));
                     }
                 }
@@ -503,25 +592,22 @@ fn bench_http1(
                 stream
                     .set_nodelay(true)
                     .context("failed to set TCP_NODELAY")?;
-                let svc = service::service_fn({
-                    let tasks = tasks.clone();
-                    let handler = handler.clone();
-                    move |req| {
-                        let (res, tx, rx) = wrpc_http::accept(req.into_body());
-                        tasks.serve(func, tx, rx, handler.clone());
-                        future::ready(Ok::<_, Infallible>(res))
-                    }
-                });
-                let conn = hyper::server::conn::http1::Builder::new()
-                    .serve_connection(WithHyperIo::new(stream), svc);
-                tasks.spawn(async move { conn.await.context("failed to serve HTTP/1 connection") });
+                let handler = handler.clone();
+                tasks.spawn(wrpc_test::serve_http1(
+                    stream,
+                    move |_, Header { instance, name }, srv| {
+                        func.handle(&handler, &instance, &name, srv)
+                    },
+                ));
             }
         }
     });
-    bench_invoke(g, &rt, &tasks, "http1", func, async {
-        let (req, tx) = wrpc_http::request(parts.clone());
-        let rx = wrpc_http::response(clt.request(req));
-        Ok((tx, rx))
+    bench_calls(g, &rt, &tasks, "http1", async || {
+        func.call(Http1 {
+            clt: &clt,
+            parts: parts.clone(),
+        })
+        .await
     })
 }
 
@@ -535,7 +621,7 @@ fn bench_http2(
     let addr = lis
         .local_addr()
         .context("failed to query listener address")?;
-    let ((sender, conn), (stream, _)) = rt
+    let ((mut sender, conn), (stream, ..)) = rt
         .block_on(async {
             try_join!(
                 async {
@@ -557,20 +643,20 @@ fn bench_http2(
         conn.await
             .context("failed to drive HTTP/2 client connection")
     });
-    tasks.spawn({
-        let tasks = tasks.clone();
-        async move {
-            wrpc_http::serve(WithHyperIo::new(stream), |_, _, tx, rx| {
-                tasks.serve(func, tx, rx, handler.clone());
-            })
-            .await
-            .context("failed to serve HTTP/2 connection")
-        }
+    tasks.spawn(async move {
+        wrpc_test::serve_http2(stream, move |_, Header { instance, name }, srv| {
+            func.handle(&handler, &instance, &name, srv)
+        })
+        .await
+        .context("failed to serve HTTP/2 connection")
     });
     let (parts, ()) = http::Request::new(()).into_parts();
-    bench_invoke(g, &rt, &tasks, "http2", func, async {
-        let (tx, rx) = wrpc_test::http_open(sender.clone(), parts.clone()).await?;
-        Ok((tx, rx))
+    bench_calls(g, &rt, &tasks, "http2", async || {
+        func.call(Http2 {
+            sender: &mut sender,
+            parts: parts.clone(),
+        })
+        .await
     })
 }
 

@@ -3,18 +3,22 @@ use core::time::Duration;
 
 use anyhow::{Context as _, bail, ensure};
 use bytes::Bytes;
+use futures::future::BoxFuture;
 use futures::{StreamExt as _, future, stream};
 use http::request::Parts;
+use http::{Request, Response};
+use http_body_util::BodyExt;
+use http_body_util::combinators::UnsyncBoxBody;
+use hyper::body::Incoming;
 use hyper::client::conn::http2::SendRequest;
-use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt as _, DuplexStream};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt as _};
 use tokio::sync::oneshot;
 use tokio::task::yield_now;
 use tokio::time::timeout;
 use tokio::{join, try_join};
-use tokio_util::codec::{Decoder, Encoder};
 use tracing::info;
-use wrpc_http::{OutgoingBody, ResponseBodyReader};
-use wrpc_transport::{Codec, Framed, Invoke, Receive, Transmit};
+use wrpc_http::{Body, OutgoingRequest};
+use wrpc_transport::{Framed, Invoke, Transmit};
 
 /// Connection, which invocations are made on one after another
 pub trait Connection {
@@ -41,52 +45,28 @@ where
     }
 }
 
-impl Connection for (SendRequest<OutgoingBody>, Parts) {
+impl Connection for (SendRequest<UnsyncBoxBody<Bytes, std::io::Error>>, Parts) {
     type Client<'a, E: Transmit + Send + 'static>
-        = HttpClient
+        = OutgoingRequest<
+        Box<
+            dyn FnOnce(Request<Body<E>>) -> BoxFuture<'a, hyper::Result<Response<Incoming>>>
+                + Send
+                + 'a,
+        >,
+    >
     where
         Self: 'a;
 
     fn client<E: Transmit + Send + 'static>(&mut self) -> Self::Client<'_, E> {
         let (sender, parts) = self;
-        HttpClient {
-            sender: sender.clone(),
+        OutgoingRequest {
             parts: parts.clone(),
-        }
-    }
-}
-
-/// Client opening a request per invocation
-pub struct HttpClient {
-    sender: SendRequest<OutgoingBody>,
-    parts: Parts,
-}
-
-impl<E: Transmit> Invoke<E> for HttpClient {
-    type Invocation<D: Receive> =
-        <Framed<ResponseBodyReader<'static>, DuplexStream> as Invoke<E>>::Invocation<D>;
-
-    fn invoke<D, T>(
-        self,
-        codec: Codec<E, D>,
-        instance: &str,
-        func: &str,
-        params: T,
-    ) -> impl Future<Output = std::io::Result<(D::Item, Self::Invocation<D>)>> + use<E, D, T>
-    where
-        E: Encoder<T, Error = std::io::Error>,
-        D: Decoder<Error = std::io::Error> + Receive,
-    {
-        let Self { sender, parts } = self;
-        let instance = instance.to_string();
-        let func = func.to_string();
-        async move {
-            let (tx, rx) = wrpc_test::http_open(sender, parts)
-                .await
-                .map_err(std::io::Error::other)?;
-            Framed::new(tx, rx)
-                .invoke(codec, &instance, &func, params)
-                .await
+            send: Box::new(|req| {
+                Box::pin(async move {
+                    sender.ready().await?;
+                    sender.send_request(req.map(BodyExt::boxed_unsync)).await
+                })
+            }),
         }
     }
 }

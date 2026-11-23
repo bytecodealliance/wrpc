@@ -131,7 +131,7 @@ wrpc-test = { workspace = true, features = [
     "quic",
     "webtransport",
 ] }
-wrpc-http = { workspace = true, features = ["client", "http2", "server"] }
+wrpc-http = { workspace = true }
 wrpc-transport = { workspace = true, features = ["net"] }
 
 [workspace.dependencies]
@@ -142,6 +142,7 @@ bytes = { version = "1.7", default-features = false }
 clap = { version = "4", default-features = false }
 criterion = { version = "0.8", default-features = false }
 futures = { version = "0.3", default-features = false }
+h2 = { version = "0.4", default-features = false }
 heck = { version = "0.5", default-features = false }
 http = { version = "1", default-features = false }
 http-body = { version = "1", default-features = false }

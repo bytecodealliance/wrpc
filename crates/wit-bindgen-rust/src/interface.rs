@@ -110,7 +110,7 @@ pub fn handle_interface<S__, H__>(
     func: &str,
     srv: S__,
 ) -> ::core::result::Result<
-    impl ::core::future::Future<Output = {anyhow}::Result<S__::Output>> + ::core::marker::Send + use<S__, H__>,
+    impl ::core::future::Future<Output = {anyhow}::Result<()>> + ::core::marker::Send + use<S__, H__>,
     S__,
 >
 where
@@ -148,7 +148,7 @@ pub(crate) async fn serve__<S__, H__>(
     handler: H__,
     func: usize,
     srv: S__,
-) -> {anyhow}::Result<S__::Output>
+) -> {anyhow}::Result<()>
 where
     S__: {wrpc_transport}::Serve,
     H__: Handler{resource_traits} + ::core::marker::Send + ::core::marker::Sync,

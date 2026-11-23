@@ -139,9 +139,9 @@ A single WebTransport session MAY carry multiple concurrent invocations.
 
 ### HTTP
 
-HTTP relies on [Framed stream specification](#framed-stream-specification) to map an HTTP request-response exchange to wRPC invocations, one after another.
+HTTP relies on [Framed stream specification](#framed-stream-specification) to map each HTTP request-response exchange to exactly one wRPC invocation.
 
-The client MUST send a `POST` request, which carries one or more invocations (see [Framed stream specification](#framed-stream-specification)), and MAY send a new one per invocation, with the request body carrying the data sent by the client and the response body carrying the data sent by the server. The end of the request or response body communicates the end of transmit.
+The client MUST send one `POST` request per invocation, with the request body carrying the data sent by the client and the response body carrying the data sent by the server. The end of the request or response body communicates the end of transmit. A receiver MUST treat data following the invocation in a body as an error.
 
 To close the exchange in both directions (see [Framed stream specification](#framed-stream-specification)), a peer SHOULD reset its stream with an error code other than `NO_ERROR`, for example, `RST_STREAM` with `INTERNAL_ERROR` in HTTP/2. Where the exchange has no stream of its own, as in HTTP/1.1, a peer MUST close the connection instead.
 
