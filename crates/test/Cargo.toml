@@ -28,13 +28,13 @@ bytes = { workspace = true }
 futures = { workspace = true }
 http = { workspace = true, optional = true }
 http-body-util = { workspace = true, optional = true }
-hyper = { workspace = true, features = [
-    "client",
+hyper = { workspace = true, features = ["client", "http1", "http2"], optional = true }
+hyper-util = { workspace = true, features = [
+    "client-legacy",
     "http1",
-    "http2",
-    "server",
+    "server-auto",
+    "tokio",
 ], optional = true }
-hyper-util = { workspace = true, features = ["client-legacy", "http1", "tokio"], optional = true }
 quinn = { workspace = true, features = [
     "log",
     "platform-verifier",

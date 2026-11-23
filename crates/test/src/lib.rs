@@ -577,53 +577,10 @@ where
     f(parts, clt, lis).await.context("closure failed")
 }
 
-/// Serves wRPC requests on HTTP/1 connection `stream`, polling the futures `f` returns until the
-/// connection ends
+/// Serves wRPC requests on HTTP/1 or HTTP/2 connection `stream`, polling the futures `f` returns
+/// until the connection ends. Returns the first error.
 #[cfg(feature = "http")]
-pub async fn serve_http1<Fut>(
-    stream: TcpStream,
-    f: impl Fn(http::request::Parts, Header, wrpc_http::IncomingRequest<hyper::body::Incoming>) -> Fut
-    + Clone
-    + Send
-    + 'static,
-) -> anyhow::Result<()>
-where
-    Fut: Future<Output = anyhow::Result<()>> + Send + 'static,
-{
-    let (tx, mut rx) = futures::channel::mpsc::unbounded();
-    let mut conn = pin!(hyper::server::conn::http1::Builder::new().serve_connection(
-        hyper_util::rt::TokioIo::new(stream),
-        hyper::service::service_fn(move |req| {
-            let f = f.clone();
-            let tx = tx.clone();
-            async move {
-                let (parts, body) = req.into_parts();
-                let (header, req, res) = wrpc_http::accept(body).await?;
-                _ = tx.unbounded_send(f(parts, header, req));
-                let res = res.await.context("response was not sent")?;
-                anyhow::Ok(res)
-            }
-        }),
-    ));
-    let mut srvs = FuturesUnordered::default();
-    poll_fn(|cx| {
-        let res = conn.as_mut().poll(cx);
-        while let Poll::Ready(Some(fut)) = rx.poll_next_unpin(cx) {
-            srvs.push(fut);
-        }
-        while let Poll::Ready(Some(res)) = srvs.poll_next_unpin(cx) {
-            res?;
-        }
-        res.map_err(anyhow::Error::from)
-    })
-    .await
-    .context("failed to serve HTTP/1 connection")
-}
-
-/// Serves wRPC requests on HTTP/2 connection `stream`, polling the futures `f` returns until the
-/// connection ends. Returns the first error.
-#[cfg(feature = "http")]
-pub async fn serve_http2<Fut>(
+pub async fn serve_http<Fut>(
     stream: TcpStream,
     mut f: impl FnMut(
         http::request::Parts,
@@ -635,7 +592,7 @@ where
     Fut: Future<Output = anyhow::Result<()>>,
 {
     let mut invs = wrpc_http::Listener::new(
-        &hyper::server::conn::http2::Builder::new(hyper_util::rt::TokioExecutor::default()),
+        &hyper_util::server::conn::auto::Builder::new(hyper_util::rt::TokioExecutor::default()),
         hyper_util::rt::TokioIo::new(stream),
     );
     let mut srvs = FuturesUnordered::default();

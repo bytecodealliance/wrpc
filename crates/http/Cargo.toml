@@ -16,8 +16,8 @@ h2 = { workspace = true }
 http = { workspace = true }
 http-body = { workspace = true }
 http-body-util = { workspace = true }
-hyper = { workspace = true, features = ["http2", "server"] }
-hyper-util = { workspace = true, features = ["tokio"] }
+hyper = { workspace = true, features = ["http1", "http2", "server"] }
+hyper-util = { workspace = true, features = ["server-auto", "tokio"] }
 tokio = { workspace = true, features = ["sync"] }
 tokio-util = { workspace = true, features = ["codec", "io"] }
 wrpc-transport = { workspace = true }

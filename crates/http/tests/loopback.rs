@@ -18,7 +18,7 @@ use http_body_util::{BodyExt, Full};
 use hyper::client::conn::http2::{SendRequest, handshake};
 use hyper::server::conn::http2::Builder;
 use hyper_util::rt::{TokioExecutor, TokioIo};
-use tokio::io::{AsyncRead, DuplexStream, copy, duplex, sink};
+use tokio::io::{AsyncRead, copy, duplex, sink};
 use tokio::time::sleep;
 use tokio::{join, spawn, try_join};
 use tokio_util::codec::Encoder as _;
@@ -31,12 +31,12 @@ use wrpc_transport::{
 
 async fn connect() -> anyhow::Result<(
     SendRequest<UnsyncBoxBody<Bytes, std::io::Error>>,
-    Listener<TokioIo<DuplexStream>>,
+    Listener<'static>,
 )> {
     let (clt, srv) = duplex(65536);
     let (sender, conn) = handshake(TokioExecutor::default(), TokioIo::new(clt)).await?;
     spawn(conn);
-    let lis = Listener::new(&Builder::new(TokioExecutor::default()), TokioIo::new(srv));
+    let lis = Listener::http2(&Builder::new(TokioExecutor::default()), TokioIo::new(srv));
     Ok((sender, lis))
 }
 
@@ -141,7 +141,7 @@ async fn peer_cancel() -> anyhow::Result<()> {
     let (done_tx, mut done_rx) = mpsc::unbounded();
     wrpc_test::with_http2(
         async |stream| {
-            wrpc_test::serve_http2(stream, move |_, header, req| {
+            wrpc_test::serve_http(stream, move |_, header, req| {
                 let done = Done(done_tx.clone());
                 async move {
                     if header.name != "stream" {
@@ -188,7 +188,7 @@ async fn pooling() -> anyhow::Result<()> {
         let accept = async {
             let (conn, addr) = lis.accept().await.context("failed to accept connection")?;
             assert!(addr.ip().is_loopback());
-            anyhow::Ok(spawn(wrpc_test::serve_http1(conn, |_, header, req| {
+            anyhow::Ok(spawn(wrpc_test::serve_http(conn, |_, header, req| {
                 wrpc_test::serve_http_invocation(header, req)
             })))
         };
@@ -205,7 +205,7 @@ async fn pooling() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn response_parts() -> anyhow::Result<()> {
     let serve = async |stream| {
-        wrpc_test::serve_http2(stream, |parts, _, mut req| async move {
+        wrpc_test::serve_http(stream, |parts, _, mut req| async move {
             req.parts.status = StatusCode::IM_A_TEAPOT;
             let headers = &mut req.parts.headers;
             headers.insert("foo", HeaderValue::from_static("bar"));
