@@ -130,6 +130,12 @@ pub struct Opts {
     #[cfg_attr(feature = "clap", arg(long))]
     pub stubs: bool,
 
+    /// The optional path to the wit-bindgen-wrpc runtime crate to use.
+    ///
+    /// This defaults to `::wit_bindgen_wrpc`.
+    #[cfg_attr(feature = "clap", arg(long, value_name = "PATH"))]
+    pub runtime_path: Option<String>,
+
     /// The optional path to the map type to use for WIT `map<K, V>`.
     ///
     /// The specified type must accept two type parameters `<K, V>`, implement
@@ -143,7 +149,7 @@ pub struct Opts {
 
     /// The optional path to the bitflags crate to use.
     ///
-    /// This defaults to `wit_bindgen_wrpc::bitflags`.
+    /// This defaults to `{runtime_path}::bitflags`.
     #[cfg_attr(feature = "clap", arg(long))]
     pub bitflags_path: Option<String>,
 
@@ -196,43 +202,43 @@ pub struct Opts {
 
     /// The optional path to the `anyhow` crate to use.
     ///
-    /// This defaults to `wit_bindgen_wrpc::anyhow`.
+    /// This defaults to `{runtime_path}::anyhow`.
     #[cfg_attr(feature = "clap", arg(long, value_name = "PATH"))]
     pub anyhow_path: Option<String>,
 
     /// The optional path to the `bytes` crate to use.
     ///
-    /// This defaults to `wit_bindgen_wrpc::bytes`.
+    /// This defaults to `{runtime_path}::bytes`.
     #[cfg_attr(feature = "clap", arg(long, value_name = "PATH"))]
     pub bytes_path: Option<String>,
 
     /// The optional path to the `futures` crate to use.
     ///
-    /// This defaults to `wit_bindgen_wrpc::futures`.
+    /// This defaults to `{runtime_path}::futures`.
     #[cfg_attr(feature = "clap", arg(long, value_name = "PATH"))]
     pub futures_path: Option<String>,
 
     /// The optional path to the `tokio-util` crate to use.
     ///
-    /// This defaults to `wit_bindgen_wrpc::tokio_util`.
+    /// This defaults to `{runtime_path}::tokio_util`.
     #[cfg_attr(feature = "clap", arg(long, value_name = "PATH"))]
     pub tokio_util_path: Option<String>,
 
     /// The optional path to the `tracing` crate to use.
     ///
-    /// This defaults to `wit_bindgen_wrpc::tracing`.
+    /// This defaults to `{runtime_path}::tracing`.
     #[cfg_attr(feature = "clap", arg(long))]
     pub tracing_path: Option<String>,
 
     /// The optional path to the `wasm-tokio` crate to use.
     ///
-    /// This defaults to `wit_bindgen_wrpc::wasm_tokio`.
+    /// This defaults to `{runtime_path}::wasm_tokio`.
     #[cfg_attr(feature = "clap", arg(long))]
     pub wasm_tokio_path: Option<String>,
 
     /// The optional path to the `wrpc-core` crate to use.
     ///
-    /// This defaults to `wit_bindgen_wrpc::wrpc_core`.
+    /// This defaults to `{runtime_path}::wrpc_core`.
     #[cfg_attr(feature = "clap", arg(long))]
     pub wrpc_core_path: Option<String>,
 }
@@ -381,11 +387,18 @@ with: {{\n\t{with_name:?}: generate\n}}
         Ok(remapped)
     }
 
-    fn anyhow_path(&self) -> &str {
+    fn runtime_path(&self) -> &str {
+        self.opts
+            .runtime_path
+            .as_deref()
+            .unwrap_or("::wit_bindgen_wrpc")
+    }
+
+    fn anyhow_path(&self) -> String {
         self.opts
             .anyhow_path
-            .as_deref()
-            .unwrap_or("::wit_bindgen_wrpc::anyhow")
+            .clone()
+            .unwrap_or_else(|| format!("{}::anyhow", self.runtime_path()))
     }
 
     fn map_type_path(&self) -> &str {
@@ -395,53 +408,53 @@ with: {{\n\t{with_name:?}: generate\n}}
             .unwrap_or("::std::collections::BTreeMap")
     }
 
-    fn bitflags_path(&self) -> &str {
+    fn bitflags_path(&self) -> String {
         self.opts
             .bitflags_path
-            .as_deref()
-            .unwrap_or("::wit_bindgen_wrpc::bitflags")
+            .clone()
+            .unwrap_or_else(|| format!("{}::bitflags", self.runtime_path()))
     }
 
-    fn bytes_path(&self) -> &str {
+    fn bytes_path(&self) -> String {
         self.opts
             .bytes_path
-            .as_deref()
-            .unwrap_or("::wit_bindgen_wrpc::bytes")
+            .clone()
+            .unwrap_or_else(|| format!("{}::bytes", self.runtime_path()))
     }
 
-    fn futures_path(&self) -> &str {
+    fn futures_path(&self) -> String {
         self.opts
             .futures_path
-            .as_deref()
-            .unwrap_or("::wit_bindgen_wrpc::futures")
+            .clone()
+            .unwrap_or_else(|| format!("{}::futures", self.runtime_path()))
     }
 
-    fn tokio_util_path(&self) -> &str {
+    fn tokio_util_path(&self) -> String {
         self.opts
             .tokio_util_path
-            .as_deref()
-            .unwrap_or("::wit_bindgen_wrpc::tokio_util")
+            .clone()
+            .unwrap_or_else(|| format!("{}::tokio_util", self.runtime_path()))
     }
 
-    fn tracing_path(&self) -> &str {
+    fn tracing_path(&self) -> String {
         self.opts
             .tracing_path
-            .as_deref()
-            .unwrap_or("::wit_bindgen_wrpc::tracing")
+            .clone()
+            .unwrap_or_else(|| format!("{}::tracing", self.runtime_path()))
     }
 
-    fn wasm_tokio_path(&self) -> &str {
+    fn wasm_tokio_path(&self) -> String {
         self.opts
             .wasm_tokio_path
-            .as_deref()
-            .unwrap_or("::wit_bindgen_wrpc::wasm_tokio")
+            .clone()
+            .unwrap_or_else(|| format!("{}::wasm_tokio", self.runtime_path()))
     }
 
-    fn wrpc_core_path(&self) -> &str {
+    fn wrpc_core_path(&self) -> String {
         self.opts
             .wrpc_core_path
-            .as_deref()
-            .unwrap_or("::wit_bindgen_wrpc::wrpc_core")
+            .clone()
+            .unwrap_or_else(|| format!("{}::wrpc_core", self.runtime_path()))
     }
 
     /// Generates the `handle` function for the `world_id` specified, which dispatches to the
@@ -466,8 +479,8 @@ with: {{\n\t{with_name:?}: generate\n}}
             .map(|path| format!("{path}Handler"))
             .collect::<Vec<_>>()
             .join(" + ");
-        let anyhow = self.anyhow_path().to_string();
-        let wrpc_core = self.wrpc_core_path().to_string();
+        let anyhow = self.anyhow_path();
+        let wrpc_core = self.wrpc_core_path();
         uwrite!(
             self.src,
             r#"
@@ -553,9 +566,9 @@ impl RustWrpc {
             )
             .collect::<Vec<_>>()
             .join(", ");
-        let bytes = self.bytes_path().to_string();
-        let tokio_util = self.tokio_util_path().to_string();
-        let wrpc_core = self.wrpc_core_path().to_string();
+        let bytes = self.bytes_path();
+        let tokio_util = self.tokio_util_path();
+        let wrpc_core = self.wrpc_core_path();
         for n in mem::take(&mut self.tuples) {
             let name = format!("Tuple{n}");
             let ts = (0..n).map(|i| format!("T{i}, ")).collect::<String>();
@@ -779,6 +792,9 @@ impl WorldGenerator for RustWrpc {
         }
         if self.opts.stubs {
             uwriteln!(self.src_preamble, "//   * stubs");
+        }
+        if let Some(runtime_path) = &self.opts.runtime_path {
+            uwriteln!(self.src_preamble, "//   * runtime_path: {:?}", runtime_path);
         }
         if let Some(map_type) = &self.opts.map_type {
             uwriteln!(self.src_preamble, "//   * map_type: {:?}", map_type);
