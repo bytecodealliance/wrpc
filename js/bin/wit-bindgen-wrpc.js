@@ -87,7 +87,16 @@ if (process.platform === "win32") {
     return 0;
   };
 }
-const wasm = await readFile(new URL("wit-bindgen-wrpc.wasm", import.meta.url));
+let wasm;
+try {
+  wasm = await readFile(new URL("wit-bindgen-wrpc.wasm", import.meta.url));
+} catch (err) {
+  if (err.code !== "ENOENT") {
+    throw err;
+  }
+  console.error("wit-bindgen-wrpc.wasm is missing: run `npm run build` in the package directory");
+  process.exit(1);
+}
 const { instance } = await WebAssembly.instantiate(wasm, imports);
 memory = instance.exports.memory;
 process.exitCode = wasi.start(instance);
