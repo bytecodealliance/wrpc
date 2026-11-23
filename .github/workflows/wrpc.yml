@@ -272,7 +272,7 @@ jobs:
         working-directory: ./crates/${{ matrix.crate }}
 
       - name: publish ${{ matrix.crate }} to crates.io
-        if: startsWith(github.ref, format('refs/tags/crates/{0}/v', matrix.crate)) && !steps.ctx.outputs.prerelease
+        if: startsWith(github.ref, format('refs/tags/crates/{0}/v', matrix.crate))
         continue-on-error: ${{ github.repository_owner != 'bytecodealliance' }}
         run: |
           pkgver=$(cargo pkgid | cut -d '@' -f 2)
