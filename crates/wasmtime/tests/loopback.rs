@@ -23,7 +23,7 @@ use wasmtime::component::{
 use wasmtime::error::Context as _;
 use wrpc_core::{
     Codec, FrameDecoder, FrameEncoder, FrameRef, Framed, HeaderEncoder, HeaderRef, Listener,
-    Receive as _, invoke, invoke_blocking,
+    Receive as _, ReceiveError, invoke, invoke_blocking,
 };
 use wrpc_test::serve_until;
 use wrpc_wasmtime::{Export, Exports, TupleDecoder, TupleEncoder, Val, lift, lower};
@@ -673,7 +673,7 @@ fn async_max_len() -> wasmtime::Result<()> {
         assert!(vs.is_some());
         let res = dec.poll_receive(&mut cx, &path, &mut buf.into());
         assert!(
-            matches!(&res, Poll::Ready(Err(err)) if err.kind() == std::io::ErrorKind::InvalidData),
+            matches!(&res, Poll::Ready(Err(ReceiveError::Io(err))) if err.kind() == std::io::ErrorKind::InvalidData),
             "{res:?}"
         );
     }

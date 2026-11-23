@@ -33,9 +33,7 @@ use wasm_tokio::{
     Leb128DecoderU64, Leb128DecoderU128, Leb128Encoder, Utf8Codec, put_u32_leb128,
 };
 
-use crate::{
-    encode_close, encode_frames, error_data_after_end, error_receiver_closed, error_unknown_path,
-};
+use crate::{ReceiveError, encode_close, encode_frames, error_data_after_end, error_unknown_path};
 
 /// Size of chunks read from byte streams
 const READ_CHUNK_SIZE: usize = 8192;
@@ -249,7 +247,7 @@ pub trait Receive {
         cx: &mut Context<'_>,
         path: &[usize],
         src: &mut BytesMut,
-    ) -> Poll<std::io::Result<()>>;
+    ) -> Poll<Result<(), ReceiveError>>;
 
     /// Returns whether nothing in the last decoded value is pending
     fn is_complete(&self) -> bool;
@@ -261,7 +259,7 @@ impl<T: Receive + ?Sized> Receive for Box<T> {
         cx: &mut Context<'_>,
         path: &[usize],
         src: &mut BytesMut,
-    ) -> Poll<std::io::Result<()>> {
+    ) -> Poll<Result<(), ReceiveError>> {
         (**self).poll_receive(cx, path, src)
     }
 
@@ -276,12 +274,12 @@ impl<T: Receive> Receive for BTreeMap<usize, T> {
         cx: &mut Context<'_>,
         path: &[usize],
         src: &mut BytesMut,
-    ) -> Poll<std::io::Result<()>> {
+    ) -> Poll<Result<(), ReceiveError>> {
         let Some((i, rest)) = path.split_first() else {
-            return Poll::Ready(Err(error_unknown_path(path)));
+            return Poll::Ready(Err(error_unknown_path(path).into()));
         };
         let Some(r) = self.get_mut(i) else {
-            return Poll::Ready(Err(error_unknown_path(path)));
+            return Poll::Ready(Err(error_unknown_path(path).into()));
         };
         ready!(r.poll_receive(cx, rest, src))?;
         if r.is_complete() {
@@ -319,8 +317,8 @@ macro_rules! sync_receive {
             _cx: &mut Context<'_>,
             path: &[usize],
             _src: &mut BytesMut,
-        ) -> Poll<std::io::Result<()>> {
-            Poll::Ready(Err(error_unknown_path(path)))
+        ) -> Poll<Result<(), ReceiveError>> {
+            Poll::Ready(Err(error_unknown_path(path).into()))
         }
 
         fn is_complete(&self) -> bool {
@@ -621,7 +619,7 @@ impl<T: Receive> Receive for OptionDecoder<T> {
         cx: &mut Context<'_>,
         path: &[usize],
         src: &mut BytesMut,
-    ) -> Poll<std::io::Result<()>> {
+    ) -> Poll<Result<(), ReceiveError>> {
         self.get_mut().poll_receive(cx, path, src)
     }
 
@@ -678,7 +676,7 @@ impl<O: Receive, E: Receive> Receive for ResultDecoder<O, E> {
         cx: &mut Context<'_>,
         path: &[usize],
         src: &mut BytesMut,
-    ) -> Poll<std::io::Result<()>> {
+    ) -> Poll<Result<(), ReceiveError>> {
         let (ok, err) = self.get_mut();
         if ok.is_complete() {
             err.poll_receive(cx, path, src)
@@ -851,7 +849,7 @@ where
         cx: &mut Context<'_>,
         path: &[usize],
         src: &mut BytesMut,
-    ) -> Poll<std::io::Result<()>> {
+    ) -> Poll<Result<(), ReceiveError>> {
         self.nested.poll_receive(cx, path, src)
     }
 
@@ -1004,7 +1002,7 @@ where
         cx: &mut Context<'_>,
         path: &[usize],
         src: &mut BytesMut,
-    ) -> Poll<std::io::Result<()>> {
+    ) -> Poll<Result<(), ReceiveError>> {
         self.nested.poll_receive(cx, path, src)
     }
 
@@ -1235,7 +1233,7 @@ where
         cx: &mut Context<'_>,
         path: &[usize],
         src: &mut BytesMut,
-    ) -> Poll<std::io::Result<()>> {
+    ) -> Poll<Result<(), ReceiveError>> {
         self.list.poll_receive(cx, path, src)
     }
 
@@ -1630,14 +1628,14 @@ macro_rules! impl_tuple_codec {
                 cx: &mut Context<'_>,
                 path: &[usize],
                 src: &mut BytesMut,
-            ) -> Poll<std::io::Result<()>> {
+            ) -> Poll<Result<(), ReceiveError>> {
                 let Some((i, rest)) = path.split_first() else {
-                    return Poll::Ready(Err(error_unknown_path(path)));
+                    return Poll::Ready(Err(error_unknown_path(path).into()));
                 };
                 let ($($cn),+,) = self.get_mut();
                 match i {
                     $($i => $cn.poll_receive(cx, rest, src),)+
-                    _ => Poll::Ready(Err(error_unknown_path(path))),
+                    _ => Poll::Ready(Err(error_unknown_path(path).into())),
                 }
             }
 
@@ -1836,16 +1834,16 @@ where
         cx: &mut Context<'_>,
         path: &[usize],
         src: &mut BytesMut,
-    ) -> Poll<std::io::Result<()>> {
+    ) -> Poll<Result<(), ReceiveError>> {
         if let Some((i, rest)) = path.split_first() {
             if *i != 0 || self.tx.is_some() {
-                return Poll::Ready(Err(error_unknown_path(path)));
+                return Poll::Ready(Err(error_unknown_path(path).into()));
             }
             return self.dec.poll_receive(cx, rest, src);
         }
         let Some(tx) = self.tx.take() else {
             if !src.is_empty() || self.closed {
-                return Poll::Ready(Err(error_data_after_end()));
+                return Poll::Ready(Err(error_data_after_end().into()));
             }
             self.closed = true;
             return Poll::Ready(Ok(()));
@@ -1862,16 +1860,17 @@ where
                 return Poll::Ready(Err(std::io::Error::new(
                     std::io::ErrorKind::UnexpectedEof,
                     "future closed without a value",
-                )));
+                )
+                .into()));
             }
             self.tx = Some(tx);
             return Poll::Ready(Ok(()));
         };
         if !self.buffer.is_empty() {
-            return Poll::Ready(Err(error_data_after_end()));
+            return Poll::Ready(Err(error_data_after_end().into()));
         }
         if tx.send(v).is_err() {
-            return Poll::Ready(Err(error_receiver_closed()));
+            return Poll::Ready(Err(ReceiveError::Unread));
         }
         Poll::Ready(Ok(()))
     }
@@ -2292,24 +2291,24 @@ fn poll_receive_stream<D, T>(
     buf: &mut BytesMut,
     src: &mut BytesMut,
     decode: impl FnOnce(&mut D, &mut BytesMut) -> std::io::Result<Option<T>>,
-) -> Poll<std::io::Result<()>>
+) -> Poll<Result<(), ReceiveError>>
 where
     D: tokio_util::codec::Decoder<Error = std::io::Error>,
 {
     if src.is_empty() {
         let Some((.., end)) = tx.take() else {
-            return Poll::Ready(Err(error_data_after_end()));
+            return Poll::Ready(Err(error_data_after_end().into()));
         };
         dec.decode_eof(buf)?;
         _ = end.send(());
         return Poll::Ready(Ok(()));
     }
     let Some((tx, ..)) = tx else {
-        return Poll::Ready(Err(error_data_after_end()));
+        return Poll::Ready(Err(error_data_after_end().into()));
     };
-    ready!(tx.poll_ready(cx)).map_err(|_| error_receiver_closed())?;
+    ready!(tx.poll_ready(cx)).map_err(|_| ReceiveError::Unread)?;
     if let Some(chunk) = decode_buffered(buf, src, |buf| decode(dec, buf))? {
-        tx.start_send(chunk).map_err(|_| error_receiver_closed())?;
+        tx.start_send(chunk).map_err(|_| ReceiveError::Unread)?;
     }
     Poll::Ready(Ok(()))
 }
@@ -2397,7 +2396,7 @@ where
         cx: &mut Context<'_>,
         path: &[usize],
         src: &mut BytesMut,
-    ) -> Poll<std::io::Result<()>> {
+    ) -> Poll<Result<(), ReceiveError>> {
         if !path.is_empty() {
             return self.nested.poll_receive(cx, path, src);
         }
@@ -2537,9 +2536,9 @@ impl<T> Receive for StreamDecoderBytes<T> {
         cx: &mut Context<'_>,
         path: &[usize],
         src: &mut BytesMut,
-    ) -> Poll<std::io::Result<()>> {
+    ) -> Poll<Result<(), ReceiveError>> {
         if !path.is_empty() {
-            return Poll::Ready(Err(error_unknown_path(path)));
+            return Poll::Ready(Err(error_unknown_path(path).into()));
         }
         poll_receive_stream(
             cx,
@@ -2640,7 +2639,7 @@ impl<T> Receive for StreamDecoderRead<T> {
         cx: &mut Context<'_>,
         path: &[usize],
         src: &mut BytesMut,
-    ) -> Poll<std::io::Result<()>> {
+    ) -> Poll<Result<(), ReceiveError>> {
         self.dec.poll_receive(cx, path, src)
     }
 
@@ -2864,7 +2863,7 @@ mod tests {
     async fn ingress_fails_fast() -> anyhow::Result<()> {
         async fn receive_value<T>(
             data: &[u8],
-        ) -> std::io::Result<(T, impl Future<Output = std::io::Result<()>> + use<T>)>
+        ) -> std::io::Result<(T, impl Future<Output = Result<(), ReceiveError>> + use<T>)>
         where
             (T,): Decode,
         {
@@ -2884,16 +2883,22 @@ mod tests {
 
         let (_fut, rx) = receive_value::<BoxFuture<'static, ()>>(b"\x2a").await?;
         let err = rx.await.unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert!(
+            matches!(&err, ReceiveError::Io(err) if err.kind() == std::io::ErrorKind::InvalidData),
+            "{err:?}"
+        );
 
         let (_fut, rx) = receive_value::<BoxFuture<'static, Bytes>>(b"\x03foo\x2a").await?;
         let err = rx.await.unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert!(
+            matches!(&err, ReceiveError::Io(err) if err.kind() == std::io::ErrorKind::InvalidData),
+            "{err:?}"
+        );
 
         let (fut, rx) = receive_value::<BoxFuture<'static, Bytes>>(b"\x03foo").await?;
         drop(fut);
         let err = rx.await.unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
+        assert!(matches!(err, ReceiveError::Unread), "{err:?}");
         Ok(())
     }
 

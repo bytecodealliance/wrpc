@@ -52,6 +52,9 @@ pub use pack::{pack, unpack};
 pub use serve::{Serve, ServeError, Server, serve};
 pub use value::*;
 
+use core::error::Error;
+use core::fmt;
+
 use bytes::{Buf, BufMut as _, BytesMut};
 use tokio_util::codec::{Encoder as _, FramedRead, FramedWrite};
 
@@ -116,9 +119,46 @@ pub fn error_data_after_end() -> std::io::Error {
     )
 }
 
-/// Returns the error for data received for a closed receiver
-pub fn error_receiver_closed() -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::BrokenPipe, "receiver closed")
+/// Error of [receiving](Receive) a value
+#[derive(Debug)]
+pub enum ReceiveError {
+    /// Data arrived for an asynchronous value whose consumer was dropped
+    Unread,
+    /// Malformed, truncated or unexpected data, or a transport error
+    Io(std::io::Error),
+}
+
+impl fmt::Display for ReceiveError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unread => f.write_str("received data for a dropped consumer"),
+            Self::Io(..) => f.write_str("failed to receive value"),
+        }
+    }
+}
+
+impl Error for ReceiveError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Unread => None,
+            Self::Io(err) => Some(err),
+        }
+    }
+}
+
+impl From<std::io::Error> for ReceiveError {
+    fn from(err: std::io::Error) -> Self {
+        Self::Io(err)
+    }
+}
+
+impl From<ReceiveError> for std::io::Error {
+    fn from(err: ReceiveError) -> Self {
+        match err {
+            ReceiveError::Unread => Self::new(std::io::ErrorKind::BrokenPipe, err),
+            ReceiveError::Io(err) => err,
+        }
+    }
 }
 
 /// Returns the error for a connection, on which receiving a header or a previous invocation failed

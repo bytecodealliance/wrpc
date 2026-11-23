@@ -1132,6 +1132,7 @@ async fn rust_serve_errors() -> anyhow::Result<()> {
         &mut valid,
     )?;
     let mut invalid = valid.clone();
+    let mut unread = valid.clone();
     FrameEncoder.encode(
         FrameRef {
             path: &[],
@@ -1146,6 +1147,22 @@ async fn rust_serve_errors() -> anyhow::Result<()> {
         },
         &mut invalid,
     )?;
+    FrameEncoder.encode(
+        FrameRef {
+            path: &[],
+            data: b"\0",
+        },
+        &mut unread,
+    )?;
+    for _ in 0..2 {
+        FrameEncoder.encode(
+            FrameRef {
+                path: &[0],
+                data: b"\x01x",
+            },
+            &mut unread,
+        )?;
+    }
     let serve_once = async |buf: &[u8], fail: bool| {
         let (mut clt, srv) = duplex(1024);
         clt.write_all(buf).await?;
@@ -1166,6 +1183,23 @@ async fn rust_serve_errors() -> anyhow::Result<()> {
     ensure!(matches!(err, ServeError::Handler(..)), "{err:?}");
     let err = serve_once(&valid, false).await?;
     ensure!(matches!(err, ServeError::Response(..)), "{err:?}");
+
+    let (mut clt, srv) = duplex(1024);
+    clt.write_all(&unread).await?;
+    drop(clt);
+    let (rx, tx) = split(srv);
+    let mut lis = Listener::new(tx, rx);
+    let srv = next_invocation(&mut lis, "foo", "bar").await?;
+    let res = serve::<(BoxStream<'static, Bytes>,), (), _, _, _>(srv, async |(s,)| {
+        drop(s);
+        future::pending().await
+    })
+    .await;
+    let err = res.err().context("serving should have failed")?;
+    ensure!(
+        matches!(err, ServeError::<anyhow::Error>::Unread),
+        "{err:?}"
+    );
     Ok(())
 }
 
