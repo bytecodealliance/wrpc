@@ -450,7 +450,7 @@ where
         let async_params = func.params.iter().any(|param| self.is_async(&param.ty));
         let async_results = func.result.iter().any(|ty| self.is_async(ty));
 
-        let anyhow = self.r#gen.anyhow_path().to_string();
+        let anyhow = self.r#gen.anyhow_path();
 
         let params = self.print_docs_and_params(func, &sig);
         match func.result.iter().collect::<Vec<_>>().as_slice() {
@@ -1112,14 +1112,14 @@ where
     }
 
     fn print_own(&mut self, id: TypeId, submodule: bool) {
-        self.src.push_str(self.r#gen.wrpc_core_path());
+        self.src.push_str(&self.r#gen.wrpc_core_path());
         self.push_str("::ResourceOwn<");
         self.print_tyid(id, true, submodule);
         self.push_str(">");
     }
 
     fn print_borrow(&mut self, id: TypeId, submodule: bool) {
-        self.src.push_str(self.r#gen.wrpc_core_path());
+        self.src.push_str(&self.r#gen.wrpc_core_path());
         self.push_str("::ResourceBorrow<");
         self.print_tyid(id, true, submodule);
         self.push_str(">");
@@ -1354,9 +1354,9 @@ impl<'a> wit_bindgen_core::InterfaceGenerator<'a> for InterfaceGenerator<'a> {
 
             let mod_name = to_rust_ident(ty_name);
 
-            let bytes = self.r#gen.bytes_path().to_string();
-            let tokio_util = self.r#gen.tokio_util_path().to_string();
-            let wrpc_core = self.r#gen.wrpc_core_path().to_string();
+            let bytes = self.r#gen.bytes_path();
+            let tokio_util = self.r#gen.tokio_util_path();
+            let wrpc_core = self.r#gen.wrpc_core_path();
 
             let (paths, _) = async_paths_tyid(self.resolve, id);
             if paths.is_empty() {
@@ -1638,11 +1638,11 @@ pub struct {}(());",
 
     fn type_flags(&mut self, id: TypeId, ty_name: &str, flags: &Flags, docs: &Docs) {
         if let Some(name) = self.name_of(id) {
-            let bitflags = self.r#gen.bitflags_path().to_string();
-            let bytes = self.r#gen.bytes_path().to_string();
-            let tokio_util = self.r#gen.tokio_util_path().to_string();
-            let wasm_tokio = self.r#gen.wasm_tokio_path().to_string();
-            let wrpc_core = self.r#gen.wrpc_core_path().to_string();
+            let bitflags = self.r#gen.bitflags_path();
+            let bytes = self.r#gen.bytes_path();
+            let tokio_util = self.r#gen.tokio_util_path();
+            let wasm_tokio = self.r#gen.wasm_tokio_path();
+            let wrpc_core = self.r#gen.wrpc_core_path();
 
             let mod_name = to_rust_ident(ty_name);
 
@@ -1854,10 +1854,10 @@ mod {mod_name} {{
                 self.push_str(" {}\n");
             }
 
-            let bytes = self.r#gen.bytes_path().to_string();
-            let tokio_util = self.r#gen.tokio_util_path().to_string();
-            let wasm_tokio = self.r#gen.wasm_tokio_path().to_string();
-            let wrpc_core = self.r#gen.wrpc_core_path().to_string();
+            let bytes = self.r#gen.bytes_path();
+            let tokio_util = self.r#gen.tokio_util_path();
+            let wasm_tokio = self.r#gen.wasm_tokio_path();
+            let wrpc_core = self.r#gen.wrpc_core_path();
 
             let mod_name = to_rust_ident(ty_name);
 
@@ -2419,10 +2419,10 @@ mod {mod_name} {{
                 );
             }
 
-            let bytes = self.r#gen.bytes_path().to_string();
-            let tokio_util = self.r#gen.tokio_util_path().to_string();
-            let wasm_tokio = self.r#gen.wasm_tokio_path().to_string();
-            let wrpc_core = self.r#gen.wrpc_core_path().to_string();
+            let bytes = self.r#gen.bytes_path();
+            let tokio_util = self.r#gen.tokio_util_path();
+            let wasm_tokio = self.r#gen.wasm_tokio_path();
+            let wrpc_core = self.r#gen.wrpc_core_path();
 
             let mod_name = to_rust_ident(ty_name);
 
