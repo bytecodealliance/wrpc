@@ -47,6 +47,7 @@ bin-wasmtime = ["dep:tokio", "dep:wrpc-wasmtime-cli", "tokio/rt-multi-thread"]
 http = ["dep:wrpc-http"]
 wasmtime = ["dep:wrpc-wasmtime"]
 wasmtime-async = ["wrpc-wasmtime?/async"]
+wave = ["dep:wrpc-wave"]
 
 [[bin]]
 name = "wit-bindgen-wrpc"
@@ -88,6 +89,7 @@ wrpc-core = { workspace = true }
 wrpc-http = { workspace = true, optional = true }
 wrpc-wasmtime = { workspace = true, optional = true }
 wrpc-wasmtime-cli = { workspace = true, optional = true }
+wrpc-wave = { workspace = true, optional = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
@@ -203,3 +205,4 @@ wrpc-wasi-keyvalue-mem = { version = "0.4.0-rc.1", path = "./crates/wasi-keyvalu
 wrpc-wasi-keyvalue-redis = { version = "0.4.0-rc.1", path = "./crates/wasi-keyvalue-redis", default-features = false }
 wrpc-wasmtime = { version = "0.2.0-rc.1", path = "./crates/wasmtime", default-features = false }
 wrpc-wasmtime-cli = { version = "0.11.0-rc.1", path = "./crates/wasmtime-cli", default-features = false }
+wrpc-wave = { version = "0.2.0-rc.1", path = "./crates/wave", default-features = false }
