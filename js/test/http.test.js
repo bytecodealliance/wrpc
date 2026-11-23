@@ -79,3 +79,39 @@ test("callers decide on the response", async () => {
     message: "status 418",
   });
 });
+
+test("data after the invocation fails it", async () => {
+  const err = { message: "unexpected data after the invocation" };
+  /** @type {Promise<void>} */
+  let served = Promise.resolve();
+  /** @param {Request} req */
+  const serve = (req) => {
+    const { transport, response } = fromRequest(req);
+    served = (async () => {
+      const inv = await accept(transport);
+      const { done } = await inv.receiveParams([]);
+      await Promise.all([done, inv.sendResults([], []), inv.finished]);
+    })();
+    served.catch(() => {});
+    return response;
+  };
+  /** @param {typeof globalThis.fetch} fetch */
+  const call = (fetch) =>
+    invoke(fromFetch(ADDR, { fetch, buffer: true }), "i", "f", [], []).then((r) => r.finished);
+
+  /** @type {typeof globalThis.fetch} */
+  const twice = async (input, init) => {
+    const body = await new Request(input, init).arrayBuffer();
+    return serve(new Request(input, { ...init, body: new Blob([body, body]) }));
+  };
+  await call(twice).catch(() => {});
+  await assert.rejects(served, err);
+
+  /** @type {typeof globalThis.fetch} */
+  const trailing = async (input, init) => {
+    const body = await serve(new Request(input, init)).arrayBuffer();
+    return new Response(new Blob([body, Uint8Array.of(0)]));
+  };
+  await assert.rejects(call(trailing), err);
+  await served;
+});

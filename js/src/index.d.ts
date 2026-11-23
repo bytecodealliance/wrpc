@@ -289,7 +289,8 @@ export class Mux {
    * Aborts `transport` and throws a `TypeError` if it does not implement
    * `closeWrite`. `master` is the reader over `transport`, which must be
    * shared by the invocations on it, since it holds the bytes read past the
-   * previous one.
+   * previous one. Without it, `transport` carries this invocation alone, and
+   * data following it fails the invocation.
    */
   constructor(transport: Transport, master?: AsyncReader);
   master: AsyncReader;
@@ -298,6 +299,7 @@ export class Mux {
    * more may be expected, or the peer ended transmit and every frame it sent
    * was routed, and the write side was half-closed, unless the multiplexer is
    * aborted first: then it rejects with the error it was aborted with.
+   * Without a `master`, it also waits for the peer to end transmit.
    */
   readonly ended: Promise<void>;
   /** Rejects with the error the multiplexer is aborted with, once it is. */
@@ -352,13 +354,17 @@ export interface FetchOptions extends Omit<RequestInit, "method" | "body" | "sig
 }
 
 /**
- * A client transport sending a `POST` request to `input`, with the
- * {@link MEDIA_TYPE} unless `headers` set one, and reading the body of the
- * response, whatever its status. To act on the response, wrap `fetch`.
+ * A client transport for one invocation, to {@link invoke} over, sending a
+ * `POST` request to `input`, with the {@link MEDIA_TYPE} unless `headers` set
+ * one, and reading the body of the response, whatever its status. To act on
+ * the response, wrap `fetch`.
  */
 export function fromFetch(input: RequestInfo | URL, options?: FetchOptions): Transport;
 
-/** A server transport over `request`, with the response carrying the server's data, with the {@link MEDIA_TYPE}. */
+/**
+ * A server transport for one invocation over `request`, to {@link accept}, with
+ * the response carrying the server's data, with the {@link MEDIA_TYPE}.
+ */
 export function fromRequest(request: Request): { transport: Transport; response: Response };
 
 // ----- session.js -----------------------------------------------------------
@@ -367,7 +373,9 @@ export function fromRequest(request: Request): { transport: Transport; response:
  * `done` resolves once all asynchronous parameters and results have been
  * transmitted; `finished` once the peer has also closed every path it sent and
  * all the data it sent has been decoded, rejecting with any failure of the
- * invocation, including those after `done`.
+ * invocation, including those after `done`. The transport carries this
+ * invocation alone: `finished` also waits for the peer to end transmit, and
+ * data following the invocation fails it.
  */
 export function invoke(
   transport: Transport,
@@ -399,7 +407,9 @@ export interface Invocation {
 }
 
 /**
- * Accept an invocation. Instance and function names longer than
+ * Accept an invocation. The transport carries this invocation alone:
+ * `finished` also waits for the peer to end transmit, and data following the
+ * invocation fails it. Instance and function names longer than
  * `maxInstanceLength` and `maxNameLength` bytes, 1 KiB by default, are
  * rejected.
  */
