@@ -477,7 +477,7 @@ pub fn handle<S, H>(
     func: &str,
     srv: S,
 ) -> ::core::result::Result<
-    impl ::core::future::Future<Output = {anyhow}::Result<S::Output>> + ::core::marker::Send + use<S, H>,
+    impl ::core::future::Future<Output = {anyhow}::Result<()>> + ::core::marker::Send + use<S, H>,
     S,
 >
 where

@@ -16,16 +16,15 @@ use crate::{
 
 /// Server serving invocations with [`Send`] futures, such as [`Framed`], see [`Codec::serve`]
 pub trait Serve {
-    /// Value an invocation is served with
-    type Output;
-
     /// Serves an invocation using `codec` by calling `f` with its parameters, see
     /// [`Codec::serve`]
+    ///
+    /// The future resolves once all I/O of the invocation is done or the peer canceled it.
     fn serve<E, D, T, Fut, Err>(
         self,
         codec: Codec<E, D>,
         f: impl FnOnce(D::Item) -> Fut + Send,
-    ) -> impl Future<Output = Result<Self::Output, Err>> + Send
+    ) -> impl Future<Output = Result<(), Err>> + Send
     where
         E: Transmit + Encoder<T, Error = std::io::Error> + Send + 'static,
         D: Decoder<Error = std::io::Error> + Receive + Send + 'static,
@@ -39,13 +38,11 @@ where
     I: AsyncRead + Unpin + Send,
     O: AsyncWrite + Unpin + Send,
 {
-    type Output = ();
-
     fn serve<E, D, T, Fut, Err>(
         self,
         codec: Codec<E, D>,
         f: impl FnOnce(D::Item) -> Fut + Send,
-    ) -> impl Future<Output = Result<Self::Output, Err>> + Send
+    ) -> impl Future<Output = Result<(), Err>> + Send
     where
         E: Transmit + Encoder<T, Error = std::io::Error> + Send + 'static,
         D: Decoder<Error = std::io::Error> + Receive + Send + 'static,
@@ -63,13 +60,11 @@ where
     I: AsyncRead + Unpin + Send,
     O: AsyncWrite + Unpin + Send,
 {
-    type Output = ();
-
     fn serve<E, D, T, Fut, Err>(
         self,
         codec: Codec<E, D>,
         f: impl FnOnce(D::Item) -> Fut + Send,
-    ) -> impl Future<Output = Result<Self::Output, Err>> + Send
+    ) -> impl Future<Output = Result<(), Err>> + Send
     where
         E: Transmit + Encoder<T, Error = std::io::Error> + Send + 'static,
         D: Decoder<Error = std::io::Error> + Receive + Send + 'static,
@@ -139,7 +134,7 @@ where
 pub fn serve<P, R, S, Fut, Err>(
     srv: S,
     f: impl FnOnce(P) -> Fut + Send,
-) -> impl Future<Output = Result<S::Output, Err>> + Send
+) -> impl Future<Output = Result<(), Err>> + Send
 where
     S: Serve,
     P: Decode<Decoder: Send + 'static> + Send,

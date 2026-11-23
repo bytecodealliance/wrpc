@@ -98,6 +98,13 @@ pub struct Receipt<F, I, D> {
 
 impl<F, I, D> Unpin for Receipt<F, I, D> {}
 
+impl<F, I, D> Receipt<F, I, D> {
+    /// Returns the frame reader, past the frame closing the last open path once this resolved
+    pub fn into_inner(self) -> F {
+        self.rx
+    }
+}
+
 impl<F, I, D> Future for Receipt<F, I, D>
 where
     F: BorrowMut<FramedRead<I, FrameDecoder>>,

@@ -23,6 +23,10 @@ use wrpc_transport::{
     HeaderRef, Listener, invoke, receive, serve,
 };
 
+/// Parameters and results of the invocation of [`assert_single_invocation`] and
+/// [`assert_http_invocation`]
+type FooBar = (Bytes, BoxStream<'static, Bytes>);
+
 /// Maximum number of connections [`serve_until`] serves concurrently
 const MAX_CONNECTIONS: usize = 64;
 
@@ -203,19 +207,17 @@ pub async fn assert_single_invocation(
                 Box::pin(stream::iter([Bytes::from_static(b"client->server")]));
             let tx = FramedWrite::new(tx, FrameEncoder);
             let mut rx = FramedRead::new(rx, FrameDecoder::default());
-            let ((results, s), io) = Codec::<
-                <(Bytes, BoxStream<'static, Bytes>) as Encode>::Encoder,
-                <(Bytes, BoxStream<'static, Bytes>) as Decode>::Decoder,
-            >::default()
-            .invoke(
-                tx,
-                &mut rx,
-                "foo",
-                "bar",
-                (Bytes::from_static(b"testbar"), s),
-            )
-            .await
-            .context("failed to invoke `foo.bar`")?;
+            let ((results, s), io) =
+                Codec::<<FooBar as Encode>::Encoder, <FooBar as Decode>::Decoder>::default()
+                    .invoke(
+                        tx,
+                        &mut rx,
+                        "foo",
+                        "bar",
+                        (Bytes::from_static(b"testbar"), s),
+                    )
+                    .await
+                    .context("failed to invoke `foo.bar`")?;
             assert_eq!(results, b"foo".as_slice());
             let (buf, ()) = try_join!(
                 async { anyhow::Ok(s.collect::<Vec<_>>().await.concat()) },
@@ -513,19 +515,29 @@ where
 
     let (parts, ()) = http::Request::new(()).into_parts();
     let mut srv = pin!(serve(srv));
-    let clt = async {
-        clt.await.context("client connection failed")?;
-        anyhow::Ok(core::future::pending().await)
-    };
-    let res = tokio::select! {
-        res = f(parts, sender) => res.context("closure failed")?,
-        res = &mut srv => {
-            res?;
-            anyhow::bail!("server connection ended before the closure")
+    let mut srv_done = false;
+    let mut clt = Box::pin(clt);
+    let mut clt_done = false;
+    let mut f = pin!(f(parts, sender));
+    let res = loop {
+        tokio::select! {
+            res = &mut f => break res.context("closure failed")?,
+            res = &mut srv, if !srv_done => {
+                res?;
+                srv_done = true;
+            }
+            res = &mut clt, if !clt_done => {
+                clt_done = true;
+                if !srv_done {
+                    res.context("client connection failed")?;
+                }
+            }
         }
-        res = clt => res?,
     };
-    _ = srv.await;
+    drop(clt);
+    if !srv_done {
+        _ = srv.await;
+    }
     Ok(res)
 }
 
@@ -561,91 +573,139 @@ where
     f(parts, clt, lis).await.context("closure failed")
 }
 
-/// Opens a wRPC request with `parts` on `sender`, returning its body writer and the response body
-/// reader
+/// Serves wRPC requests on HTTP/1 connection `stream`, polling the futures `f` returns until the
+/// connection ends
 #[cfg(feature = "http")]
-pub async fn http_open(
-    sender: hyper::client::conn::http2::SendRequest<wrpc_http::OutgoingBody>,
-    parts: http::request::Parts,
-) -> Result<
-    (
-        tokio::io::DuplexStream,
-        wrpc_http::ResponseBodyReader<'static>,
-    ),
-    hyper::Error,
-> {
-    let (tx, res) = wrpc_http::open(sender, parts).await?;
-    Ok((tx, wrpc_http::response(res)))
-}
-
-/// Receives the byte streams of a request from `rx`
-#[cfg(feature = "http")]
-pub async fn http_accept(
-    rx: &mut tokio::sync::mpsc::Receiver<(
-        tokio::io::DuplexStream,
-        wrpc_http::RequestBodyReader<hyper::body::Incoming>,
-    )>,
-) -> std::io::Result<(
-    tokio::io::DuplexStream,
-    wrpc_http::RequestBodyReader<hyper::body::Incoming>,
-)> {
-    rx.recv()
-        .await
-        .ok_or_else(|| std::io::ErrorKind::UnexpectedEof.into())
-}
-
-/// Serves HTTP/1 connection `stream`, sending the byte streams of each request to `tx`
-#[cfg(feature = "http")]
-pub async fn serve_http1(
+pub async fn serve_http1<Fut>(
     stream: TcpStream,
-    tx: tokio::sync::mpsc::Sender<(
-        tokio::io::DuplexStream,
-        wrpc_http::RequestBodyReader<hyper::body::Incoming>,
-    )>,
-) -> anyhow::Result<()> {
-    hyper::server::conn::http1::Builder::new()
-        .serve_connection(
-            hyper_util::rt::TokioIo::new(stream),
-            hyper::service::service_fn(move |req| {
-                let (res, body_tx, body_rx) = wrpc_http::accept(req.into_body());
-                let tx = tx.clone();
-                async move {
-                    tx.send((body_tx, body_rx))
-                        .await
-                        .map_err(|_| std::io::Error::from(std::io::ErrorKind::BrokenPipe))?;
-                    Ok::<_, std::io::Error>(res)
-                }
-            }),
-        )
-        .await
-        .context("failed to serve HTTP/1 connection")
+    f: impl Fn(http::request::Parts, Header, wrpc_http::IncomingRequest<hyper::body::Incoming>) -> Fut
+    + Clone
+    + Send
+    + 'static,
+) -> anyhow::Result<()>
+where
+    Fut: Future<Output = anyhow::Result<()>> + Send + 'static,
+{
+    let (tx, mut rx) = futures::channel::mpsc::unbounded();
+    let mut conn = pin!(hyper::server::conn::http1::Builder::new().serve_connection(
+        hyper_util::rt::TokioIo::new(stream),
+        hyper::service::service_fn(move |req| {
+            let f = f.clone();
+            let tx = tx.clone();
+            async move {
+                let (parts, body) = req.into_parts();
+                let (header, req, res) = wrpc_http::accept(body).await?;
+                _ = tx.unbounded_send(f(parts, header, req));
+                let res = res.await.context("response was not sent")?;
+                anyhow::Ok(res)
+            }
+        }),
+    ));
+    let mut srvs = FuturesUnordered::default();
+    poll_fn(|cx| {
+        let res = conn.as_mut().poll(cx);
+        while let Poll::Ready(Some(fut)) = rx.poll_next_unpin(cx) {
+            srvs.push(fut);
+        }
+        while let Poll::Ready(Some(res)) = srvs.poll_next_unpin(cx) {
+            res?;
+        }
+        res.map_err(anyhow::Error::from)
+    })
+    .await
+    .context("failed to serve HTTP/1 connection")
 }
 
+/// Serves wRPC requests on HTTP/2 connection `stream`, polling the futures `f` returns until the
+/// connection ends. Returns the first error.
 #[cfg(feature = "http")]
-pub async fn serve_http2<T>(
-    f: impl AsyncFnOnce(
+pub async fn serve_http2<Fut>(
+    stream: TcpStream,
+    mut f: impl FnMut(
         http::request::Parts,
-        hyper::client::conn::http2::SendRequest<wrpc_http::OutgoingBody>,
-        &mut tokio::sync::mpsc::Receiver<(
-            tokio::io::DuplexStream,
-            wrpc_http::RequestBodyReader<hyper::body::Incoming>,
-        )>,
-    ) -> anyhow::Result<T>,
-) -> anyhow::Result<T> {
-    let (tx, mut rx) = tokio::sync::mpsc::channel(16);
-    with_http2(
-        async |stream| {
-            wrpc_http::serve(
-                hyper_util::rt::TokioIo::new(stream),
-                move |_, _, body_tx, body_rx| {
-                    tx.try_send((body_tx, body_rx))
-                        .expect("failed to send request byte streams");
-                },
-            )
-            .await
-            .context("failed to serve HTTP/2 connection")
+        Header,
+        wrpc_http::IncomingRequest<hyper::body::Incoming>,
+    ) -> Fut,
+) -> anyhow::Result<()>
+where
+    Fut: Future<Output = anyhow::Result<()>>,
+{
+    let mut invs = wrpc_http::Listener::new(
+        &hyper::server::conn::http2::Builder::new(hyper_util::rt::TokioExecutor::default()),
+        hyper_util::rt::TokioIo::new(stream),
+    );
+    let mut srvs = FuturesUnordered::default();
+    loop {
+        tokio::select! {
+            inv = invs.next() => {
+                let Some(inv) = inv else { break };
+                let (parts, header, req) = inv?;
+                srvs.push(f(parts, header, req));
+            }
+            Some(res) = srvs.next() => res?,
+        }
+    }
+    while let Some(res) = srvs.next().await {
+        res?;
+    }
+    Ok(())
+}
+
+/// A common single-invocation test of HTTP clients, like [`assert_single_invocation`]
+///
+/// The invocation request with `parts` is sent using `send` and served by
+/// [`serve_http_invocation`].
+#[cfg(feature = "http")]
+pub async fn assert_http_invocation<B, E, Fut>(
+    parts: http::request::Parts,
+    send: impl FnOnce(
+        http::Request<http_body_util::combinators::UnsyncBoxBody<Bytes, std::io::Error>>,
+    ) -> Fut,
+) -> anyhow::Result<()>
+where
+    B: hyper::body::Body<Data = Bytes, Error: Into<Box<dyn core::error::Error + Send + Sync>>>
+        + Send
+        + 'static,
+    E: Into<Box<dyn core::error::Error + Send + Sync>>,
+    Fut: Future<Output = Result<http::Response<B>, E>> + Send + 'static,
+{
+    let s: BoxStream<'static, Bytes> =
+        Box::pin(stream::iter([Bytes::from_static(b"client->server")]));
+    let clt = wrpc_http::OutgoingRequest {
+        parts,
+        send: |req: http::Request<wrpc_http::Body<_>>| {
+            send(req.map(http_body_util::BodyExt::boxed_unsync))
         },
-        |parts, sender| async move { f(parts, sender, &mut rx).await },
-    )
+    };
+    let ((results, s), io) =
+        invoke::<FooBar, FooBar, _>(clt, "foo", "bar", (Bytes::from_static(b"testbar"), s))
+            .await
+            .context("failed to invoke `foo.bar`")?;
+    assert_eq!(results, b"foo".as_slice());
+    let (buf, ()) = try_join!(async { anyhow::Ok(s.collect::<Vec<_>>().await) }, async {
+        io.await.context("`foo.bar` invocation failed")
+    },)?;
+    assert_eq!(buf.concat(), b"server->client");
+    Ok(())
+}
+
+/// Serves the invocation of [`assert_http_invocation`]
+#[cfg(feature = "http")]
+pub async fn serve_http_invocation(
+    Header { instance, name }: Header,
+    req: wrpc_http::IncomingRequest<hyper::body::Incoming>,
+) -> anyhow::Result<()> {
+    ensure!(
+        instance == "foo" && name == "bar",
+        "unexpected invocation of `{instance}.{name}`",
+    );
+    serve::<FooBar, FooBar, _, _, _>(req, async |(testbar, s)| {
+        assert_eq!(testbar, b"testbar".as_slice());
+        let buf = s.collect::<Vec<_>>().await;
+        assert_eq!(buf.concat(), b"client->server");
+        let results: BoxStream<'static, Bytes> =
+            Box::pin(stream::iter([Bytes::from_static(b"server->client")]));
+        Ok((Bytes::from_static(b"foo"), results))
+    })
     .await
 }
