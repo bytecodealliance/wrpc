@@ -29,7 +29,7 @@ struct FutureReceiver {
     dec: TupleDecoder,
     /// Sender of the payload, until it is received
     tx: Option<oneshot::Sender<Option<Val>>>,
-    buf: BytesMut,
+    buffer: BytesMut,
     closed: bool,
 }
 
@@ -56,11 +56,11 @@ impl Receive for FutureReceiver {
         if src.is_empty() {
             self.closed = true;
         } else {
-            self.buf.extend_from_slice(src);
+            self.buffer.extend_from_slice(src);
             src.clear();
         }
         let v = if let Some(ty) = &self.ty {
-            let v = self.dec.decode_val(&mut self.buf, ty)?;
+            let v = self.dec.decode_val(&mut self.buffer, ty)?;
             v.map(Some)
         } else {
             Some(None)
@@ -75,7 +75,7 @@ impl Receive for FutureReceiver {
             self.tx = Some(tx);
             return Poll::Ready(Ok(()));
         };
-        if !self.buf.is_empty() {
+        if !self.buffer.is_empty() {
             return Poll::Ready(Err(error_data_after_end()));
         }
         if tx.send(v).is_err() {
@@ -96,7 +96,7 @@ pub(super) fn pending_future(ty: Option<Type>, max_len: u32) -> (Val, Box<dyn Re
         ty,
         dec: TupleDecoder::new(Arc::default()).with_max_len(max_len),
         tx: Some(tx),
-        buf: BytesMut::default(),
+        buffer: BytesMut::default(),
         closed: false,
     };
     let v = Box::pin(async {
@@ -116,7 +116,7 @@ struct StreamReceiver {
     dec: TupleDecoder,
     /// Sender of the chunks and of the end, until the path is closed
     tx: Option<(PollSender<Vec<Val>>, oneshot::Sender<()>)>,
-    buf: BytesMut,
+    buffer: BytesMut,
     /// Length and decoded elements of a partially-received list
     list: Option<(usize, Vec<Val>)>,
     /// Index of the next element
@@ -133,13 +133,13 @@ impl StreamReceiver {
             let (n, mut vs) = if let Some(list) = self.list.take() {
                 list
             } else {
-                let Some(n) = self.dec.decode_len(&mut self.buf)? else {
+                let Some(n) = self.dec.decode_len(&mut self.buffer)? else {
                     return Ok(chunk);
                 };
                 (n, Vec::default())
             };
             while vs.len() < n {
-                let Some(v) = self.dec.decode_val(&mut self.buf, &self.ty)? else {
+                let Some(v) = self.dec.decode_val(&mut self.buffer, &self.ty)? else {
                     self.list = Some((n, vs));
                     return Ok(chunk);
                 };
@@ -182,7 +182,7 @@ impl Receive for StreamReceiver {
             let Some((.., end)) = self.tx.take() else {
                 return Poll::Ready(Err(error_data_after_end()));
             };
-            if self.list.is_some() || !self.buf.is_empty() {
+            if self.list.is_some() || !self.buffer.is_empty() {
                 return Poll::Ready(Err(std::io::Error::new(
                     std::io::ErrorKind::UnexpectedEof,
                     "stream closed within a chunk",
@@ -195,7 +195,7 @@ impl Receive for StreamReceiver {
             return Poll::Ready(Err(error_data_after_end()));
         };
         ready!(tx.poll_reserve(cx)).map_err(|_| error_receiver_closed())?;
-        self.buf.extend_from_slice(src);
+        self.buffer.extend_from_slice(src);
         src.clear();
         let chunk = self.decode_chunk()?;
         if !chunk.is_empty()
@@ -219,7 +219,7 @@ pub(super) fn pending_stream(ty: Type, max_len: u32) -> (Val, Box<dyn Receive + 
         ty,
         dec: TupleDecoder::new(Arc::default()).with_max_len(max_len),
         tx: Some((PollSender::new(tx), end_tx)),
-        buf: BytesMut::default(),
+        buffer: BytesMut::default(),
         list: None,
         offset: 0,
         nested: BTreeMap::default(),
