@@ -1,4 +1,3 @@
-use core::future::poll_fn;
 use core::pin::Pin;
 use core::time::Duration;
 
@@ -12,10 +11,9 @@ use futures::StreamExt as _;
 use futures::stream::FuturesUnordered;
 use tokio::net::TcpListener;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
-use tokio::task::JoinSet;
 use tokio::{fs, select};
 use tokio_io_timeout::{TimeoutReader, TimeoutWriter};
-use tracing::{Instrument as _, error, info, instrument, warn};
+use tracing::{error, info, instrument, warn};
 use tracing_subscriber::EnvFilter;
 use url::Url;
 use uuid::Uuid;
@@ -169,7 +167,7 @@ fn use_pooling_allocator_by_default() -> anyhow::Result<Option<bool>> {
 #[instrument(level = "trace")]
 async fn instantiate_pre(
     workload: &str,
-) -> anyhow::Result<(InstancePre<Ctx>, Engine, Arc<[ResourceType]>)> {
+) -> anyhow::Result<(InstancePre<Ctx>, Engine, Vec<ResourceType>)> {
     let mut opts = wasmtime_cli_flags::CommonOptions::new();
     let mut config = opts
         .config(use_pooling_allocator_by_default().unwrap_or(None))
@@ -253,7 +251,7 @@ async fn instantiate_pre(
         .instantiate_pre(&component)
         .map_err(anyhow::Error::from)
         .context("failed to pre-instantiate component")?;
-    Ok((pre, engine, Arc::from(guest_resources)))
+    Ok((pre, engine, guest_resources))
 }
 
 fn new_store(
@@ -335,51 +333,6 @@ async fn call(
 }
 
 async fn serve_conn(
-    mut conn: Conn,
-    max_len: u32,
-    pre: &InstancePre<Ctx>,
-    envs: &[(Box<str>, Box<str>)],
-    exports: &Exports,
-    guest: &[ResourceType],
-) -> anyhow::Result<()> {
-    loop {
-        let (header, srv) = match conn.accept().await {
-            Ok(Some(next)) => next,
-            Ok(None) => break,
-            Err(err) if err.kind() == std::io::ErrorKind::TimedOut => break,
-            Err(err) => return Err(err).context("failed to read invocation header"),
-        };
-        let export = exports
-            .get(&header.instance, &header.name)
-            .with_context(|| format!("`{}#{}` is not exported", header.instance, header.name))?;
-        let mut store = new_store(pre.engine(), envs.iter().map(|(k, v)| (k, v)));
-        let instance = pre
-            .instantiate_async(&mut store)
-            .await
-            .map_err(anyhow::Error::from)
-            .context("failed to instantiate component")?;
-        let func = instance
-            .get_func(&mut store, export.idx)
-            .context("function export not found")?;
-        store
-            .run_concurrent(async |store| {
-                let codec = Codec {
-                    enc: TupleEncoder::new(Arc::clone(&export.results)),
-                    dec: TupleDecoder::new(Arc::clone(&export.params)).with_max_len(max_len),
-                };
-                srv.serve(codec, |params| call(store, func, export, guest, params))
-                    .await?;
-                poll_fn(|cx| store.poll_no_interesting_tasks(cx)).await;
-                anyhow::Ok(())
-            })
-            .await
-            .map_err(anyhow::Error::from)
-            .context("failed to run concurrent event loop")??;
-    }
-    Ok(())
-}
-
-async fn serve_conn_shared(
     store: &Accessor<Ctx>,
     mut conn: Conn,
     max_len: u32,
@@ -420,40 +373,6 @@ pub async fn serve(
 ) -> anyhow::Result<()> {
     let (pre, engine, guest) = instantiate_pre(workload).await?;
     let exports = Exports::new(pre.component())?;
-    if guest.is_empty() {
-        let envs = Arc::<[_]>::from(envs);
-        let exports = Arc::new(exports);
-        let mut tasks = JoinSet::default();
-        loop {
-            select! {
-                res = accept(&lis, timeout), if tasks.len() < MAX_CONNECTIONS => match res {
-                    Ok(conn) => {
-                        let pre = pre.clone();
-                        let envs = Arc::clone(&envs);
-                        let exports = Arc::clone(&exports);
-                        let guest = Arc::clone(&guest);
-                        tasks.spawn(
-                            async move {
-                                let res =
-                                    serve_conn(conn, max_len, &pre, &envs, &exports, &guest)
-                                        .await;
-                                if let Err(err) = res {
-                                    warn!(?err, "failed to serve connection");
-                                }
-                            }
-                            .in_current_span(),
-                        );
-                    }
-                    Err(err) => error!(?err, "failed to accept connection"),
-                },
-                Some(res) = tasks.join_next() => {
-                    if let Err(err) = res {
-                        error!(?err, "failed to join connection task");
-                    }
-                }
-            }
-        }
-    }
     let mut store = new_store(&engine, envs);
     let instance = pre
         .instantiate_async(&mut store)
@@ -466,7 +385,7 @@ pub async fn serve(
             loop {
                 select! {
                     res = accept(&lis, timeout), if conns.len() < MAX_CONNECTIONS => match res {
-                        Ok(conn) => conns.push(serve_conn_shared(
+                        Ok(conn) => conns.push(serve_conn(
                             store, conn, max_len, instance, &exports, &guest,
                         )),
                         Err(err) => error!(?err, "failed to accept connection"),
