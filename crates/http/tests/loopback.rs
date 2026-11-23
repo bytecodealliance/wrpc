@@ -13,17 +13,32 @@ use futures::stream::{self, BoxStream};
 use http::header::CONTENT_TYPE;
 use http::{HeaderValue, StatusCode};
 use http_body::Body as _;
+use http_body_util::combinators::UnsyncBoxBody;
 use http_body_util::{BodyExt, Full};
-use tokio::io::{AsyncRead, copy, sink};
+use hyper::client::conn::http2::{SendRequest, handshake};
+use hyper::server::conn::http2::Builder;
+use hyper_util::rt::{TokioExecutor, TokioIo};
+use tokio::io::{AsyncRead, DuplexStream, copy, duplex, sink};
 use tokio::time::sleep;
-use tokio::{spawn, try_join};
+use tokio::{join, spawn, try_join};
 use tokio_util::codec::Encoder as _;
 use tokio_util::io::StreamReader;
-use wrpc_http::{Body, OutgoingRequest};
+use wrpc_http::{Body, Listener, OutgoingRequest};
 use wrpc_transport::{
     Codec, Decode, Encode, FrameEncoder, FrameRef, Header, HeaderEncoder, HeaderRef, invoke,
     invoke_blocking, serve,
 };
+
+async fn connect() -> anyhow::Result<(
+    SendRequest<UnsyncBoxBody<Bytes, std::io::Error>>,
+    Listener<TokioIo<DuplexStream>>,
+)> {
+    let (clt, srv) = duplex(65536);
+    let (sender, conn) = handshake(TokioExecutor::default(), TokioIo::new(clt)).await?;
+    spawn(conn);
+    let lis = Listener::new(&Builder::new(TokioExecutor::default()), TokioIo::new(srv));
+    Ok((sender, lis))
+}
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn http2() -> anyhow::Result<()> {
@@ -39,55 +54,54 @@ async fn http2() -> anyhow::Result<()> {
         let mut buf = baz.clone();
         FrameEncoder.encode(FrameRef { path, data: b"" }, &mut buf)?;
         buf.extend_from_slice(&baz);
-        wrpc_test::with_http2(
-            async |stream| {
-                let res = wrpc_test::serve_http2(stream, |_, header, req| async move {
-                    if header.name == "baz" {
-                        return serve::<(), (), _, _, _>(req, async |()| anyhow::Ok(())).await;
-                    }
-                    wrpc_test::serve_http_invocation(header, req).await
-                })
-                .await;
+        let (mut sender, mut lis) = connect().await?;
+        try_join!(
+            async {
+                let (_, Header { name, .. }, req) =
+                    lis.next().await.context("missing invocation")??;
+                ensure!(name == "baz", "unexpected `{name}`");
+                let (res, next) = join!(
+                    serve::<(), (), _, _, _>(req, async |()| anyhow::Ok(())),
+                    lis.next()
+                );
                 res.expect_err("invalid data must fail the invocation");
+                ensure!(next.is_none(), "connection must close cleanly");
                 Ok(())
             },
-            |parts, mut sender| async move {
-                sender.ready().await?;
-                wrpc_test::assert_http_invocation(parts.clone(), |req| sender.send_request(req))
-                    .await?;
-
+            async move {
                 let body = Full::new(buf.freeze()).map_err(|err| match err {});
-                let req = http::Request::from_parts(parts, body.boxed_unsync());
+                let req = http::Request::new(body.boxed_unsync());
                 sender.ready().await?;
-                let res = async {
+                _ = async {
                     let res = sender.send_request(req).await?;
                     res.into_body().collect().await
                 }
                 .await;
-                res.expect_err("invalid data must fail the response");
                 Ok(())
             },
-        )
-        .await?;
+        )?;
     }
     Ok(())
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn unread_params() -> anyhow::Result<()> {
-    wrpc_test::with_http2(
-        async |stream| {
-            let res = wrpc_test::serve_http2(stream, |_, _, req| {
+    let (mut sender, mut lis) = connect().await?;
+    try_join!(
+        async {
+            let (_, _, req) = lis.next().await.context("missing invocation")??;
+            let (res, next) = join!(
                 serve::<(BoxStream<'static, Bytes>,), (), _, _, _>(req, async |(s,)| {
                     drop(s);
                     anyhow::Ok(())
-                })
-            })
-            .await;
+                }),
+                lis.next()
+            );
             res.expect_err("unread parameters must fail the invocation");
+            ensure!(next.is_none(), "connection must close cleanly");
             Ok(())
         },
-        |parts, mut sender| async move {
+        async move {
             let s: BoxStream<'static, Bytes> = Box::pin(
                 stream::repeat(Bytes::from_static(b"foo")).then(async |buf| {
                     sleep(Duration::from_millis(10)).await;
@@ -95,6 +109,7 @@ async fn unread_params() -> anyhow::Result<()> {
                 }),
             );
             sender.ready().await?;
+            let (parts, ()) = http::Request::new(()).into_parts();
             let clt = OutgoingRequest {
                 parts,
                 send: |req: http::Request<Body<_>>| {
@@ -109,8 +124,8 @@ async fn unread_params() -> anyhow::Result<()> {
                 .expect_err("unread parameters must fail the invocation");
             Ok(())
         },
-    )
-    .await
+    )?;
+    Ok(())
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -307,18 +322,22 @@ async fn local() -> anyhow::Result<()> {
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn params_error() -> anyhow::Result<()> {
-    wrpc_test::with_http2(
-        async |stream| {
-            _ = wrpc_test::serve_http2(stream, |_, _, req| {
+    let (mut sender, mut lis) = connect().await?;
+    try_join!(
+        async {
+            let (_, _, req) = lis.next().await.context("missing invocation")??;
+            let (res, next) = join!(
                 serve::<(Pin<Box<dyn AsyncRead + Send>>,), (), _, _, _>(req, async |(mut s,)| {
                     spawn(async move { copy(&mut s, &mut sink()).await });
                     anyhow::Ok(())
-                })
-            })
-            .await;
+                }),
+                lis.next()
+            );
+            res.context("a peer parameter error must not fail serving")?;
+            ensure!(next.is_none(), "connection must close cleanly");
             Ok(())
         },
-        |parts, mut sender| async move {
+        async move {
             let (tx, rx) = oneshot::channel::<()>();
             let s = stream::once(async {
                 _ = rx.await;
@@ -326,6 +345,7 @@ async fn params_error() -> anyhow::Result<()> {
             });
             let s: Pin<Box<dyn AsyncRead + Send>> = Box::pin(StreamReader::<_, Bytes>::new(s));
             sender.ready().await?;
+            let (parts, ()) = http::Request::new(()).into_parts();
             let clt = OutgoingRequest {
                 parts,
                 send: |req: http::Request<Body<_>>| {
@@ -341,6 +361,6 @@ async fn params_error() -> anyhow::Result<()> {
             assert_eq!(err.to_string(), "foo");
             Ok(())
         },
-    )
-    .await
+    )?;
+    Ok(())
 }

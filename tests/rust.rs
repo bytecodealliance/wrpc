@@ -936,37 +936,55 @@ async fn rust_http_bindgen_async() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_http_dynamic() -> anyhow::Result<()> {
     use http_body_util::BodyExt;
-    use wrpc_http::{Body, OutgoingRequest};
+    use hyper::client::conn::http2::handshake;
+    use hyper::server::conn::http2::Builder;
+    use hyper_util::rt::{TokioExecutor, TokioIo};
+    use wrpc_http::{Body, Listener, OutgoingRequest};
 
-    wrpc_test::with_http2(
-        async |stream| {
-            let res =
-                wrpc_test::serve_http2(stream, |_, Header { instance, name }, srv| async move {
-                    ensure!(instance == "test", "unexpected instance `{instance}`");
-                    match name.as_str() {
-                        "sync" => {
+    let (clt, srv) = duplex(65536);
+    let (mut sender, conn) = handshake(TokioExecutor::default(), TokioIo::new(clt)).await?;
+    spawn(conn);
+    let mut lis = Listener::new(&Builder::new(TokioExecutor::default()), TokioIo::new(srv));
+    try_join!(
+        async {
+            let mut inv = lis.next().await;
+            for func in ["sync", "async"] {
+                let (_, Header { instance, name }, srv) = inv.context("missing invocation")??;
+                ensure!(
+                    instance == "test" && name == func,
+                    "unexpected `{instance}.{name}`"
+                );
+                let (res, next) = join!(
+                    async {
+                        if func == "sync" {
                             serve::<SyncValues, SyncValues, _, _, _>(srv, async |params| {
                                 assert_eq!(params, sync_values());
                                 anyhow::Ok(sync_values())
                             })
                             .await
-                        }
-                        "async" => {
+                        } else {
                             serve::<AsyncValues, AsyncValues, _, _, _>(srv, |params| async move {
                                 assert_async_values(params, future::ready(Ok(()))).await?;
                                 anyhow::Ok(async_values())
                             })
                             .await
                         }
-                        _ => bail!("`{instance}.{name}` is not exported"),
-                    }
-                })
-                .await;
-            let err = res.expect_err("`test.reset` must fail the connection");
-            assert_eq!(err.to_string(), "`test.reset` is not exported");
+                    },
+                    lis.next()
+                );
+                res?;
+                inv = next;
+            }
+            let (_, Header { instance, name }, ..) = inv.context("missing invocation")??;
+            ensure!(
+                instance == "test" && name == "reset",
+                "unexpected `{instance}.{name}`"
+            );
+            ensure!(lis.next().await.is_none(), "connection must close cleanly");
             Ok(())
         },
-        |parts, mut sender| async move {
+        async move {
+            let (parts, ()) = http::Request::new(()).into_parts();
             sender.ready().await?;
             let res = invoke_blocking::<SyncValues, SyncValues, _>(
                 OutgoingRequest {
@@ -1012,8 +1030,8 @@ async fn rust_http_dynamic() -> anyhow::Result<()> {
             ensure!(res.is_err(), "`test.reset` should have failed");
             Ok(())
         },
-    )
-    .await
+    )?;
+    Ok(())
 }
 
 #[instrument(skip_all, ret)]
