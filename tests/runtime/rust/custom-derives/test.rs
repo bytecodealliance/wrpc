@@ -35,7 +35,7 @@ impl HandlerBlag for Component {}
 impl HandlerInputStream for Component {
     async fn read(
         &self,
-        _stream: ::wit_bindgen_wrpc::wrpc_transport::ResourceBorrow<
+        _stream: ::wit_bindgen_wrpc::wrpc_core::ResourceBorrow<
             crate::server::exports::my::inline::blag::InputStream,
         >,
         _len: u64,

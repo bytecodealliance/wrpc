@@ -12,7 +12,7 @@ use rustls::{
     pki_types::{CertificateDer, ServerName, UnixTime},
     version::TLS13,
 };
-use wrpc_transport::Framed;
+use wrpc_core::Framed;
 use wrpc_wasi_keyvalue::wasi::keyvalue::store;
 
 #[derive(Parser, Debug)]

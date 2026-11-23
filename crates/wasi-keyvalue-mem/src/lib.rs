@@ -6,7 +6,7 @@ use std::sync::Arc;
 use bytes::Bytes;
 use tokio::sync::RwLock;
 use tracing::{instrument, trace};
-use wrpc_transport::{ResourceBorrow, ResourceOwn};
+use wrpc_core::{ResourceBorrow, ResourceOwn};
 use wrpc_wasi_keyvalue::exports::wasi::keyvalue::{atomics, batch, store};
 
 pub type Bucket = Arc<RwLock<HashMap<String, Bytes>>>;

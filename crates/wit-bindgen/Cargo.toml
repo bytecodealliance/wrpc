@@ -23,7 +23,7 @@ tokio-util = { workspace = true, features = ["codec"] }
 tracing = { workspace = true }
 wasm-tokio = { workspace = true }
 wit-bindgen-wrpc-rust-macro = { workspace = true }
-wrpc-transport = { workspace = true }
+wrpc-core = { workspace = true }
 
 [features]
 default = ["macro-string"]

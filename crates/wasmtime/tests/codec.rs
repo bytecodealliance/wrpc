@@ -4,7 +4,7 @@ use bytes::BytesMut;
 use tokio_util::codec::Decoder as _;
 use wasmtime::component::{self, Component, Type, types};
 use wasmtime::{Config, Engine, bail};
-use wrpc_transport::{pack, unpack};
+use wrpc_core::{pack, unpack};
 use wrpc_wasmtime::{TupleDecoder, TupleEncoder, Val};
 
 #[test]

@@ -11,7 +11,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::PollSender;
 use tracing::error;
 use wasmtime::component::Type;
-use wrpc_transport::{Receive, error_data_after_end, error_receiver_closed, error_unknown_path};
+use wrpc_core::{Receive, error_data_after_end, error_receiver_closed, error_unknown_path};
 
 use crate::{TupleDecoder, Val};
 

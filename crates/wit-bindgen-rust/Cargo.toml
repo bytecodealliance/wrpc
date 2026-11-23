@@ -33,4 +33,4 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 wit-bindgen-wrpc = { path = "../wit-bindgen" }
-wrpc-transport = { workspace = true }
+wrpc-core = { workspace = true }

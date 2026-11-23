@@ -17,7 +17,7 @@ use tokio::time::timeout;
 use tokio::{select, spawn};
 use tokio_util::codec::Encoder as _;
 use tracing::{info, instrument};
-use wrpc_transport::{FrameEncoder, FrameRef, Framed, Header, HeaderEncoder, HeaderRef, Listener};
+use wrpc_core::{FrameEncoder, FrameRef, Framed, Header, HeaderEncoder, HeaderRef, Listener};
 
 pub mod common;
 

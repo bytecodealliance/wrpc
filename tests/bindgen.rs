@@ -17,8 +17,8 @@ fn bindgen() {
             concat!(env!("CARGO_TARGET_TMPDIR"), "/bindgen"),
             "--rust-wit-bindgen-path",
             "crates/wit-bindgen",
-            "--rust-wrpc-transport-path",
-            "crates/transport",
+            "--rust-wrpc-core-path",
+            "crates/core",
         ])
         .status()
         .expect("failed to run `wit-bindgen-wrpc test`");

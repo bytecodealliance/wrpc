@@ -18,7 +18,7 @@ use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
 use tokio::time::timeout;
 use tokio::try_join;
 use tokio_util::codec::{Encoder as _, FramedRead, FramedWrite};
-use wrpc_transport::{
+use wrpc_core::{
     Codec, Decode, Encode, FrameDecoder, FrameEncoder, FrameRef, Framed, Header, HeaderDecoder,
     HeaderEncoder, HeaderRef, Listener, Server, invoke, serve,
 };

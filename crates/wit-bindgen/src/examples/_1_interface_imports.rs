@@ -30,7 +30,7 @@ crate::generate!({
     futures_path: "futures",
     tokio_util_path: "tokio_util",
     wasm_tokio_path: "wasm_tokio",
-    wrpc_transport_path: "wrpc_transport",
+    wrpc_core_path: "wrpc_core",
 
     path: "wasi-cli@0.2.0.wasm",
 

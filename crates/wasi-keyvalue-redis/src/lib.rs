@@ -7,7 +7,7 @@ use redis::{AsyncCommands as _, aio::ConnectionManager};
 use tokio::sync::RwLock;
 use tracing::{instrument, trace};
 use uuid::Uuid;
-use wrpc_transport::{ResourceBorrow, ResourceOwn};
+use wrpc_core::{ResourceBorrow, ResourceOwn};
 use wrpc_wasi_keyvalue::exports::wasi::keyvalue::{atomics, batch, store};
 
 #[derive(Clone, Default)]

@@ -2,7 +2,7 @@ use anyhow::Context as _;
 use clap::Parser;
 use url::Url;
 use web_transport_quinn::ClientBuilder;
-use wit_bindgen_wrpc::wrpc_transport::Framed;
+use wit_bindgen_wrpc::wrpc_core::Framed;
 
 mod bindings {
     wit_bindgen_wrpc::generate!({

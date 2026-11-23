@@ -14,5 +14,5 @@ anyhow = { workspace = true, features = ["std"] }
 bytes = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
-wrpc-transport = { workspace = true }
+wrpc-core = { workspace = true }
 wrpc-wasi-keyvalue = { workspace = true }

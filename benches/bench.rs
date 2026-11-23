@@ -27,8 +27,8 @@ use tokio::try_join;
 use tokio_util::codec::{Decoder, Encoder};
 use wasmtime::component::{Component, Linker, ResourceTable};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
+use wrpc_core::{Codec, Encode, Framed, Header, Invoke, Listener, Receive, Serve, Transmit};
 use wrpc_http::{Body, OutgoingRequest};
-use wrpc_transport::{Codec, Encode, Framed, Header, Invoke, Listener, Receive, Serve, Transmit};
 
 mod ping_bindings_wrpc {
     wit_bindgen_wrpc::generate!({

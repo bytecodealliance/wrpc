@@ -160,7 +160,7 @@
 ///
 /// use bindings::Celsius;
 ///
-/// use wrpc_transport::Framed;
+/// use wrpc_core::Framed;
 ///
 /// async fn test<I, O>(
 ///     connect: impl AsyncFn() -> std::io::Result<Framed<I, O>>,
@@ -216,7 +216,7 @@
 /// // interface name.
 /// use my::test::logging::Level;
 ///
-/// use wrpc_transport::Framed;
+/// use wrpc_core::Framed;
 ///
 /// async fn test<I, O>(
 ///     connect: impl AsyncFn() -> std::io::Result<Framed<I, O>>,
@@ -243,10 +243,10 @@
 ///
 /// Imported resources generate a marker type named after the resource. This
 /// type is not constructed directly; instead it parameterizes the
-/// `ResourceOwn<T>` and `ResourceBorrow<T>` handle types from `wrpc_transport`,
+/// `ResourceOwn<T>` and `ResourceBorrow<T>` handle types from `wrpc_core`,
 /// which represent owned and borrowed handles respectively. The resource's
 /// constructor, methods, and static functions are generated as associated
-/// functions on the marker type, each taking the [`Invoke`](wrpc_transport::Invoke)
+/// functions on the marker type, each taking the [`Invoke`](wrpc_core::Invoke)
 /// client of an invocation as their first argument; methods additionally take a
 /// `&ResourceBorrow<T>` receiver, obtained from an owned handle via
 /// `ResourceOwn::as_borrow`.
@@ -284,7 +284,7 @@
 ///
 /// use my::test::logger::{self, Level};
 ///
-/// use wrpc_transport::Framed;
+/// use wrpc_core::Framed;
 ///
 /// async fn test<I, O>(
 ///     connect: impl AsyncFn() -> std::io::Result<Framed<I, O>>,
@@ -450,7 +450,7 @@
 ///
 /// As with imports, an exported resource generates a marker type named after
 /// the resource, and owned/borrowed handles are expressed as `ResourceOwn<T>`
-/// and `ResourceBorrow<T>` from `wrpc_transport`. Unlike imports, the server
+/// and `ResourceBorrow<T>` from `wrpc_core`. Unlike imports, the server
 /// mints and dereferences these handles itself: the handle payload is an opaque
 /// `bytes::Bytes` blob whose meaning is entirely up to the `Handler`
 /// implementation (in the example below it indexes into a `Vec`).
@@ -467,7 +467,7 @@
 ///
 /// use anyhow::Context;
 /// use bytes::Bytes;
-/// use wrpc_transport::{ResourceBorrow, ResourceOwn};
+/// use wrpc_core::{ResourceBorrow, ResourceOwn};
 ///
 /// mod bindings {
 ///     use wit_bindgen_wrpc::generate;
@@ -575,8 +575,8 @@
 /// Each call to `generate!` itself generates a `handle` function adjacent to
 /// the generated bindings. It takes a value that implements the generated
 /// `Handler` traits, the instance and function name of the invocation header
-/// and a [`Serve`](wrpc_transport::Serve) server, such as the
-/// [`Server`](wrpc_transport::Server) returned by `wrpc_transport::Listener::accept`. It returns a
+/// and a [`Serve`](wrpc_core::Serve) server, such as the
+/// [`Server`](wrpc_core::Server) returned by `wrpc_core::Listener::accept`. It returns a
 /// future serving the invocation if the world exports the invoked function, and
 /// the server back otherwise, so that it can be passed to the `handle` function of another
 /// world to serve several of them on one connection. Nothing is spawned and the caller
@@ -586,7 +586,7 @@
 /// ```
 /// use tokio::io::{AsyncRead, AsyncWrite};
 /// use wit_bindgen_wrpc::generate;
-/// use wrpc_transport::{Header, Listener};
+/// use wrpc_core::{Header, Listener};
 ///
 /// generate!({
 ///     inline: r#"
@@ -631,7 +631,7 @@
 ///
 /// ```
 /// use tokio::io::{AsyncRead, AsyncWrite};
-/// use wrpc_transport::{Header, Listener};
+/// use wrpc_core::{Header, Listener};
 ///
 /// mod bindings {
 ///     wit_bindgen_wrpc::generate!({
@@ -815,7 +815,7 @@
 ///     tokio_util_path: "path::to::tokio_util",
 ///     tracing_path: "path::to::tracing",
 ///     wasm_tokio_path: "path::to::wasm_tokio",
-///     wrpc_transport_path: "path::to::wrpc_transport",
+///     wrpc_core_path: "path::to::wrpc_core",
 ///
 ///     // Whether to generate unused `record`, `enum`, `variant` types.
 ///     // By default, they will not be generated unless they are used as input
@@ -1086,4 +1086,4 @@ pub use futures;
 pub use tokio_util;
 pub use tracing;
 pub use wasm_tokio;
-pub use wrpc_transport;
+pub use wrpc_core;

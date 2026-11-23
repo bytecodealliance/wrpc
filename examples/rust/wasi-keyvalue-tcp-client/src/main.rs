@@ -2,7 +2,7 @@ use anyhow::{Context as _, ensure};
 use bytes::Bytes;
 use clap::Parser;
 use tokio::net::TcpStream;
-use wrpc_transport::Framed;
+use wrpc_core::Framed;
 use wrpc_wasi_keyvalue::wasi::keyvalue::store;
 
 #[derive(Parser, Debug)]

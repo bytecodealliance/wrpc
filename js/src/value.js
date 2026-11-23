@@ -1,6 +1,6 @@
 // The component-model value codec, in the wRPC wire format. A value is encoded
 // or decoded against a `Type` from `types.js`. This mirrors the canonical Rust
-// codec in `wrpc-transport`'s `value.rs`.
+// codec in `wrpc-core`'s `value.rs`.
 //
 // JavaScript representation of values (following the ToJSValue and
 // ToComponentValue conversions of the component model's JS-API draft, see

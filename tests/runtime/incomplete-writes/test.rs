@@ -1,5 +1,5 @@
 use ::wit_bindgen_wrpc::bytes::Bytes;
-use ::wit_bindgen_wrpc::wrpc_transport::{ResourceBorrow, ResourceOwn};
+use ::wit_bindgen_wrpc::wrpc_core::{ResourceBorrow, ResourceOwn};
 use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use futures::{FutureExt as _, StreamExt as _, stream};

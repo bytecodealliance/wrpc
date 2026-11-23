@@ -1,5 +1,5 @@
 use clap::Parser;
-use wit_bindgen_wrpc::wrpc_transport::Framed;
+use wit_bindgen_wrpc::wrpc_core::Framed;
 
 #[cfg(target_family = "wasm")]
 mod tcp;

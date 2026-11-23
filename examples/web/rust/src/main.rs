@@ -31,7 +31,7 @@ use tracing_subscriber::util::SubscriberInitExt as _;
 use url::Url;
 use uuid::Uuid;
 use web_transport_quinn::Request;
-use wrpc_transport::{Framed, Header, Listener, ResourceBorrow, ResourceOwn};
+use wrpc_core::{Framed, Header, Listener, ResourceBorrow, ResourceOwn};
 use wrpc_wasi_keyvalue::exports::wasi::keyvalue::store;
 
 pub type Result<T, E = store::Error> = core::result::Result<T, E>;

@@ -6,7 +6,7 @@ use http::uri::PathAndQuery;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use tokio::net::{TcpListener, TcpStream};
 use tracing::{error, info};
-use wit_bindgen_wrpc::wrpc_transport::Framed;
+use wit_bindgen_wrpc::wrpc_core::Framed;
 
 mod bindings {
     wit_bindgen_wrpc::generate!({

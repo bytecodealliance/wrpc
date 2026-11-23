@@ -7,14 +7,14 @@ on:
     branches:
       - main
     tags:
+      - 'crates/core/v[0-9].[0-9]+.[0-9]+'
+      - 'crates/core/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/http/v[0-9].[0-9]+.[0-9]+'
       - 'crates/http/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/introspect/v[0-9].[0-9]+.[0-9]+'
       - 'crates/introspect/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/test/v[0-9].[0-9]+.[0-9]+'
       - 'crates/test/v[0-9].[0-9]+.[0-9]+-*'
-      - 'crates/transport/v[0-9].[0-9]+.[0-9]+'
-      - 'crates/transport/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/wasi-keyvalue-mem/v[0-9].[0-9]+.[0-9]+'
       - 'crates/wasi-keyvalue-mem/v[0-9].[0-9]+.[0-9]+-*'
       - 'crates/wasi-keyvalue-redis/v[0-9].[0-9]+.[0-9]+'
@@ -203,6 +203,8 @@ jobs:
     strategy:
       matrix:
         include:
+          - crate: core
+
           - crate: http
             workspace-dependencies: true
 
@@ -210,8 +212,6 @@ jobs:
 
           - crate: test
             workspace-dependencies: true
-
-          - crate: transport
 
           - crate: wasi-keyvalue
             workspace-dependencies: true

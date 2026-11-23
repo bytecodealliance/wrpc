@@ -20,12 +20,12 @@ impl Handler for Component {
         t2: T2,
         v1: V1,
         v2: V2,
-        l1: Vec<::wit_bindgen_wrpc::wrpc_transport::ResourceOwn<Thing>>,
-        l2: Vec<::wit_bindgen_wrpc::wrpc_transport::ResourceBorrow<Thing>>,
-        o1: Option<::wit_bindgen_wrpc::wrpc_transport::ResourceOwn<Thing>>,
-        o2: Option<::wit_bindgen_wrpc::wrpc_transport::ResourceBorrow<Thing>>,
-        result1: Result<::wit_bindgen_wrpc::wrpc_transport::ResourceOwn<Thing>, ()>,
-        result2: Result<::wit_bindgen_wrpc::wrpc_transport::ResourceBorrow<Thing>, ()>,
+        l1: Vec<::wit_bindgen_wrpc::wrpc_core::ResourceOwn<Thing>>,
+        l2: Vec<::wit_bindgen_wrpc::wrpc_core::ResourceBorrow<Thing>>,
+        o1: Option<::wit_bindgen_wrpc::wrpc_core::ResourceOwn<Thing>>,
+        o2: Option<::wit_bindgen_wrpc::wrpc_core::ResourceBorrow<Thing>>,
+        result1: Result<::wit_bindgen_wrpc::wrpc_core::ResourceOwn<Thing>, ()>,
+        result2: Result<::wit_bindgen_wrpc::wrpc_core::ResourceBorrow<Thing>, ()>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<u32> {
         let mut sum = 0;
         sum += val(r1.thing.as_ref());
@@ -68,10 +68,10 @@ impl HandlerThing for Component {
         &self,
         v: u32,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<
-        ::wit_bindgen_wrpc::wrpc_transport::ResourceOwn<Thing>,
+        ::wit_bindgen_wrpc::wrpc_core::ResourceOwn<Thing>,
     > {
         let val = v + 1;
-        Ok(::wit_bindgen_wrpc::wrpc_transport::ResourceOwn::from(
+        Ok(::wit_bindgen_wrpc::wrpc_core::ResourceOwn::from(
             ::wit_bindgen_wrpc::bytes::Bytes::copy_from_slice(&val.to_le_bytes()),
         ))
     }

@@ -1,7 +1,7 @@
 //@ args = '--generate-all'
 
 use ::wit_bindgen_wrpc::anyhow::Result;
-use ::wit_bindgen_wrpc::wrpc_transport::ResourceOwn;
+use ::wit_bindgen_wrpc::wrpc_core::ResourceOwn;
 
 use crate::server::exports::i::{C as IC, D as ID, Handler as HandlerI};
 use crate::server::exports::my::inline::bar::{E, Handler as HandlerBar};

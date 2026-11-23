@@ -20,21 +20,13 @@ pub struct RustOpts {
     #[clap(long, conflicts_with = "rust_wit_bindgen_path", value_name = "X.Y.Z")]
     rust_wit_bindgen_version: Option<String>,
 
-    /// A custom `path` dependency to use for `wrpc-transport`.
-    #[clap(
-        long,
-        conflicts_with = "rust_wrpc_transport_version",
-        value_name = "PATH"
-    )]
-    rust_wrpc_transport_path: Option<PathBuf>,
+    /// A custom `path` dependency to use for `wrpc-core`.
+    #[clap(long, conflicts_with = "rust_wrpc_core_version", value_name = "PATH")]
+    rust_wrpc_core_path: Option<PathBuf>,
 
-    /// A custom version to use for the `wrpc-transport` dependency.
-    #[clap(
-        long,
-        conflicts_with = "rust_wrpc_transport_path",
-        value_name = "X.Y.Z"
-    )]
-    rust_wrpc_transport_version: Option<String>,
+    /// A custom version to use for the `wrpc-core` dependency.
+    #[clap(long, conflicts_with = "rust_wrpc_core_path", value_name = "X.Y.Z")]
+    rust_wrpc_core_version: Option<String>,
 }
 
 /// Rust-specific configuration of component files
@@ -138,11 +130,11 @@ impl LanguageMethods for Rust {
                 format!("version = \"{version}\"")
             }
         };
-        let transport_dep = match &opts.rust_wrpc_transport_path {
+        let core_dep = match &opts.rust_wrpc_core_path {
             Some(path) => format!("path = {:?}", cwd.join(path)),
             None => {
                 let version = opts
-                    .rust_wrpc_transport_version
+                    .rust_wrpc_core_version
                     .as_deref()
                     .unwrap_or(env!("CARGO_PKG_VERSION"));
                 format!("version = \"{version}\"")
@@ -169,7 +161,7 @@ path = "lib.rs"
 
 [dependencies]
 wit-bindgen-wrpc = {{ {wit_bindgen_dep} }}
-wrpc-transport = {{ {transport_dep} }}
+wrpc-core = {{ {core_dep} }}
 tokio = {{ version = "1", features = ["macros", "rt-multi-thread", "net", "sync", "io-util", "time"] }}
 futures = {{ version = "0.3", default-features = false, features = ["std", "async-await"] }}
 anyhow = "1"
@@ -269,7 +261,7 @@ use std::sync::Arc;
 
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream};
-use wrpc_transport::{Framed, Header, Listener, Server};
+use wrpc_core::{Framed, Header, Listener, Server};
 
 {modules}
 
@@ -360,7 +352,7 @@ async fn main() -> anyhow::Result<()> {
 /// Crates built during `prepare` that runtime-test crates are linked against.
 const DEPS: [&str; 7] = [
     "wit_bindgen_wrpc",
-    "wrpc_transport",
+    "wrpc_core",
     "tokio",
     "futures",
     "anyhow",

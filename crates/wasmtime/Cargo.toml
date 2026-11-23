@@ -23,7 +23,7 @@ tracing = { workspace = true, features = ["attributes"] }
 wasm-tokio = { workspace = true }
 wasmparser = { workspace = true, features = ["component-model", "validate"] }
 wasmtime = { workspace = true, features = ["anyhow", "component-model", "runtime", "std"] }
-wrpc-transport = { workspace = true }
+wrpc-core = { workspace = true }
 
 [dev-dependencies]
 test-log = { workspace = true, features = ["trace"] }

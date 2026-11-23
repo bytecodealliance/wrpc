@@ -18,7 +18,7 @@ mod bindings {
 }
 
 use bindings::wrpc_examples::streams::handler::{Req, echo};
-use wit_bindgen_wrpc::wrpc_transport::Framed;
+use wit_bindgen_wrpc::wrpc_core::Framed;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]

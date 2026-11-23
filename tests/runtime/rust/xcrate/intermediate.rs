@@ -2,7 +2,7 @@
 //@ externs = ['rust_xcrate_test.rs']
 
 use ::wit_bindgen_wrpc::bytes::Bytes;
-use ::wit_bindgen_wrpc::wrpc_transport::{ResourceBorrow, ResourceOwn};
+use ::wit_bindgen_wrpc::wrpc_core::{ResourceBorrow, ResourceOwn};
 use rust_xcrate_test::a::test::xcrate::a_imports;
 use rust_xcrate_test::b::test::xcrate::b_imports;
 

@@ -1,10 +1,10 @@
-//! [`wrpc_transport::Encode`] support
+//! [`wrpc_core::Encode`] support
 
 use bytes::BytesMut;
 use tokio_util::codec::Encoder;
 use wasm_wave::value::Value;
 use wasm_wave::wasm::WasmValue;
-use wrpc_transport::{Encode, SyncCodec};
+use wrpc_core::{Encode, SyncCodec};
 
 use crate::encode::encode_value;
 
@@ -14,12 +14,12 @@ use crate::encode::encode_value;
 /// use bytes::BytesMut;
 /// use wasm_wave::value::{Type, Value};
 /// use wasm_wave::wasm::WasmValue as _;
-/// use wrpc_transport::SyncCodec;
+/// use wrpc_core::SyncCodec;
 /// use wrpc_wave::{TypedValue, TypedValueEncoder};
 ///
 /// let mut buf = BytesMut::default();
 /// let v = TypedValue(Value::make_u32(42), Type::U32);
-/// wrpc_transport::pack(SyncCodec(TypedValueEncoder), v, &mut buf).unwrap();
+/// wrpc_core::pack(SyncCodec(TypedValueEncoder), v, &mut buf).unwrap();
 /// assert_eq!(buf.as_ref(), [42]);
 /// ```
 #[derive(Clone, Debug)]

@@ -127,7 +127,7 @@ impl tokio_util::codec::Decoder for FrameHeaderDecoder {
 /// # async fn read(rx: impl tokio::io::AsyncRead + Unpin) -> std::io::Result<()> {
 /// use futures::TryStreamExt as _;
 /// use tokio_util::codec::FramedRead;
-/// use wrpc_transport::FrameDecoder;
+/// use wrpc_core::FrameDecoder;
 ///
 /// let mut rx = FramedRead::new(rx, FrameDecoder::default());
 /// while let Some(data) = rx.try_next().await? {

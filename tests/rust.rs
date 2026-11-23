@@ -25,18 +25,18 @@ use tokio::{join, select, spawn, try_join};
 use tokio_util::codec::{Encoder as _, FramedParts, FramedRead, FramedWrite};
 use tokio_util::io::StreamReader;
 use tracing::instrument;
-use wrpc_test::next_invocation;
-use wrpc_transport::{
+use wrpc_core::{
     Decode, Encode, FrameDecoder, FrameEncoder, FrameRef, Framed, Header, HeaderDecoder,
     HeaderEncoder, HeaderRef, Listener, invoke, invoke_blocking, receive, serve, transmit,
 };
+use wrpc_test::next_invocation;
 
 mod sync_bindgen {
     use std::sync::{Arc, Mutex};
 
     use anyhow::{Context as _, ensure};
     use bytes::Bytes;
-    use wrpc_transport::{ResourceBorrow, ResourceOwn};
+    use wrpc_core::{ResourceBorrow, ResourceOwn};
 
     use crate::common::Connection;
 
@@ -607,9 +607,9 @@ where
 
             let mut buf = BytesMut::default();
             let enc = <SyncValues as Encode>::Encoder::default();
-            wrpc_transport::pack(enc, sync_values(), &mut buf)?;
+            wrpc_core::pack(enc, sync_values(), &mut buf)?;
             let dec = <SyncValues as Decode>::Decoder::default();
-            let unpacked = wrpc_transport::unpack(dec, &mut buf)?;
+            let unpacked = wrpc_core::unpack(dec, &mut buf)?;
             let (tx, rx) = connect().await?;
             let mut clt = Framed::new(tx, rx);
             for params in [sync_values(), unpacked] {
@@ -1285,7 +1285,7 @@ async fn rust_oneshot_raw() -> anyhow::Result<()> {
 
             let mut data = bytes::BytesMut::default();
             let enc = <(&str,) as Encode>::Encoder::default();
-            wrpc_transport::pack(enc, ("test",), &mut data).expect("failed to encode");
+            wrpc_core::pack(enc, ("test",), &mut data).expect("failed to encode");
 
             let mut res = bytes::BytesMut::default();
             FrameEncoder

@@ -38,7 +38,7 @@ crate::generate!({
     futures_path: "futures",
     tokio_util_path: "tokio_util",
     tracing_path: "tracing",
-    wrpc_transport_path: "wrpc_transport",
+    wrpc_core_path: "wrpc_core",
 
     // provided to specify the path to `wasi:*` dependencies referenced above.
     path: "wasi-cli@0.2.0.wasm",

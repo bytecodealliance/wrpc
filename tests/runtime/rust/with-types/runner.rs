@@ -59,7 +59,7 @@ pub async fn run(
     // can't actually succeed at runtime as this is faking a resource, so check
     // that it compiles but dynamically skip it.
     if false {
-        let b = ::wit_bindgen_wrpc::wrpc_transport::ResourceOwn::<my_types::MyB>::from(
+        let b = ::wit_bindgen_wrpc::wrpc_core::ResourceOwn::<my_types::MyB>::from(
             ::wit_bindgen_wrpc::bytes::Bytes::new(),
         );
         let _ = crate::client::my::inline::foo::func2(&mut clt, &b).await?;

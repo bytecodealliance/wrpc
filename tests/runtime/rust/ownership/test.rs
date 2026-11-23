@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 
 use ::wit_bindgen_wrpc::bytes::Bytes;
-use ::wit_bindgen_wrpc::wrpc_transport::ResourceOwn;
+use ::wit_bindgen_wrpc::wrpc_core::ResourceOwn;
 
 use crate::server::exports::test::ownership::both_list_and_resource;
 use crate::server::exports::{lists, thing_in, thing_in_and_out};
