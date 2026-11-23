@@ -794,6 +794,11 @@
 ///     // with `unreachable!()` bodies.
 ///     stubs,
 ///
+///     // Configures the path to the `wit-bindgen-wrpc` crate itself. By default
+///     // this is `wit_bindgen_wrpc` assuming that your crate depends on the
+///     // `wit-bindgen-wrpc` crate itself.
+///     runtime_path: "path::to::wit_bindgen_wrpc",
+///
 ///     // Configure where the `bitflags` crate is located. By default this
 ///     // is `wit_bindgen_wrpc::bitflags` which already reexports `bitflags` for
 ///     // you.
@@ -806,9 +811,7 @@
 ///
 ///     // Configure where the runtime dependencies of the generated code are
 ///     // located. By default each of these points at the corresponding crate
-///     // reexported from `wit-bindgen-wrpc` (e.g. `wit_bindgen_wrpc::anyhow`),
-///     // assuming that your crate depends on the `wit-bindgen-wrpc` crate
-///     // itself.
+///     // reexported from the `runtime_path` crate (e.g. `wit_bindgen_wrpc::anyhow`).
 ///     anyhow_path: "path::to::anyhow",
 ///     bytes_path: "path::to::bytes",
 ///     futures_path: "path::to::futures",
@@ -943,22 +946,6 @@ pub use wit_bindgen_wrpc_rust_macro::generate;
 ///     }
 ///     "#,
 ///     ownership: Borrowing { duplicate_if_necessary: false },
-/// });
-/// ```
-///
-/// The `runtime_path` option is not supported (wRPC has no runtime module; use the `*_path` options):
-///
-/// ```compile_fail
-/// wit_bindgen_wrpc::generate!({
-///     inline: r#"
-///     package test:unsupported;
-///
-///     world test {
-///         import f: func(s: string);
-///         export g: func();
-///     }
-///     "#,
-///     runtime_path: "path::to::wit_bindgen_wrpc",
 /// });
 /// ```
 ///
