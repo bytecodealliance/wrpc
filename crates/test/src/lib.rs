@@ -527,7 +527,7 @@ where
         tokio::select! {
             res = &mut f => break res.context("closure failed")?,
             res = &mut srv, if !srv_done => {
-                res?;
+                res.context("server failed")?;
                 srv_done = true;
             }
             res = &mut clt, if !clt_done => {
@@ -540,7 +540,7 @@ where
     };
     drop(clt);
     if !srv_done {
-        _ = srv.await;
+        srv.await.context("server failed")?;
     }
     Ok(res)
 }
