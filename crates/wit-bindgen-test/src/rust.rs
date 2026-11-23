@@ -4,10 +4,10 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 use heck::ToSnakeCase;
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[derive(Default, Debug, Clone, Parser)]
@@ -46,12 +46,29 @@ pub struct Rust;
 
 #[derive(Default)]
 pub struct State {
-    /// Directory containing all compiled dependency rlibs (the `deps`
-    /// subdirectory of the helper crate's target directory).
-    deps_dir: PathBuf,
+    /// `-L` arguments for the compiled dependencies, captured from `cargo build
+    /// --message-format=json`.
+    deps: Vec<String>,
     /// Map from crate name to its compiled `.rlib`, captured from `cargo build
     /// --message-format=json`, used for exact `--extern` paths.
     rlibs: HashMap<String, PathBuf>,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "reason", rename_all = "kebab-case")]
+enum CargoMessage {
+    CompilerArtifact {
+        target: CargoTarget,
+        filenames: Vec<String>,
+    },
+    BuildScriptExecuted {
+        linked_paths: Vec<String>,
+    },
+}
+
+#[derive(Deserialize)]
+struct CargoTarget {
+    name: String,
 }
 
 impl LanguageMethods for Rust {
@@ -186,35 +203,40 @@ serde_json = "1"
             );
         }
 
-        // Capture the `.rlib` path for each compiled crate so that runtime-test
-        // drivers and codegen verification can pass exact `--extern` paths.
+        // Capture the `.rlib` path for each compiled crate and the library
+        // search paths so that runtime-test drivers and codegen verification
+        // can pass exact `--extern` and `-L` arguments.
         let mut rlibs = HashMap::new();
+        let mut deps = Vec::default();
+        let mut deps_seen: HashSet<String> = HashSet::default();
         for line in String::from_utf8_lossy(&output.stdout).lines() {
-            let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            let Ok(msg) = serde_json::from_str(line) else {
                 continue;
             };
-            if value["reason"] != "compiler-artifact" {
-                continue;
-            }
-            let Some(name) = value["target"]["name"].as_str() else {
-                continue;
-            };
-            if let Some(files) = value["filenames"].as_array() {
-                for file in files.iter().filter_map(|f| f.as_str()) {
-                    if file.ends_with(".rlib") {
-                        rlibs.insert(name.to_string(), PathBuf::from(file));
+            match msg {
+                CargoMessage::CompilerArtifact { target, filenames } => {
+                    for file in &filenames {
+                        if file.ends_with(".rlib") {
+                            rlibs.insert(target.name.clone(), PathBuf::from(file));
+                        }
+                        let dir = Path::new(file).parent().unwrap();
+                        let dep = format!("dependency={}", dir.display());
+                        if deps_seen.insert(dep.clone()) {
+                            deps.push(dep);
+                        }
+                    }
+                }
+                CargoMessage::BuildScriptExecuted { linked_paths } => {
+                    for path in linked_paths {
+                        if deps_seen.insert(path.clone()) {
+                            deps.push(path);
+                        }
                     }
                 }
             }
         }
 
-        let deps_dir = helper.join("target/debug/deps");
-        anyhow::ensure!(
-            deps_dir.is_dir(),
-            "dependency directory {deps_dir:?} was not produced"
-        );
-
-        runner.rust_state = Some(State { deps_dir, rlibs });
+        runner.rust_state = Some(State { deps, rlibs });
         Ok(())
     }
 
@@ -369,9 +391,10 @@ impl Runner<'_> {
             Edition::E2024 => "--edition=2024",
         })
         .arg("-Dwarnings")
-        .arg("-Cdebuginfo=1")
-        .arg("-L")
-        .arg(format!("dependency={}", state.deps_dir.display()));
+        .arg("-Cdebuginfo=1");
+        for dep in &state.deps {
+            cmd.arg("-L").arg(dep);
+        }
         cmd
     }
 
