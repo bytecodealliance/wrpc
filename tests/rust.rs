@@ -888,7 +888,7 @@ async fn rust_http_bindgen_sync() -> anyhow::Result<()> {
     };
     wrpc_test::with_http2(
         async |stream| {
-            wrpc_test::serve_http2(stream, move |_, Header { instance, name }, srv| {
+            wrpc_test::serve_http(stream, move |_, Header { instance, name }, srv| {
                 let handler = handler.clone();
                 async move {
                     let Ok(fut) =
@@ -916,7 +916,7 @@ async fn rust_http_bindgen_sync() -> anyhow::Result<()> {
 async fn rust_http_bindgen_async() -> anyhow::Result<()> {
     wrpc_test::with_http2(
         async |stream| {
-            wrpc_test::serve_http2(stream, |_, Header { instance, name }, srv| async move {
+            wrpc_test::serve_http(stream, |_, Header { instance, name }, srv| async move {
                 let Ok(fut) =
                     async_bindgen::bindings::handle(&async_bindgen::Handler, &instance, &name, srv)
                 else {
@@ -944,7 +944,7 @@ async fn rust_http_dynamic() -> anyhow::Result<()> {
     let (clt, srv) = duplex(65536);
     let (mut sender, conn) = handshake(TokioExecutor::default(), TokioIo::new(clt)).await?;
     spawn(conn);
-    let mut lis = Listener::new(&Builder::new(TokioExecutor::default()), TokioIo::new(srv));
+    let mut lis = Listener::http2(&Builder::new(TokioExecutor::default()), TokioIo::new(srv));
     try_join!(
         async {
             let mut inv = lis.next().await;

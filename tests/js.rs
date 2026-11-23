@@ -238,7 +238,7 @@ async fn js_http_client() -> anyhow::Result<()> {
             std::io::Result::Ok(stream)
         },
         |stream| {
-            wrpc_test::serve_http1(stream, |_, Header { instance, name }, srv| async move {
+            wrpc_test::serve_http(stream, |_, Header { instance, name }, srv| async move {
                 let Ok(fut) = echo::handle(&echo::Echo, &instance, &name, srv) else {
                     bail!("`{instance}#{name}` is not exported");
                 };
