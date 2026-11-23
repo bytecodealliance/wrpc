@@ -143,9 +143,11 @@ await inv.finished; // the client closed every path it sent, its data was decode
 
 `serve(transport, f)` serves the invocations on a transport one after another:
 it accepts each, passes it to `f`, which must start receiving its parameters
-before it resolves, and reads the next one once it is `finished`, until the client ends transmit, and then calls `closeWrite`. A
-client may likewise `invoke` again on a transport once the previous invocation
-on it is `finished`, if its `closeWrite` does not end the connection.
+before it resolves, and reads the next one once it is `finished`, until the client ends transmit, and then calls `closeWrite`.
+
+`invoke` and `accept` take a transport carrying their invocation alone:
+`finished` also waits for the peer to end transmit, and data following the
+invocation fails it.
 
 ### Transports
 
@@ -195,15 +197,33 @@ and only exposes the response once the request body is complete. With
 client ends transmit, so the server receives nothing until every asynchronous
 parameter is complete.
 
-`fromRequest(request)` serves an invocation over a WHATWG `Request`, such as
+`fromRequest(request)` serves one invocation over a WHATWG `Request`, such as
 in Deno, Bun or a service worker, returning the `transport` to `accept` it on
 and the `response`, with `content-type` set to `MEDIA_TYPE`, to reply with
-without waiting for the request body:
+without waiting for the request body. Data following the invocation in a
+request or response body fails it.
 
 ```js
+import { accept, fromRequest } from "@bytecodealliance/wrpc";
+import { serveInterface } from "./server/exports/wrpc-examples/hello/handler.js";
+
+async function handle(transport) {
+  const inv = await accept(transport);
+  try {
+    if (inv.instance !== "wrpc-examples:hello/handler") {
+      throw new Error(`unknown instance \`${inv.instance}\``);
+    }
+    await serveInterface(inv, { hello: () => "hello from JavaScript" });
+    await inv.finished;
+  } catch (err) {
+    inv.mux.abort(err);
+    throw err;
+  }
+}
+
 Deno.serve((request) => {
   const { transport, response } = fromRequest(request);
-  serve(transport, handler); // the `serve` of a generated world module
+  handle(transport).catch(console.error);
   return response;
 });
 ```

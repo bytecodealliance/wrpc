@@ -203,11 +203,9 @@ async fn js_http_server() -> anyhow::Result<()> {
     parts.uri = format!("http://{addr}/")
         .parse()
         .context("failed to parse request URI")?;
-    let (tx, rx) = wrpc_test::http_open(sender, parts).await?;
-    let mut clt = Framed::new(tx, rx);
+    let mut clt = (sender, parts);
     common::assert_sync(&mut clt).await?;
     common::assert_async(&mut clt).await?;
-    common::assert_eof(clt).await?;
 
     server.start_kill().context("failed to kill `node`")?;
     server.wait().await.context("failed to wait for `node`")?;

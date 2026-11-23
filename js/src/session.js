@@ -402,7 +402,9 @@ function finished(mux, decoded) {
  * results) has completed, and a `finished` promise that resolves once the
  * peer has also closed every path it sent and all the data it sent has been
  * decoded, reporting any failure after `done` too. If the arguments do not match
- * `paramTypes`, or any of it fails, the transport is aborted.
+ * `paramTypes`, or any of it fails, the transport is aborted. The transport
+ * carries this invocation alone: `finished` also waits for the peer to end
+ * transmit, and data following the invocation fails it.
  *
  * @param {Transport} transport
  * @param {string} instance
@@ -463,9 +465,11 @@ export async function invoke(transport, instance, func, paramTypes, args, result
  * `finished` promise that resolves once the parameters have been received,
  * the peer has closed every path it sent, the results have been sent and all
  * the data the peer sent has been decoded, reporting any failure after the
- * parameters' `done` too. If any I/O fails, the transport is aborted. Instance
- * and function names longer than `maxInstanceLength` and `maxNameLength`
- * bytes, 1 KiB by default, are rejected.
+ * parameters' `done` too. If any I/O fails, the transport is aborted. The
+ * transport carries this invocation alone: `finished` also waits for the peer
+ * to end transmit, and data following the invocation fails it. Instance and
+ * function names longer than `maxInstanceLength` and `maxNameLength` bytes,
+ * 1 KiB by default, are rejected.
  *
  * @param {Transport} transport
  * @param {{ maxInstanceLength?: number, maxNameLength?: number }} [options]

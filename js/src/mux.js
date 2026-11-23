@@ -261,9 +261,11 @@ export class Mux {
    * `closeWrite`.
    * @param {Transport} transport
    * @param {AsyncReader} [master] the reader over `transport`, holding the
-   *   bytes it read past the previous invocation on it
+   *   bytes it read past the previous invocation on it; without it,
+   *   `transport` carries this invocation alone, and data following it fails
+   *   the invocation
    */
-  constructor(transport, master = new AsyncReader(() => transport.read())) {
+  constructor(transport, master) {
     if (typeof transport.closeWrite !== "function") {
       const err = new TypeError(
         "a transport must implement `closeWrite` to communicate end of transmit",
@@ -273,7 +275,8 @@ export class Mux {
     }
     this.transport = transport;
     /** Reader over the raw inbound byte stream (header, then frames). */
-    this.master = master;
+    this.master = master ?? new AsyncReader(() => transport.read());
+    this.#single = !master;
     /** The expected sub-streams, rooted at the one carrying the synchronous values. */
     this.root = node(false);
     this.root.chan = new Chan(CAPACITY);
@@ -304,6 +307,7 @@ export class Mux {
      * more may be expected, or the peer ended transmit and every frame it sent
      * was routed, and the write side was half-closed, unless the multiplexer
      * is aborted first: then it rejects with the error it was aborted with.
+     * Without a `master`, it also waits for the peer to end transmit.
      * The data routed may still be being decoded.
      * @type {Promise<void>}
      */
@@ -324,6 +328,8 @@ export class Mux {
   #fail = () => {};
   /** Whether every expected sub-stream is closed and no more may be expected. */
   #completed = false;
+  /** Whether the transport carries this invocation alone. */
+  #single = false;
 
   /** Write the invocation header: the protocol byte and instance/function names.
    * @param {string} instance @param {string} func
@@ -374,7 +380,13 @@ export class Mux {
         if (!(await chan.send(data)) && !this.aborted) unexpected(path);
       }
     }
-    if (this.aborted || this.#completed) return;
+    if (this.aborted) return;
+    if (this.#completed) {
+      if (this.#single && (await m.fill(1))) {
+        throw new Error("unexpected data after the invocation");
+      }
+      return;
+    }
     if (!this.root.closed) throw new RangeError(UNEXPECTED_EOF);
     this._closeInbound(new RangeError(UNEXPECTED_EOF));
   }

@@ -12,13 +12,13 @@ export const MEDIA_TYPE = "application/vnd.bytecodealliance.wrpc";
  */
 
 /**
- * A client {@link Transport} sending a `POST` request to `input` with `fetch`,
- * with the {@link MEDIA_TYPE} unless `headers` set one, and reading the body
- * of the response, whatever its status. To act on the response, wrap `fetch`,
- * failing the invocation by rejecting. The other `options` are passed to
- * `fetch`. The request body is streamed, unless `buffer` is set: then it is
- * sent once the client has ended transmit, for runtimes which cannot stream
- * request bodies.
+ * A client {@link Transport} for one invocation, to `invoke` over, sending a
+ * `POST` request to `input` with `fetch`, with the {@link MEDIA_TYPE} unless
+ * `headers` set one, and reading the body of the response, whatever its
+ * status. To act on the response, wrap `fetch`, failing the invocation by
+ * rejecting. The other `options` are passed to `fetch`. The request body is
+ * streamed, unless `buffer` is set: then it is sent once the client has ended
+ * transmit, for runtimes which cannot stream request bodies.
  * @param {Parameters<typeof fetch>[0]} input
  * @param {FetchOptions} [options]
  * @returns {Transport}
@@ -77,9 +77,10 @@ export function fromFetch(input, { fetch = globalThis.fetch, buffer = false, ...
 }
 
 /**
- * A server {@link Transport} over the body of `request`, returned with the
- * `response` carrying the server's data, with the {@link MEDIA_TYPE}, which
- * must be sent without waiting for the request body to complete.
+ * A server {@link Transport} for one invocation, to `accept`, over the body of
+ * `request`, returned with the `response` carrying the server's data, with the
+ * {@link MEDIA_TYPE}, which must be sent without waiting for the request body
+ * to complete.
  * @param {Request} request
  * @returns {{ transport: Transport, response: Response }}
  */

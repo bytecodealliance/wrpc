@@ -657,7 +657,7 @@ test("an unconsumed stream result stops reading the transport", { timeout: 1000 
   assert.ok(transport.reads < 200, `read ${transport.reads} frames`);
   assert.equal((await collect(results[0])).length, 1000);
   await done;
-  assert.equal(transport.reads, 1003);
+  assert.equal(transport.reads, 1004);
 });
 
 test(
@@ -1193,17 +1193,24 @@ test(
   },
 );
 
-test("an invocation finishes once all its paths are closed", { timeout: 1000 }, async () => {
-  const { transport } = await feed([
-    [[], [0]],
-    [[0], [5]],
-    [[0], []],
-    [[], []],
-  ]);
-  const { results, finished } = await get(transport, [t.future(t.u8)]);
-  assert.equal(await results[0], 5);
-  await finished;
-});
+test(
+  "an invocation finishes once all its paths are closed and the peer ends transmit",
+  { timeout: 1000 },
+  async () => {
+    const { inbound, transport } = await feed([
+      [[], [0]],
+      [[0], [5]],
+      [[0], []],
+      [[], []],
+    ]);
+    const { results, finished } = await get(transport, [t.future(t.u8)]);
+    assert.equal(await results[0], 5);
+    const pending = Symbol("pending");
+    assert.equal(await Promise.race([finished, tick().then(() => pending)]), pending);
+    inbound.close();
+    await finished;
+  },
+);
 
 test("a failure after `done` rejects `finished`", { timeout: 1000 }, async () => {
   const { send, transport } = await feed([
