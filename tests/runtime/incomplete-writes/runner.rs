@@ -1,7 +1,7 @@
 //@ wasmtime-flags = '-Wcomponent-model-async'
 
 use ::wit_bindgen_wrpc::bytes::Bytes;
-use ::wit_bindgen_wrpc::wrpc_transport::ResourceOwn;
+use ::wit_bindgen_wrpc::wrpc_core::ResourceOwn;
 use futures::{StreamExt as _, future, stream};
 use tokio::try_join;
 

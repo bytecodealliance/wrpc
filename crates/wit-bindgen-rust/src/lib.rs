@@ -133,7 +133,7 @@ pub struct Opts {
     /// The optional path to the map type to use for WIT `map<K, V>`.
     ///
     /// The specified type must accept two type parameters `<K, V>`, implement
-    /// `wrpc_transport::Encode` and `wrpc_transport::Decode` and provide the
+    /// `wrpc_core::Encode` and `wrpc_core::Decode` and provide the
     /// `BTreeMap` API used by the generated code (e.g. `Debug`, `iter` and
     /// `FromIterator`).
     ///
@@ -230,11 +230,11 @@ pub struct Opts {
     #[cfg_attr(feature = "clap", arg(long))]
     pub wasm_tokio_path: Option<String>,
 
-    /// The optional path to the `wrpc-transport` crate to use.
+    /// The optional path to the `wrpc-core` crate to use.
     ///
-    /// This defaults to `wit_bindgen_wrpc::wrpc_transport`.
+    /// This defaults to `wit_bindgen_wrpc::wrpc_core`.
     #[cfg_attr(feature = "clap", arg(long))]
-    pub wrpc_transport_path: Option<String>,
+    pub wrpc_core_path: Option<String>,
 }
 
 impl Opts {
@@ -437,11 +437,11 @@ with: {{\n\t{with_name:?}: generate\n}}
             .unwrap_or("::wit_bindgen_wrpc::wasm_tokio")
     }
 
-    fn wrpc_transport_path(&self) -> &str {
+    fn wrpc_core_path(&self) -> &str {
         self.opts
-            .wrpc_transport_path
+            .wrpc_core_path
             .as_deref()
-            .unwrap_or("::wit_bindgen_wrpc::wrpc_transport")
+            .unwrap_or("::wit_bindgen_wrpc::wrpc_core")
     }
 
     /// Generates the `handle` function for the `world_id` specified, which dispatches to the
@@ -467,7 +467,7 @@ with: {{\n\t{with_name:?}: generate\n}}
             .collect::<Vec<_>>()
             .join(" + ");
         let anyhow = self.anyhow_path().to_string();
-        let wrpc_transport = self.wrpc_transport_path().to_string();
+        let wrpc_core = self.wrpc_core_path().to_string();
         uwrite!(
             self.src,
             r#"
@@ -481,7 +481,7 @@ pub fn handle<S__, H__>(
     S__,
 >
 where
-    S__: {wrpc_transport}::Serve + ::core::marker::Send,
+    S__: {wrpc_core}::Serve + ::core::marker::Send,
     H__: {bound} + ::core::marker::Send + ::core::marker::Sync + ::core::clone::Clone,
 {{
     let (i, func) = "#
@@ -555,29 +555,27 @@ impl RustWrpc {
             .join(", ");
         let bytes = self.bytes_path().to_string();
         let tokio_util = self.tokio_util_path().to_string();
-        let wrpc_transport = self.wrpc_transport_path().to_string();
+        let wrpc_core = self.wrpc_core_path().to_string();
         for n in mem::take(&mut self.tuples) {
             let name = format!("Tuple{n}");
             let ts = (0..n).map(|i| format!("T{i}, ")).collect::<String>();
             let fields = (0..n).map(|i| format!("pub T{i}, ")).collect::<String>();
             let vs = (0..n).map(|i| format!("v{i}, ")).collect::<String>();
             let encode = (0..n)
-                .map(|i| format!("T{i}: {wrpc_transport}::Encode, "))
+                .map(|i| format!("T{i}: {wrpc_core}::Encode, "))
                 .collect::<String>();
             let decode = (0..n)
-                .map(|i| format!("T{i}: {wrpc_transport}::Decode, "))
+                .map(|i| format!("T{i}: {wrpc_core}::Decode, "))
                 .collect::<String>();
             let encode_ref = (0..n)
                 .map(|i| {
                     format!(
-                        "T{i}: {wrpc_transport}::Encode, T{i}::Encoder: {tokio_util}::codec::Encoder<&'a T{i}, Error = ::std::io::Error>, "
+                        "T{i}: {wrpc_core}::Encode, T{i}::Encoder: {tokio_util}::codec::Encoder<&'a T{i}, Error = ::std::io::Error>, "
                     )
                 })
                 .collect::<String>();
             let decode_static = (0..n)
-                .map(|i| {
-                    format!("T{i}: {wrpc_transport}::Decode + ::core::marker::Send + 'static, ")
-                })
+                .map(|i| format!("T{i}: {wrpc_core}::Decode + ::core::marker::Send + 'static, "))
                 .collect::<String>();
             let encoders = (0..n)
                 .map(|i| format!("T{i}::Encoder, "))
@@ -585,7 +583,7 @@ impl RustWrpc {
             let cs = (0..n).map(|i| format!("C{i}, ")).collect::<String>();
             let vs_ty = (0..n).map(|i| format!("V{i}, ")).collect::<String>();
             let transmit_cs = (0..n)
-                .map(|i| format!("C{i}: {wrpc_transport}::Transmit, "))
+                .map(|i| format!("C{i}: {wrpc_core}::Transmit, "))
                 .collect::<String>();
             let encoder_cs = (0..n)
                 .map(|i| {
@@ -604,7 +602,7 @@ impl RustWrpc {
                     format!(
                         r"
             path.push({i});
-            let res = {wrpc_transport}::Transmit::poll_transmit(&mut self.{i}, cx, path, dst);
+            let res = {wrpc_core}::Transmit::poll_transmit(&mut self.{i}, cx, path, dst);
             path.pop();
             match res {{
                 ::core::task::Poll::Ready(Ok(())) => {{}}
@@ -615,7 +613,7 @@ impl RustWrpc {
                 })
                 .collect::<String>();
             let transmit_complete = (0..n)
-                .map(|i| format!("{wrpc_transport}::Transmit::is_complete(&self.{i})"))
+                .map(|i| format!("{wrpc_core}::Transmit::is_complete(&self.{i})"))
                 .collect::<Vec<_>>()
                 .join(" && ");
             let encode_fields = (0..n)
@@ -636,12 +634,12 @@ impl RustWrpc {
             let receive = (0..n)
                 .map(|i| {
                     format!(
-                        "::core::option::Option::Some(({i}, rest)) => {wrpc_transport}::Receive::poll_receive(&mut self.c{i}, cx, rest, src),"
+                        "::core::option::Option::Some(({i}, rest)) => {wrpc_core}::Receive::poll_receive(&mut self.c{i}, cx, rest, src),"
                     )
                 })
                 .collect::<String>();
             let receive_complete = (0..n)
-                .map(|i| format!("{wrpc_transport}::Receive::is_complete(&self.c{i})"))
+                .map(|i| format!("{wrpc_core}::Receive::is_complete(&self.c{i})"))
                 .collect::<Vec<_>>()
                 .join(" && ");
             let decode_fields = (0..n)
@@ -667,27 +665,27 @@ impl RustWrpc {
 #[derive({derives})]
 pub struct {name}<{ts}>({fields});
 
-impl<{encode}> {wrpc_transport}::Encode for {name}<{ts}> {{
+impl<{encode}> {wrpc_core}::Encode for {name}<{ts}> {{
     type Encoder = {module}__::Encoder<{encoders}>;
 }}
 
-impl<'a, {ts}> {wrpc_transport}::Encode for &'a {name}<{ts}>
+impl<'a, {ts}> {wrpc_core}::Encode for &'a {name}<{ts}>
 where
     {encode_ref}
 {{
     type Encoder = {module}__::Encoder<{encoders}>;
 }}
 
-impl<{decode_static}> {wrpc_transport}::Decode for {name}<{ts}> {{
+impl<{decode_static}> {wrpc_core}::Decode for {name}<{ts}> {{
     type Decoder = {module}__::Decoder<{ts}>;
-    type ListDecoder = {wrpc_transport}::ListDecoder<Self::Decoder>;
+    type ListDecoder = {wrpc_core}::ListDecoder<Self::Decoder>;
 }}
 
 mod {module}__ {{
     #[derive(::core::default::Default)]
     pub struct Encoder<{cs}>({cs});
 
-    impl<{transmit_cs}> {wrpc_transport}::Transmit for Encoder<{cs}> {{
+    impl<{transmit_cs}> {wrpc_core}::Transmit for Encoder<{cs}> {{
         fn poll_transmit(&mut self, cx: &mut ::core::task::Context<'_>, path: &mut ::std::vec::Vec<usize>, dst: &mut {bytes}::BytesMut) -> ::core::task::Poll<::std::io::Result<()>> {{
             let mut ready = true;{transmit}
             if ready {{
@@ -736,11 +734,11 @@ mod {module}__ {{
         }}
     }}
 
-    impl<{decode}> {wrpc_transport}::Receive for Decoder<{ts}> {{
+    impl<{decode}> {wrpc_core}::Receive for Decoder<{ts}> {{
         fn poll_receive(&mut self, cx: &mut ::core::task::Context<'_>, path: &[usize], src: &mut {bytes}::BytesMut) -> ::core::task::Poll<::std::io::Result<()>> {{
             match path.split_first() {{
                 {receive}
-                _ => ::core::task::Poll::Ready(::core::result::Result::Err({wrpc_transport}::error_unknown_path(path))),
+                _ => ::core::task::Poll::Ready(::core::result::Result::Err({wrpc_core}::error_unknown_path(path))),
             }}
         }}
 

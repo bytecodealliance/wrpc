@@ -13,7 +13,7 @@ use tracing::instrument;
 use wasm_tokio::cm::{BoolCodec, F32Codec, F64Codec, S8Codec, U8Codec};
 use wasm_tokio::{CoreNameEncoder, Leb128Encoder, Utf8Codec};
 use wasm_wave::wasm::{WasmType, WasmTypeKind, WasmValue};
-use wrpc_transport::Transmit;
+use wrpc_core::Transmit;
 
 /// [Encoder] of values of type `T`
 ///

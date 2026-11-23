@@ -154,8 +154,8 @@ impl Parse for Config {
                     Opt::WasmTokioPath(path) => {
                         opts.wasm_tokio_path = Some(path.value());
                     }
-                    Opt::WrpcTransportPath(path) => {
-                        opts.wrpc_transport_path = Some(path.value());
+                    Opt::WrpcCorePath(path) => {
+                        opts.wrpc_core_path = Some(path.value());
                     }
                 }
             }
@@ -306,7 +306,7 @@ mod kw {
     syn::custom_keyword!(tokio_util_path);
     syn::custom_keyword!(tracing_path);
     syn::custom_keyword!(wasm_tokio_path);
-    syn::custom_keyword!(wrpc_transport_path);
+    syn::custom_keyword!(wrpc_core_path);
 }
 
 #[cfg(feature = "macro-string")]
@@ -356,7 +356,7 @@ enum Opt {
     TokioUtilPath(syn::LitStr),
     TracingPath(syn::LitStr),
     WasmTokioPath(syn::LitStr),
-    WrpcTransportPath(syn::LitStr),
+    WrpcCorePath(syn::LitStr),
 }
 
 impl Parse for Opt {
@@ -476,10 +476,10 @@ impl Parse for Opt {
             input.parse::<kw::wasm_tokio_path>()?;
             input.parse::<Token![:]>()?;
             Ok(Opt::WasmTokioPath(input.parse()?))
-        } else if l.peek(kw::wrpc_transport_path) {
-            input.parse::<kw::wrpc_transport_path>()?;
+        } else if l.peek(kw::wrpc_core_path) {
+            input.parse::<kw::wrpc_core_path>()?;
             input.parse::<Token![:]>()?;
-            Ok(Opt::WrpcTransportPath(input.parse()?))
+            Ok(Opt::WrpcCorePath(input.parse()?))
         } else {
             Err(l.error())
         }

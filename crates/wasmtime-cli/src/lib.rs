@@ -27,7 +27,7 @@ use wasmtime::component::{
 use wasmtime::{Config, Engine, Memory, MemoryType, Store};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpCtxView, WasiHttpView};
-use wrpc_transport::{Codec, Listener};
+use wrpc_core::{Codec, Listener};
 use wrpc_wasmtime::{Export, Exports, TupleDecoder, TupleEncoder, Val, lift, lower};
 
 mod tcp;

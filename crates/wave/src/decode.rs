@@ -18,7 +18,7 @@ use wasm_tokio::{
     Leb128DecoderI64, Leb128DecoderU16, Leb128DecoderU32, Leb128DecoderU64, Utf8Codec,
 };
 use wasm_wave::wasm::{WasmType, WasmTypeKind, WasmValue};
-use wrpc_transport::{Receive, error_unknown_path};
+use wrpc_core::{Receive, error_unknown_path};
 
 /// Default `max_len` of [`ValueDecoder`] and [`TupleDecoder`]
 pub const DEFAULT_MAX_LEN: u32 = 1 << 24;

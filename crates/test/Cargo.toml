@@ -50,5 +50,5 @@ tokio-util = { workspace = true, features = ["codec"] }
 tracing = { workspace = true }
 url = { workspace = true, optional = true }
 web-transport-quinn = { workspace = true, optional = true }
+wrpc-core = { workspace = true }
 wrpc-http = { workspace = true, optional = true }
-wrpc-transport = { workspace = true }

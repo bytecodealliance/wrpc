@@ -15,7 +15,7 @@ tokio-util = { workspace = true, features = ["codec"] }
 tracing = { workspace = true, features = ["attributes"] }
 wasm-tokio = { workspace = true }
 wasm-wave = { workspace = true }
-wrpc-transport = { workspace = true }
+wrpc-core = { workspace = true }
 
 [dev-dependencies]
 anyhow = { workspace = true, features = ["std"] }

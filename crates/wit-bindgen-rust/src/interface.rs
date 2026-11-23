@@ -114,7 +114,7 @@ pub fn handle_interface<S__, H__>(
     S__,
 >
 where
-    S__: {wrpc_transport}::Serve + ::core::marker::Send,
+    S__: {wrpc_core}::Serve + ::core::marker::Send,
     H__: Handler{resource_traits} + ::core::marker::Send + ::core::marker::Sync + ::core::clone::Clone,
 {{
     let ::core::option::Option::Some(func) = lookup__(instance, func) else {{
@@ -127,7 +127,7 @@ pub(crate) fn lookup__(instance: &str, func: &str) -> ::core::option::Option<usi
     match (instance, func) {{"#,
             resource_traits = trait_names.join(""),
             anyhow = self.r#gen.anyhow_path(),
-            wrpc_transport = self.r#gen.wrpc_transport_path(),
+            wrpc_core = self.r#gen.wrpc_core_path(),
         );
         for (i, func) in funcs_to_export.iter().enumerate() {
             uwrite!(
@@ -150,13 +150,13 @@ pub(crate) async fn serve__<S__, H__>(
     srv: S__,
 ) -> {anyhow}::Result<()>
 where
-    S__: {wrpc_transport}::Serve,
+    S__: {wrpc_core}::Serve,
     H__: Handler{resource_traits} + ::core::marker::Send + ::core::marker::Sync,
 {{
     match func {{"#,
             resource_traits = trait_names.join(""),
             anyhow = self.r#gen.anyhow_path(),
-            wrpc_transport = self.r#gen.wrpc_transport_path(),
+            wrpc_core = self.r#gen.wrpc_core_path(),
         );
         for (i, func) in funcs_to_export.iter().enumerate() {
             let fqn = if instance.is_empty() {
@@ -183,8 +183,8 @@ where
                 self.src,
                 r#"
         {i} => {{
-            let res = {wrpc_transport}::serve::<{params_ty}, ({results_ty}), _, _, _>(srv, move |{params_tuple}("#,
-                wrpc_transport = self.r#gen.wrpc_transport_path(),
+            let res = {wrpc_core}::serve::<{params_ty}, ({results_ty}), _, _, _>(srv, move |{params_tuple}("#,
+                wrpc_core = self.r#gen.wrpc_core_path(),
                 params_tuple = params_tuple.unwrap_or_default(),
             );
             for i in 0..func.params.len() {
@@ -522,7 +522,7 @@ where
             .map(|ty| format!("{}, ", self.decoded_ty(ty)))
             .unwrap_or_default();
         let futures = self.r#gen.futures_path();
-        let wrpc_transport = self.r#gen.wrpc_transport_path();
+        let wrpc_core = self.r#gen.wrpc_core_path();
         let params = {
             let s = params.join(", ");
             if params.len() == 1 {
@@ -536,11 +536,11 @@ where
         let io = result.is_some() && (async_params || async_results);
         let call = if io {
             format!(
-                r#"{futures}::FutureExt::flatten({futures}::future::lazy(move |_| {wrpc_transport}::invoke::<{args_ty}, ({results_ty}), _>(clt__, "{instance}", "{name}", {params})))"#
+                r#"{futures}::FutureExt::flatten({futures}::future::lazy(move |_| {wrpc_core}::invoke::<{args_ty}, ({results_ty}), _>(clt__, "{instance}", "{name}", {params})))"#
             )
         } else {
             format!(
-                r#"{wrpc_transport}::invoke_blocking::<{args_ty}, ({results_ty})>(clt__, "{instance}", "{name}", {params})"#
+                r#"{wrpc_core}::invoke_blocking::<{args_ty}, ({results_ty})>(clt__, "{instance}", "{name}", {params})"#
             )
         };
         let (pat, ret) = match result {
@@ -656,8 +656,8 @@ where
             let args_ty = self.import_args_ty(func);
             uwrite!(
                 self.src,
-                "<'a, C__: {wrpc_transport}::Invoke<<{args_ty} as {wrpc_transport}::Encode>::Encoder>>(clt__: C__,",
-                wrpc_transport = self.r#gen.wrpc_transport_path(),
+                "<'a, C__: {wrpc_core}::Invoke<<{args_ty} as {wrpc_core}::Encode>::Encoder>>(clt__: C__,",
+                wrpc_core = self.r#gen.wrpc_core_path(),
             );
         } else {
             self.push_str("(");
@@ -740,7 +740,7 @@ where
                     uwrite!(
                         self.src,
                         "{}::Utf8Bytes<Vec<u8>>",
-                        self.r#gen.wrpc_transport_path()
+                        self.r#gen.wrpc_core_path()
                     );
                 } else if self.r#gen.opts.raw_strings && !self.decoding {
                     self.push_str("Vec<u8>");
@@ -919,9 +919,9 @@ where
     }
 
     fn encoded_value(&self, ty: &Type, v: &str, by_ref: bool, submodule: bool) -> String {
-        let wrpc_transport = self.r#gen.wrpc_transport_path();
+        let wrpc_core = self.r#gen.wrpc_core_path();
         self.map_raw_strings(ty, v, by_ref, submodule, &|v| {
-            format!("{wrpc_transport}::Utf8Bytes({v})")
+            format!("{wrpc_core}::Utf8Bytes({v})")
         })
     }
 
@@ -1120,14 +1120,14 @@ where
     }
 
     fn print_own(&mut self, id: TypeId, submodule: bool) {
-        self.src.push_str(self.r#gen.wrpc_transport_path());
+        self.src.push_str(self.r#gen.wrpc_core_path());
         self.push_str("::ResourceOwn<");
         self.print_tyid(id, true, submodule);
         self.push_str(">");
     }
 
     fn print_borrow(&mut self, id: TypeId, submodule: bool) {
-        self.src.push_str(self.r#gen.wrpc_transport_path());
+        self.src.push_str(self.r#gen.wrpc_core_path());
         self.push_str("::ResourceBorrow<");
         self.print_tyid(id, true, submodule);
         self.push_str(">");
@@ -1364,14 +1364,14 @@ impl<'a> wit_bindgen_core::InterfaceGenerator<'a> for InterfaceGenerator<'a> {
 
             let bytes = self.r#gen.bytes_path().to_string();
             let tokio_util = self.r#gen.tokio_util_path().to_string();
-            let wrpc_transport = self.r#gen.wrpc_transport_path().to_string();
+            let wrpc_core = self.r#gen.wrpc_core_path().to_string();
 
             let (paths, _) = async_paths_tyid(self.resolve, id);
             if paths.is_empty() {
                 uwriteln!(
                     self.src,
                     r"
-impl {wrpc_transport}::Encode for &self::{name}
+impl {wrpc_core}::Encode for &self::{name}
 {{
     type Encoder = {mod_name}::Encoder;
 }}",
@@ -1380,15 +1380,15 @@ impl {wrpc_transport}::Encode for &self::{name}
             uwriteln!(
                 self.src,
                 r"
-impl {wrpc_transport}::Encode for self::{name}
+impl {wrpc_core}::Encode for self::{name}
 {{
     type Encoder = {mod_name}::Encoder;
 }}
 
-impl {wrpc_transport}::Decode for self::{name}
+impl {wrpc_core}::Decode for self::{name}
 {{
     type Decoder = {mod_name}::Decoder;
-    type ListDecoder = {wrpc_transport}::ListDecoder<Self::Decoder>;
+    type ListDecoder = {wrpc_core}::ListDecoder<Self::Decoder>;
 }}
 
 mod {mod_name} {{
@@ -1401,14 +1401,14 @@ mod {mod_name} {{
                 let name = to_rust_ident(name);
                 uwrite!(self.src, "{name}: <");
                 self.print_encoded_ty(ty, true);
-                uwriteln!(self.src, " as {wrpc_transport}::Encode>::Encoder,");
+                uwriteln!(self.src, " as {wrpc_core}::Encode>::Encoder,");
             }
             uwriteln!(
                 self.src,
                 r"}}
 
     #[automatically_derived]
-    impl {wrpc_transport}::Transmit for Encoder
+    impl {wrpc_core}::Transmit for Encoder
     {{
         fn poll_transmit(&mut self, cx: &mut ::core::task::Context<'_>, path: &mut ::std::vec::Vec<usize>, dst: &mut {bytes}::BytesMut) -> ::core::task::Poll<::std::io::Result<()>> {{
             let mut ready = true;"
@@ -1419,7 +1419,7 @@ mod {mod_name} {{
                     self.src,
                     r"
             path.push({i});
-            let res = {wrpc_transport}::Transmit::poll_transmit(&mut self.{name}, cx, path, dst);
+            let res = {wrpc_core}::Transmit::poll_transmit(&mut self.{name}, cx, path, dst);
             path.pop();
             let res = res?;
             ready &= res.is_ready();"
@@ -1429,7 +1429,7 @@ mod {mod_name} {{
                 .iter()
                 .map(|Field { name, .. }| {
                     format!(
-                        "{wrpc_transport}::Transmit::is_complete(&self.{})",
+                        "{wrpc_core}::Transmit::is_complete(&self.{})",
                         to_rust_ident(name)
                     )
                 })
@@ -1459,7 +1459,7 @@ mod {mod_name} {{
                 let name = to_rust_ident(name);
                 uwrite!(self.src, "c_{name}: <");
                 self.print_decoded_ty(ty, true);
-                uwriteln!(self.src, " as {wrpc_transport}::Decode>::Decoder,");
+                uwriteln!(self.src, " as {wrpc_core}::Decode>::Decoder,");
                 uwrite!(self.src, "v_{name}: ::core::option::Option<");
                 self.print_decoded_ty(ty, true);
                 uwriteln!(self.src, ">,");
@@ -1469,7 +1469,7 @@ mod {mod_name} {{
                 r"}}
 
     #[automatically_derived]
-    impl {wrpc_transport}::Receive for Decoder
+    impl {wrpc_core}::Receive for Decoder
     {{
         fn poll_receive(&mut self, cx: &mut ::core::task::Context<'_>, path: &[usize], src: &mut {bytes}::BytesMut) -> ::core::task::Poll<::std::io::Result<()>> {{
             match path.split_first() {{"
@@ -1478,14 +1478,14 @@ mod {mod_name} {{
                 let name = to_rust_ident(name);
                 uwriteln!(
                     self.src,
-                    "Some(({i}, rest)) => {wrpc_transport}::Receive::poll_receive(&mut self.c_{name}, cx, rest, src),"
+                    "Some(({i}, rest)) => {wrpc_core}::Receive::poll_receive(&mut self.c_{name}, cx, rest, src),"
                 );
             }
             let complete = fields
                 .iter()
                 .map(|Field { name, .. }| {
                     format!(
-                        "{wrpc_transport}::Receive::is_complete(&self.c_{})",
+                        "{wrpc_core}::Receive::is_complete(&self.c_{})",
                         to_rust_ident(name)
                     )
                 })
@@ -1493,7 +1493,7 @@ mod {mod_name} {{
                 .join(" && ");
             uwriteln!(
                 self.src,
-                r#"_ => ::core::task::Poll::Ready(::core::result::Result::Err({wrpc_transport}::error_unknown_path(path))),
+                r#"_ => ::core::task::Poll::Ready(::core::result::Result::Err({wrpc_core}::error_unknown_path(path))),
             }}
         }}
 
@@ -1650,7 +1650,7 @@ pub struct {}(());",
             let bytes = self.r#gen.bytes_path().to_string();
             let tokio_util = self.r#gen.tokio_util_path().to_string();
             let wasm_tokio = self.r#gen.wasm_tokio_path().to_string();
-            let wrpc_transport = self.r#gen.wrpc_transport_path().to_string();
+            let wrpc_core = self.r#gen.wrpc_core_path().to_string();
 
             let mod_name = to_rust_ident(ty_name);
 
@@ -1683,26 +1683,26 @@ pub struct {}(());",
             uwriteln!(
                 self.src,
                 r#"
-impl {wrpc_transport}::Encode for self::{name} {{
+impl {wrpc_core}::Encode for self::{name} {{
     type Encoder = {mod_name}::Codec;
 }}
 
-impl {wrpc_transport}::Encode for &self::{name} {{
+impl {wrpc_core}::Encode for &self::{name} {{
     type Encoder = {mod_name}::Codec;
 }}
 
-impl {wrpc_transport}::Encode for &&self::{name} {{
+impl {wrpc_core}::Encode for &&self::{name} {{
     type Encoder = {mod_name}::Codec;
 }}
 
-impl {wrpc_transport}::Decode for self::{name} {{
+impl {wrpc_core}::Decode for self::{name} {{
     type Decoder = {mod_name}::Codec;
-    type ListDecoder = {wrpc_transport}::SyncCodec<{wasm_tokio}::CoreVecDecoder<Self::Decoder>>;
+    type ListDecoder = {wrpc_core}::SyncCodec<{wasm_tokio}::CoreVecDecoder<Self::Decoder>>;
 }}
 
-impl {wrpc_transport}::Receive for {mod_name}::Codec {{
+impl {wrpc_core}::Receive for {mod_name}::Codec {{
     fn poll_receive(&mut self, _: &mut ::core::task::Context<'_>, path: &[usize], _: &mut {bytes}::BytesMut) -> ::core::task::Poll<::std::io::Result<()>> {{
-        ::core::task::Poll::Ready(::core::result::Result::Err({wrpc_transport}::error_unknown_path(path)))
+        ::core::task::Poll::Ready(::core::result::Result::Err({wrpc_core}::error_unknown_path(path)))
     }}
 
     fn is_complete(&self) -> bool {{
@@ -1717,7 +1717,7 @@ mod {mod_name} {{
     pub struct Codec;
 
     #[automatically_derived]
-    impl {wrpc_transport}::Transmit for Codec {{
+    impl {wrpc_core}::Transmit for Codec {{
         fn poll_transmit(&mut self, _: &mut ::core::task::Context<'_>, _: &mut ::std::vec::Vec<usize>, _: &mut {bytes}::BytesMut) -> ::core::task::Poll<::std::io::Result<()>> {{
             ::core::task::Poll::Ready(::core::result::Result::Ok(()))
         }}
@@ -1865,7 +1865,7 @@ mod {mod_name} {{
             let bytes = self.r#gen.bytes_path().to_string();
             let tokio_util = self.r#gen.tokio_util_path().to_string();
             let wasm_tokio = self.r#gen.wasm_tokio_path().to_string();
-            let wrpc_transport = self.r#gen.wrpc_transport_path().to_string();
+            let wrpc_core = self.r#gen.wrpc_core_path().to_string();
 
             let mod_name = to_rust_ident(ty_name);
 
@@ -1873,26 +1873,26 @@ mod {mod_name} {{
                 uwriteln!(
                     self.src,
                     r#"
-impl {wrpc_transport}::Encode for self::{name} {{
+impl {wrpc_core}::Encode for self::{name} {{
     type Encoder = {mod_name}::Codec;
 }}
 
-impl {wrpc_transport}::Encode for &self::{name} {{
+impl {wrpc_core}::Encode for &self::{name} {{
     type Encoder = {mod_name}::Codec;
 }}
 
-impl {wrpc_transport}::Encode for &&self::{name} {{
+impl {wrpc_core}::Encode for &&self::{name} {{
     type Encoder = {mod_name}::Codec;
 }}
 
-impl {wrpc_transport}::Decode for self::{name} {{
+impl {wrpc_core}::Decode for self::{name} {{
     type Decoder = {mod_name}::Codec;
-    type ListDecoder = {wrpc_transport}::SyncCodec<{wasm_tokio}::CoreVecDecoder<Self::Decoder>>;
+    type ListDecoder = {wrpc_core}::SyncCodec<{wasm_tokio}::CoreVecDecoder<Self::Decoder>>;
 }}
 
-impl {wrpc_transport}::Receive for {mod_name}::Codec {{
+impl {wrpc_core}::Receive for {mod_name}::Codec {{
     fn poll_receive(&mut self, _: &mut ::core::task::Context<'_>, path: &[usize], _: &mut {bytes}::BytesMut) -> ::core::task::Poll<::std::io::Result<()>> {{
-        ::core::task::Poll::Ready(::core::result::Result::Err({wrpc_transport}::error_unknown_path(path)))
+        ::core::task::Poll::Ready(::core::result::Result::Err({wrpc_core}::error_unknown_path(path)))
     }}
 
     fn is_complete(&self) -> bool {{
@@ -1905,7 +1905,7 @@ mod {mod_name} {{
     pub struct Codec;
 
     #[automatically_derived]
-    impl {wrpc_transport}::Transmit for Codec {{
+    impl {wrpc_core}::Transmit for Codec {{
         fn poll_transmit(&mut self, _: &mut ::core::task::Context<'_>, _: &mut ::std::vec::Vec<usize>, _: &mut {bytes}::BytesMut) -> ::core::task::Poll<::std::io::Result<()>> {{
             ::core::task::Poll::Ready(::core::result::Result::Ok(()))
         }}
@@ -1980,12 +1980,12 @@ mod {mod_name} {{
                     uwrite!(
                         self.src,
                         r#"
-impl {wrpc_transport}::Encode for &self::{name}
+impl {wrpc_core}::Encode for &self::{name}
 {{
     type Encoder = {mod_name}::Encoder;
 }}
 
-impl {wrpc_transport}::Encode for &&self::{name}
+impl {wrpc_core}::Encode for &&self::{name}
 {{
     type Encoder = {mod_name}::Encoder;
 }}
@@ -1996,15 +1996,15 @@ impl {wrpc_transport}::Encode for &&self::{name}
                 uwrite!(
                     self.src,
                     r#"
-impl {wrpc_transport}::Encode for self::{name}
+impl {wrpc_core}::Encode for self::{name}
 {{
     type Encoder = {mod_name}::Encoder;
 }}
 
-impl {wrpc_transport}::Decode for self::{name}
+impl {wrpc_core}::Decode for self::{name}
 {{
     type Decoder = {mod_name}::Decoder;
-    type ListDecoder = {wrpc_transport}::ListDecoder<Self::Decoder>;
+    type ListDecoder = {wrpc_core}::ListDecoder<Self::Decoder>;
 }}
 
 mod {mod_name} {{
@@ -2026,12 +2026,12 @@ mod {mod_name} {{
                         let case = case_name.to_upper_camel_case();
                         uwrite!(self.src, "{case}(<");
                         self.print_encoded_ty(ty, true);
-                        uwriteln!(self.src, " as {wrpc_transport}::Encode>::Encoder),");
+                        uwriteln!(self.src, " as {wrpc_core}::Encode>::Encoder),");
                         poll_transmit.push_str(&format!(
-                            "Some(PayloadEncoder::{case}(enc)) => {wrpc_transport}::Transmit::poll_transmit(enc, cx, path, dst),"
+                            "Some(PayloadEncoder::{case}(enc)) => {wrpc_core}::Transmit::poll_transmit(enc, cx, path, dst),"
                         ));
                         is_complete.push_str(&format!(
-                            "Some(PayloadEncoder::{case}(enc)) => {wrpc_transport}::Transmit::is_complete(enc),"
+                            "Some(PayloadEncoder::{case}(enc)) => {wrpc_core}::Transmit::is_complete(enc),"
                         ));
                     }
                 }
@@ -2040,7 +2040,7 @@ mod {mod_name} {{
                     r#"}}
 
     #[automatically_derived]
-    impl {wrpc_transport}::Transmit for Encoder
+    impl {wrpc_core}::Transmit for Encoder
     {{
         fn poll_transmit(&mut self, cx: &mut ::core::task::Context<'_>, path: &mut ::std::vec::Vec<usize>, dst: &mut {bytes}::BytesMut) -> ::core::task::Poll<::std::io::Result<()>> {{
             match &mut self.0 {{
@@ -2142,7 +2142,7 @@ mod {mod_name} {{
                 {case}(<"
                         );
                         self.print_decoded_ty(ty, true);
-                        uwriteln!(self.src, " as {wrpc_transport}::Decode>::Decoder),");
+                        uwriteln!(self.src, " as {wrpc_core}::Decode>::Decoder),");
                     }
                 }
 
@@ -2177,10 +2177,10 @@ mod {mod_name} {{
                     if ty.is_some() {
                         let case = case_name.to_upper_camel_case();
                         poll_receive.push_str(&format!(
-                            "Self::Decoded(Some(PayloadDecoder::{case}(dec))) => {wrpc_transport}::Receive::poll_receive(dec, cx, path, src),"
+                            "Self::Decoded(Some(PayloadDecoder::{case}(dec))) => {wrpc_core}::Receive::poll_receive(dec, cx, path, src),"
                         ));
                         is_complete.push_str(&format!(
-                            "Self::Decoded(Some(PayloadDecoder::{case}(dec))) => {wrpc_transport}::Receive::is_complete(dec),"
+                            "Self::Decoded(Some(PayloadDecoder::{case}(dec))) => {wrpc_core}::Receive::is_complete(dec),"
                         ));
                     }
                 }
@@ -2188,12 +2188,12 @@ mod {mod_name} {{
                     self.src,
                     r#"
     #[automatically_derived]
-    impl {wrpc_transport}::Receive for Decoder
+    impl {wrpc_core}::Receive for Decoder
     {{
         fn poll_receive(&mut self, cx: &mut ::core::task::Context<'_>, path: &[usize], src: &mut {bytes}::BytesMut) -> ::core::task::Poll<::std::io::Result<()>> {{
             match self {{
                 {poll_receive}
-                _ => ::core::task::Poll::Ready(::core::result::Result::Err({wrpc_transport}::error_unknown_path(path))),
+                _ => ::core::task::Poll::Ready(::core::result::Result::Err({wrpc_core}::error_unknown_path(path))),
             }}
         }}
 
@@ -2430,29 +2430,29 @@ mod {mod_name} {{
             let bytes = self.r#gen.bytes_path().to_string();
             let tokio_util = self.r#gen.tokio_util_path().to_string();
             let wasm_tokio = self.r#gen.wasm_tokio_path().to_string();
-            let wrpc_transport = self.r#gen.wrpc_transport_path().to_string();
+            let wrpc_core = self.r#gen.wrpc_core_path().to_string();
 
             let mod_name = to_rust_ident(ty_name);
 
             uwriteln!(
                 self.src,
                 r#"
-impl {wrpc_transport}::Encode for self::{name} {{
+impl {wrpc_core}::Encode for self::{name} {{
     type Encoder = {mod_name}::Codec;
 }}
 
-impl {wrpc_transport}::Encode for &self::{name} {{
+impl {wrpc_core}::Encode for &self::{name} {{
     type Encoder = {mod_name}::Codec;
 }}
 
-impl {wrpc_transport}::Decode for self::{name} {{
+impl {wrpc_core}::Decode for self::{name} {{
     type Decoder = {mod_name}::Codec;
-    type ListDecoder = {wrpc_transport}::SyncCodec<{wasm_tokio}::CoreVecDecoder<Self::Decoder>>;
+    type ListDecoder = {wrpc_core}::SyncCodec<{wasm_tokio}::CoreVecDecoder<Self::Decoder>>;
 }}
 
-impl {wrpc_transport}::Receive for {mod_name}::Codec {{
+impl {wrpc_core}::Receive for {mod_name}::Codec {{
     fn poll_receive(&mut self, _: &mut ::core::task::Context<'_>, path: &[usize], _: &mut {bytes}::BytesMut) -> ::core::task::Poll<::std::io::Result<()>> {{
-        ::core::task::Poll::Ready(::core::result::Result::Err({wrpc_transport}::error_unknown_path(path)))
+        ::core::task::Poll::Ready(::core::result::Result::Err({wrpc_core}::error_unknown_path(path)))
     }}
 
     fn is_complete(&self) -> bool {{
@@ -2465,7 +2465,7 @@ mod {mod_name} {{
     pub struct Codec;
 
     #[automatically_derived]
-    impl {wrpc_transport}::Transmit for Codec {{
+    impl {wrpc_core}::Transmit for Codec {{
         fn poll_transmit(&mut self, _: &mut ::core::task::Context<'_>, _: &mut ::std::vec::Vec<usize>, _: &mut {bytes}::BytesMut) -> ::core::task::Poll<::std::io::Result<()>> {{
             ::core::task::Poll::Ready(::core::result::Result::Ok(()))
         }}

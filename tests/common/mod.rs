@@ -17,8 +17,8 @@ use tokio::task::yield_now;
 use tokio::time::timeout;
 use tokio::{join, try_join};
 use tracing::info;
+use wrpc_core::{Framed, Invoke, Transmit};
 use wrpc_http::{Body, OutgoingRequest};
-use wrpc_transport::{Framed, Invoke, Transmit};
 
 /// Connection, which invocations are made on one after another
 pub trait Connection {

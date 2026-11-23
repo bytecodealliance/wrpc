@@ -1,6 +1,6 @@
 //! wRPC encoding and decoding of values implementing [`wasm_wave`] traits
 //!
-//! Values are encoded with [`ValueEncoder`], or with [`wrpc_transport::Encode`] when wrapped
+//! Values are encoded with [`ValueEncoder`], or with [`wrpc_core::Encode`] when wrapped
 //! in a [`TypedValue`], and decoded with [`ValueDecoder`]. Function parameters and results are
 //! encoded with [`TupleEncoder`] and decoded with [`TupleDecoder`].
 //!

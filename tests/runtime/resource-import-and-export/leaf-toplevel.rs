@@ -1,4 +1,4 @@
-use ::wit_bindgen_wrpc::wrpc_transport::ResourceOwn;
+use ::wit_bindgen_wrpc::wrpc_core::ResourceOwn;
 
 #[derive(Clone)]
 pub struct Component(pub crate::Client);

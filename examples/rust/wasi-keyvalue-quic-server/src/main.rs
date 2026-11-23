@@ -14,7 +14,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::task::JoinSet;
 use tokio::{select, signal, spawn};
 use tracing::{debug, error, info, warn};
-use wrpc_transport::{Header, Listener};
+use wrpc_core::{Header, Listener};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]

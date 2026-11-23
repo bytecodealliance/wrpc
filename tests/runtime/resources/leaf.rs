@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 
 use ::wit_bindgen_wrpc::bytes::Bytes;
-use ::wit_bindgen_wrpc::wrpc_transport::{ResourceBorrow, ResourceOwn};
+use ::wit_bindgen_wrpc::wrpc_core::{ResourceBorrow, ResourceOwn};
 
 use crate::leaf::exports::imports::{Handler, HandlerY, Y};
 

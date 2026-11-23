@@ -9,7 +9,7 @@ use tokio::net::TcpStream;
 use tokio::task::yield_now;
 use tokio::time::timeout;
 use tokio_util::codec::Encoder as _;
-use wrpc_transport::{
+use wrpc_core::{
     FrameDecoder, Framed, Header, HeaderDecoder, HeaderEncoder, HeaderRef, Listener, invoke,
 };
 

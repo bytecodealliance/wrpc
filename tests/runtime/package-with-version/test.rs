@@ -7,11 +7,11 @@ impl crate::server::exports::my::inline::foo::HandlerBar for Component {
     async fn new(
         &self,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<
-        ::wit_bindgen_wrpc::wrpc_transport::ResourceOwn<
+        ::wit_bindgen_wrpc::wrpc_core::ResourceOwn<
             crate::server::exports::my::inline::foo::Bar,
         >,
     > {
-        Ok(::wit_bindgen_wrpc::wrpc_transport::ResourceOwn::from(
+        Ok(::wit_bindgen_wrpc::wrpc_core::ResourceOwn::from(
             ::wit_bindgen_wrpc::bytes::Bytes::new(),
         ))
     }

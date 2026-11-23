@@ -84,8 +84,8 @@ wit-bindgen-wrpc-go = { workspace = true, optional = true }
 wit-bindgen-wrpc-js = { workspace = true, optional = true }
 wit-bindgen-wrpc-rust = { workspace = true, optional = true }
 wit-bindgen-wrpc-test = { workspace = true, optional = true }
+wrpc-core = { workspace = true }
 wrpc-http = { workspace = true, optional = true }
-wrpc-transport = { workspace = true }
 wrpc-wasmtime = { workspace = true, optional = true }
 wrpc-wasmtime-cli = { workspace = true, optional = true }
 
@@ -197,10 +197,10 @@ wit-bindgen-wrpc-rust-macro = { version = "0.13", default-features = false, path
 wit-bindgen-wrpc-test = { version = "0.2", default-features = false, path = "./crates/wit-bindgen-test" }
 wit-component = { version = "0.263", default-features = false }
 wit-parser = { version = "0.254", default-features = false }
+wrpc-core = { version = "0.1", path = "./crates/core", default-features = false }
 wrpc-http = { version = "0.2", path = "./crates/http", default-features = false }
 wrpc-introspect = { version = "0.9", default-features = false, path = "./crates/introspect" }
 wrpc-test = { path = "./crates/test", default-features = false }
-wrpc-transport = { version = "0.31", path = "./crates/transport", default-features = false }
 wrpc-wasi-keyvalue = { version = "0.4", path = "./crates/wasi-keyvalue", default-features = false }
 wrpc-wasi-keyvalue-mem = { version = "0.4", path = "./crates/wasi-keyvalue-mem", default-features = false }
 wrpc-wasi-keyvalue-redis = { version = "0.4", path = "./crates/wasi-keyvalue-redis", default-features = false }

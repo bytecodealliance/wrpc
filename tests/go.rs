@@ -16,7 +16,7 @@ async fn go_bindgen() -> anyhow::Result<()> {
     use tokio::fs;
     use tokio::time::{sleep, timeout};
     use tracing::info;
-    use wrpc_transport::{Framed, invoke_blocking};
+    use wrpc_core::{Framed, invoke_blocking};
 
     if let Err(err) = fs::remove_dir_all("tests/go/bindings").await {
         match err.kind() {

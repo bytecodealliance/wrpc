@@ -14,9 +14,9 @@ impl HandlerThing for Component {
         &self,
         text: String,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<
-        ::wit_bindgen_wrpc::wrpc_transport::ResourceOwn<Thing>,
+        ::wit_bindgen_wrpc::wrpc_core::ResourceOwn<Thing>,
     > {
-        Ok(::wit_bindgen_wrpc::wrpc_transport::ResourceOwn::from(
+        Ok(::wit_bindgen_wrpc::wrpc_core::ResourceOwn::from(
             ::wit_bindgen_wrpc::bytes::Bytes::copy_from_slice(text.as_bytes()),
         ))
     }

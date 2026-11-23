@@ -21,11 +21,11 @@ use wasmtime::component::{
     self, Accessor, Component, Func, Instance, InstancePre, Linker, ResourceAny, Type, types,
 };
 use wasmtime::error::Context as _;
-use wrpc_test::serve_until;
-use wrpc_transport::{
+use wrpc_core::{
     Codec, FrameDecoder, FrameEncoder, FrameRef, Framed, HeaderEncoder, HeaderRef, Listener,
     Receive as _, invoke, invoke_blocking,
 };
+use wrpc_test::serve_until;
 use wrpc_wasmtime::{Export, Exports, TupleDecoder, TupleEncoder, Val, lift, lower};
 
 /// Resources by the index their handles carry

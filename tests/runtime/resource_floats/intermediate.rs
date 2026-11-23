@@ -1,5 +1,5 @@
 use ::wit_bindgen_wrpc::bytes::Bytes;
-use ::wit_bindgen_wrpc::wrpc_transport::{ResourceBorrow, ResourceOwn};
+use ::wit_bindgen_wrpc::wrpc_core::{ResourceBorrow, ResourceOwn};
 
 use crate::server::exports::exports::{
     Float as FloatExport, Handler as HandlerExports, HandlerFloat,

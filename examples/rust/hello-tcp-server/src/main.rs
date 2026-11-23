@@ -7,7 +7,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::task::JoinSet;
 use tokio::{select, signal};
 use tracing::{debug, error, info, warn};
-use wit_bindgen_wrpc::wrpc_transport::{Header, Listener};
+use wit_bindgen_wrpc::wrpc_core::{Header, Listener};
 
 mod bindings {
     wit_bindgen_wrpc::generate!({

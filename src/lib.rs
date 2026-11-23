@@ -2,7 +2,7 @@
 
 #![deny(missing_docs)]
 
-pub use wrpc_transport::*;
+pub use wrpc_core::*;
 
 #[cfg(feature = "http")]
 pub use wrpc_http as http;

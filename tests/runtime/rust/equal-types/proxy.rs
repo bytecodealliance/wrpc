@@ -1,7 +1,7 @@
 //@ args = '--merge-structurally-equal-types'
 
 use ::wit_bindgen_wrpc::bytes::Bytes;
-use ::wit_bindgen_wrpc::wrpc_transport::{ResourceBorrow};
+use ::wit_bindgen_wrpc::wrpc_core::{ResourceBorrow};
 
 use crate::server::exports::test::equal_types::blag::{
     Handler, HandlerInputStream, InputStream, Kind1, Kind3, Kind4, TStream, Tree,

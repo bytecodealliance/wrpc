@@ -9,8 +9,8 @@ fn contents_of(repr: &[u8]) -> String {
     String::from_utf8(repr.to_vec()).unwrap()
 }
 
-fn handle_from(contents: &str) -> ::wit_bindgen_wrpc::wrpc_transport::ResourceOwn<Thing> {
-    ::wit_bindgen_wrpc::wrpc_transport::ResourceOwn::from(
+fn handle_from(contents: &str) -> ::wit_bindgen_wrpc::wrpc_core::ResourceOwn<Thing> {
+    ::wit_bindgen_wrpc::wrpc_core::ResourceOwn::from(
         ::wit_bindgen_wrpc::bytes::Bytes::copy_from_slice(contents.as_bytes()),
     )
 }
@@ -20,7 +20,7 @@ impl Handler for Component {
         &self,
         a: Vec<Foo>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<
-        Vec<::wit_bindgen_wrpc::wrpc_transport::ResourceOwn<Thing>>,
+        Vec<::wit_bindgen_wrpc::wrpc_core::ResourceOwn<Thing>>,
     > {
         Ok(a
             .iter()
@@ -37,14 +37,14 @@ impl HandlerThing for Component {
         &self,
         s: String,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<
-        ::wit_bindgen_wrpc::wrpc_transport::ResourceOwn<Thing>,
+        ::wit_bindgen_wrpc::wrpc_core::ResourceOwn<Thing>,
     > {
         Ok(handle_from(&format!("{s} new")))
     }
 
     async fn get(
         &self,
-        self_: ::wit_bindgen_wrpc::wrpc_transport::ResourceBorrow<Thing>,
+        self_: ::wit_bindgen_wrpc::wrpc_core::ResourceBorrow<Thing>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<String> {
         let contents = contents_of(self_.as_ref());
         Ok(format!("{contents} get"))

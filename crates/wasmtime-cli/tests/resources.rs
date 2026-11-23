@@ -5,7 +5,7 @@ use std::io::Write as _;
 use bytes::Bytes;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::select;
-use wrpc_transport::{Framed, invoke_blocking};
+use wrpc_core::{Framed, invoke_blocking};
 
 const COMPONENT: &str = r#"
 (component

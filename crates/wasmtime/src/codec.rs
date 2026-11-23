@@ -23,7 +23,7 @@ use wasmtime::component::Type;
 use wasmtime::component::types::{Case, Field};
 use wasmtime::error::Context as _;
 use wasmtime::{bail, format_err};
-use wrpc_transport::{Encode, FutureEncoder, Receive, StreamEncoder, Transmit, error_unknown_path};
+use wrpc_core::{Encode, FutureEncoder, Receive, StreamEncoder, Transmit, error_unknown_path};
 
 use crate::Val;
 use crate::codec::receive::{pending_future, pending_stream};

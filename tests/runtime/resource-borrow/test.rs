@@ -6,7 +6,7 @@ pub struct Component(pub crate::Client);
 impl Handler for Component {
     async fn foo(
         &self,
-        v: ::wit_bindgen_wrpc::wrpc_transport::ResourceBorrow<Thing>,
+        v: ::wit_bindgen_wrpc::wrpc_core::ResourceBorrow<Thing>,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<u32> {
         let bytes: &[u8] = v.as_ref();
         let val = u32::from_le_bytes(bytes.try_into().unwrap());
@@ -19,10 +19,10 @@ impl HandlerThing for Component {
         &self,
         v: u32,
     ) -> ::wit_bindgen_wrpc::anyhow::Result<
-        ::wit_bindgen_wrpc::wrpc_transport::ResourceOwn<Thing>,
+        ::wit_bindgen_wrpc::wrpc_core::ResourceOwn<Thing>,
     > {
         let val = v + 1;
-        Ok(::wit_bindgen_wrpc::wrpc_transport::ResourceOwn::from(
+        Ok(::wit_bindgen_wrpc::wrpc_core::ResourceOwn::from(
             ::wit_bindgen_wrpc::bytes::Bytes::copy_from_slice(&val.to_le_bytes()),
         ))
     }

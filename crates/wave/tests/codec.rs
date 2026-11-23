@@ -10,7 +10,7 @@ use tokio::try_join;
 use tokio_util::codec::{Decoder as _, Encoder, FramedRead, FramedWrite};
 use wasm_wave::value::{Type, Value};
 use wasm_wave::wasm::WasmValue as _;
-use wrpc_transport::{Codec, Encode, FrameDecoder, FrameEncoder, Listener};
+use wrpc_core::{Codec, Encode, FrameDecoder, FrameEncoder, Listener};
 use wrpc_wave::{TupleDecoder, TupleEncoder, ValueDecoder, ValueEncoder};
 
 #[test]

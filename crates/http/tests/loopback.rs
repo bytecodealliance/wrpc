@@ -23,11 +23,11 @@ use tokio::time::sleep;
 use tokio::{join, spawn, try_join};
 use tokio_util::codec::Encoder as _;
 use tokio_util::io::StreamReader;
-use wrpc_http::{Body, Listener, OutgoingRequest};
-use wrpc_transport::{
+use wrpc_core::{
     Codec, Decode, Encode, FrameEncoder, FrameRef, Header, HeaderEncoder, HeaderRef, invoke,
     invoke_blocking, serve,
 };
+use wrpc_http::{Body, Listener, OutgoingRequest};
 
 async fn connect() -> anyhow::Result<(
     SendRequest<UnsyncBoxBody<Bytes, std::io::Error>>,

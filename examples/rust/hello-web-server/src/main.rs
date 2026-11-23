@@ -10,7 +10,7 @@ use tokio::task::JoinSet;
 use tokio::{select, signal, spawn};
 use tracing::{debug, error, info, warn};
 use web_transport_quinn::{Request, ServerBuilder, quinn};
-use wit_bindgen_wrpc::wrpc_transport::{Header, Listener};
+use wit_bindgen_wrpc::wrpc_core::{Header, Listener};
 
 mod bindings {
     wit_bindgen_wrpc::generate!({

@@ -45,7 +45,7 @@ mod newtyped_list {
 
     use wit_bindgen_wrpc::bytes::BytesMut;
     use wit_bindgen_wrpc::tokio_util::codec::{Decoder, Encoder};
-    use wit_bindgen_wrpc::wrpc_transport::{Decode, Encode, Receive, Transmit, error_unknown_path};
+    use wit_bindgen_wrpc::wrpc_core::{Decode, Encode, Receive, Transmit, error_unknown_path};
 
     wit_bindgen_wrpc::generate!({
         inline: r#"

@@ -3469,7 +3469,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "wrpc-transport",
+ "wrpc-core",
  "wrpc-wasi-keyvalue",
 ]
 
@@ -3486,7 +3486,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "wrpc-transport",
+ "wrpc-core",
  "wrpc-wasi-keyvalue",
  "wrpc-wasi-keyvalue-mem",
 ]
@@ -3501,7 +3501,7 @@ dependencies = [
  "tokio",
  "tracing-subscriber",
  "url",
- "wrpc-transport",
+ "wrpc-core",
  "wrpc-wasi-keyvalue",
 ]
 
@@ -3515,7 +3515,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "wrpc-transport",
+ "wrpc-core",
  "wrpc-wasi-keyvalue",
  "wrpc-wasi-keyvalue-mem",
 ]
@@ -3530,7 +3530,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "wrpc-transport",
+ "wrpc-core",
  "wrpc-wasi-keyvalue",
  "wrpc-wasi-keyvalue-mem",
 ]
@@ -3556,7 +3556,7 @@ dependencies = [
  "uuid",
  "web-transport-quinn",
  "wit-bindgen-wrpc",
- "wrpc-transport",
+ "wrpc-core",
  "wrpc-wasi-keyvalue",
  "wrpc-wasi-keyvalue-mem",
  "wrpc-wasi-keyvalue-redis",
@@ -3575,7 +3575,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "web-transport-quinn",
- "wrpc-transport",
+ "wrpc-core",
  "wrpc-wasi-keyvalue",
  "wrpc-wasi-keyvalue-mem",
 ]
@@ -4370,7 +4370,7 @@ dependencies = [
  "tracing",
  "wasm-tokio",
  "wit-bindgen-wrpc-rust-macro",
- "wrpc-transport",
+ "wrpc-core",
 ]
 
 [[package]]
@@ -4410,8 +4410,8 @@ dependencies = [
  "tokio",
  "wit-bindgen-core",
  "wit-bindgen-wrpc",
+ "wrpc-core",
  "wrpc-introspect",
- "wrpc-transport",
 ]
 
 [[package]]
@@ -4552,11 +4552,26 @@ dependencies = [
  "wit-bindgen-wrpc-js",
  "wit-bindgen-wrpc-rust",
  "wit-bindgen-wrpc-test",
+ "wrpc-core",
  "wrpc-http",
  "wrpc-test",
- "wrpc-transport",
  "wrpc-wasmtime",
  "wrpc-wasmtime-cli",
+]
+
+[[package]]
+name = "wrpc-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "futures",
+ "test-log",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "wasm-tokio",
+ "wrpc-test",
 ]
 
 [[package]]
@@ -4575,8 +4590,8 @@ dependencies = [
  "test-log",
  "tokio",
  "tokio-util",
+ "wrpc-core",
  "wrpc-test",
- "wrpc-transport",
 ]
 
 [[package]]
@@ -4606,23 +4621,8 @@ dependencies = [
  "tracing",
  "url",
  "web-transport-quinn",
+ "wrpc-core",
  "wrpc-http",
- "wrpc-transport",
-]
-
-[[package]]
-name = "wrpc-transport"
-version = "0.31.0"
-dependencies = [
- "anyhow",
- "bytes",
- "futures",
- "test-log",
- "tokio",
- "tokio-util",
- "tracing",
- "wasm-tokio",
- "wrpc-test",
 ]
 
 [[package]]
@@ -4640,7 +4640,7 @@ dependencies = [
  "bytes",
  "tokio",
  "tracing",
- "wrpc-transport",
+ "wrpc-core",
  "wrpc-wasi-keyvalue",
 ]
 
@@ -4654,7 +4654,7 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
- "wrpc-transport",
+ "wrpc-core",
  "wrpc-wasi-keyvalue",
 ]
 
@@ -4672,8 +4672,8 @@ dependencies = [
  "wasm-tokio",
  "wasmparser 0.263.0",
  "wasmtime",
+ "wrpc-core",
  "wrpc-test",
- "wrpc-transport",
 ]
 
 [[package]]
@@ -4700,7 +4700,7 @@ dependencies = [
  "wasmtime-wasi",
  "wasmtime-wasi-http",
  "wit-component 0.263.0",
- "wrpc-transport",
+ "wrpc-core",
  "wrpc-wasmtime",
 ]
 
@@ -4716,7 +4716,7 @@ dependencies = [
  "wasm-tokio",
  "wasm-wave",
  "wasmtime",
- "wrpc-transport",
+ "wrpc-core",
 ]
 
 [[package]]

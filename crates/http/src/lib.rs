@@ -24,7 +24,7 @@ use tokio::io::{AsyncRead, ReadBuf};
 use tokio::sync::mpsc;
 use tokio_util::codec::{Decoder, Encoder, FramedRead};
 use tokio_util::io::StreamReader;
-use wrpc_transport::{
+use wrpc_core::{
     Codec, FrameDecoder, FrameEncoder, FrameRef, Header, HeaderDecoder, HeaderEncoder, HeaderRef,
     Invoke, Receipt, Receive, Serve, Transmit, error_data_after_end, receive,
 };
@@ -364,7 +364,7 @@ where
     T: http_body::Body<Error: Into<Box<dyn core::error::Error + Send + Sync>>> + Unpin,
 {
     /// Serves the invocation using `codec` by calling `f` with its parameters, see
-    /// [`wrpc_transport::Server::serve`]
+    /// [`wrpc_core::Server::serve`]
     ///
     /// It resolves once the response body was sent and the rest of the request body was received,
     /// failing with the first error, or once the peer canceled the request, when the receiver of

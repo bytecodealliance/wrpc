@@ -74,7 +74,7 @@ wasmtime-cli-flags = { workspace = true, features = [
 wasmtime-wasi = { workspace = true, features = ["p2", "p3"] }
 wasmtime-wasi-http = { workspace = true, features = ["default-send-request", "p2", "p3"] }
 wit-component = { workspace = true }
-wrpc-transport = { workspace = true }
+wrpc-core = { workspace = true }
 wrpc-wasmtime = { workspace = true, features = ["async"] }
 
 [dev-dependencies]
