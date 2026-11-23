@@ -49,7 +49,7 @@ pub use invoke::{Invocation, Invoke, invoke, invoke_blocking};
 pub use listener::Listener;
 pub use mux::{Receipt, Transmission, receive, transmit};
 pub use pack::{pack, unpack};
-pub use serve::{Serve, Server, serve};
+pub use serve::{Serve, ServeError, Server, serve};
 pub use value::*;
 
 use bytes::{Buf, BufMut as _, BytesMut};

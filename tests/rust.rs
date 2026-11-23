@@ -27,7 +27,8 @@ use tokio_util::io::StreamReader;
 use tracing::instrument;
 use wrpc_core::{
     Decode, Encode, FrameDecoder, FrameEncoder, FrameRef, Framed, Header, HeaderDecoder,
-    HeaderEncoder, HeaderRef, Listener, invoke, invoke_blocking, receive, serve, transmit,
+    HeaderEncoder, HeaderRef, Listener, ServeError, invoke, invoke_blocking, receive, serve,
+    transmit,
 };
 use wrpc_test::next_invocation;
 
@@ -896,7 +897,8 @@ async fn rust_http_bindgen_sync() -> anyhow::Result<()> {
                     else {
                         bail!("`{instance}#{name}` is not exported");
                     };
-                    fut.await
+                    fut.await?;
+                    Ok(())
                 }
             })
             .await
@@ -922,7 +924,8 @@ async fn rust_http_bindgen_async() -> anyhow::Result<()> {
                 else {
                     bail!("`{instance}#{name}` is not exported");
                 };
-                fut.await
+                fut.await?;
+                Ok(())
             })
             .await
             .context("failed to serve HTTP/2 connection")
@@ -1119,6 +1122,54 @@ async fn rust_oneshot_no_params() -> anyhow::Result<()> {
 }
 
 #[test_log::test(tokio::test)]
+async fn rust_serve_errors() -> anyhow::Result<()> {
+    let mut valid = BytesMut::default();
+    HeaderEncoder.encode(
+        HeaderRef {
+            instance: "foo",
+            name: "bar",
+        },
+        &mut valid,
+    )?;
+    let mut invalid = valid.clone();
+    FrameEncoder.encode(
+        FrameRef {
+            path: &[],
+            data: b"",
+        },
+        &mut valid,
+    )?;
+    FrameEncoder.encode(
+        FrameRef {
+            path: &[1],
+            data: b"",
+        },
+        &mut invalid,
+    )?;
+    let serve_once = async |buf: &[u8], fail: bool| {
+        let (mut clt, srv) = duplex(1024);
+        clt.write_all(buf).await?;
+        drop(clt);
+        let (rx, tx) = split(srv);
+        let mut lis = Listener::new(tx, rx);
+        let srv = next_invocation(&mut lis, "foo", "bar").await?;
+        let res = serve::<(), (), _, _, _>(srv, async |()| {
+            ensure!(!fail, "foo");
+            Ok(())
+        })
+        .await;
+        res.err().context("serving should have failed")
+    };
+    let err = serve_once(&invalid, false).await?;
+    ensure!(matches!(err, ServeError::Request(..)), "{err:?}");
+    let err = serve_once(&valid, true).await?;
+    ensure!(matches!(err, ServeError::Handler(..)), "{err:?}");
+    let err = serve_once(&valid, false).await?;
+    ensure!(matches!(err, ServeError::Response(..)), "{err:?}");
+    Ok(())
+}
+
+#[test_log::test(tokio::test)]
 async fn rust_reuse_streams() -> anyhow::Result<()> {
     let (clt, srv) = duplex(1024);
     let (clt_rx, clt_tx) = split(clt);
@@ -1243,7 +1294,8 @@ async fn rust_pipelining() -> anyhow::Result<()> {
                         Some(res) = invocations.next() => res?,
                     }
                 }
-                invocations.try_collect::<()>().await
+                invocations.try_collect::<()>().await?;
+                anyhow::Ok(())
             },
         )
     };
