@@ -593,7 +593,7 @@ fn bench_http1(
                     .set_nodelay(true)
                     .context("failed to set TCP_NODELAY")?;
                 let handler = handler.clone();
-                tasks.spawn(wrpc_test::serve_http1(
+                tasks.spawn(wrpc_test::serve_http(
                     stream,
                     move |_, Header { instance, name }, srv| {
                         func.handle(&handler, &instance, &name, srv)
@@ -644,7 +644,7 @@ fn bench_http2(
             .context("failed to drive HTTP/2 client connection")
     });
     tasks.spawn(async move {
-        wrpc_test::serve_http2(stream, move |_, Header { instance, name }, srv| {
+        wrpc_test::serve_http(stream, move |_, Header { instance, name }, srv| {
             func.handle(&handler, &instance, &name, srv)
         })
         .await
