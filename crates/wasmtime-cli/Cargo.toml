@@ -69,3 +69,7 @@ wit-component = { workspace = true }
 wrpc-cli = { workspace = true }
 wrpc-transport = { workspace = true }
 wrpc-wasmtime = { workspace = true, features = ["async"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["rt"] }
