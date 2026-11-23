@@ -49,15 +49,19 @@ impl<E: fmt::Debug + fmt::Display> Error for ServeError<E> {
 
 /// Server serving invocations with [`Send`] futures, such as [`Server`], see [`Server::serve`]
 pub trait Serve {
+    /// Output of serving an invocation, such as the response of a request-response transport
+    type Output;
+
     /// Serves an invocation using `codec` by calling `f` with its parameters, see
     /// [`Server::serve`]
     ///
-    /// The future resolves once all I/O of the invocation is done or the peer canceled it.
+    /// The future resolves once all I/O of the invocation is done or the transport took over the
+    /// rest of it, such as the response body of a request-response transport.
     fn serve<E, D, T, Fut, Err>(
         self,
         codec: Codec<E, D>,
         f: impl FnOnce(D::Item) -> Fut + Send,
-    ) -> impl Future<Output = Result<(), ServeError<Err>>> + Send
+    ) -> impl Future<Output = Result<Self::Output, ServeError<Err>>> + Send
     where
         E: Transmit + Encoder<T, Error = std::io::Error> + Send + 'static,
         D: Decoder<Error = std::io::Error> + Receive + Send + 'static,
@@ -140,6 +144,8 @@ where
     I: AsyncRead + Unpin + Send,
     O: AsyncWrite + Unpin + Send,
 {
+    type Output = ();
+
     fn serve<E, D, T, Fut, Err>(
         self,
         codec: Codec<E, D>,
@@ -160,7 +166,7 @@ where
 pub fn serve<P, R, S, Fut, Err>(
     srv: S,
     f: impl FnOnce(P) -> Fut + Send,
-) -> impl Future<Output = Result<(), ServeError<Err>>> + Send
+) -> impl Future<Output = Result<S::Output, ServeError<Err>>> + Send
 where
     S: Serve,
     P: Decode<Decoder: Send + 'static> + Send,

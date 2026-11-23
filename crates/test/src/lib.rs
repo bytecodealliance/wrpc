@@ -582,11 +582,7 @@ where
 #[cfg(feature = "http")]
 pub async fn serve_http<Fut>(
     stream: TcpStream,
-    mut f: impl FnMut(
-        http::request::Parts,
-        Header,
-        wrpc_http::IncomingRequest<hyper::body::Incoming>,
-    ) -> Fut,
+    mut f: impl FnMut(http::request::Parts, Header, wrpc_http::ListenerRequest) -> Fut,
 ) -> anyhow::Result<()>
 where
     Fut: Future<Output = anyhow::Result<()>>,
@@ -654,7 +650,7 @@ where
 #[cfg(feature = "http")]
 pub async fn serve_http_invocation(
     Header { instance, name }: Header,
-    req: wrpc_http::IncomingRequest<hyper::body::Incoming>,
+    req: wrpc_http::ListenerRequest,
 ) -> anyhow::Result<()> {
     ensure!(
         instance == "foo" && name == "bar",

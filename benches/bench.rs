@@ -111,7 +111,7 @@ impl Func {
         }
     }
 
-    fn handle<'a, S: Serve + Send + 'a>(
+    fn handle<'a, S: Serve<Output = ()> + Send + 'a>(
         self,
         handler: &impl Handler,
         instance: &str,
