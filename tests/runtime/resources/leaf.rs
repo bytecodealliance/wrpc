@@ -17,9 +17,9 @@ pub struct Component(pub crate::Client);
 impl Handler for Component {}
 
 impl HandlerY for Component {
-    async fn new(&self, a: i32) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<Y>> {
+    async fn new(&self, a: i32) -> ::std::io::Result<ResourceOwn<Y>> {
         let mut ys = YS.lock().unwrap();
-        let idx = u32::try_from(ys.len())?;
+        let idx = u32::try_from(ys.len()).map_err(std::io::Error::other)?;
         ys.push(a);
         Ok(ResourceOwn::from(Bytes::copy_from_slice(
             &idx.to_le_bytes(),
@@ -29,7 +29,7 @@ impl HandlerY for Component {
     async fn get_a(
         &self,
         self_: ResourceBorrow<Y>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<i32> {
+    ) -> ::std::io::Result<i32> {
         Ok(YS.lock().unwrap()[index(self_.as_ref())])
     }
 
@@ -37,7 +37,7 @@ impl HandlerY for Component {
         &self,
         self_: ResourceBorrow<Y>,
         a: i32,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    ) -> ::std::io::Result<()> {
         YS.lock().unwrap()[index(self_.as_ref())] = a;
         Ok(())
     }
@@ -46,7 +46,7 @@ impl HandlerY for Component {
         &self,
         y: ResourceOwn<Y>,
         a: i32,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<Y>> {
+    ) -> ::std::io::Result<ResourceOwn<Y>> {
         let a = YS.lock().unwrap()[index(y.as_ref())] + a;
         HandlerY::new(self, a).await
     }

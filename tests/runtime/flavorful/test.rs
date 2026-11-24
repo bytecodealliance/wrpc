@@ -7,14 +7,14 @@ impl crate::server::exports::test::flavorful::to_test::Handler for Component {
     async fn f_list_in_record1(
         &self,
         ty: ListInRecord1,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    ) -> ::std::io::Result<()> {
         assert_eq!(ty.a, "list_in_record1");
         Ok(())
     }
 
     async fn f_list_in_record2(
         &self,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<ListInRecord2> {
+    ) -> ::std::io::Result<ListInRecord2> {
         Ok(ListInRecord2 {
             a: "list_in_record2".to_string(),
         })
@@ -23,7 +23,7 @@ impl crate::server::exports::test::flavorful::to_test::Handler for Component {
     async fn f_list_in_record3(
         &self,
         a: ListInRecord3,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<ListInRecord3> {
+    ) -> ::std::io::Result<ListInRecord3> {
         assert_eq!(a.a, "list_in_record3 input");
         Ok(ListInRecord3 {
             a: "list_in_record3 output".to_string(),
@@ -33,7 +33,7 @@ impl crate::server::exports::test::flavorful::to_test::Handler for Component {
     async fn f_list_in_record4(
         &self,
         a: ListInAlias,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<ListInAlias> {
+    ) -> ::std::io::Result<ListInAlias> {
         assert_eq!(a.a, "input4");
         Ok(ListInRecord4 {
             a: "result4".to_string(),
@@ -44,7 +44,7 @@ impl crate::server::exports::test::flavorful::to_test::Handler for Component {
         &self,
         a: ListInVariant1V1,
         b: ListInVariant1V2,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    ) -> ::std::io::Result<()> {
         assert_eq!(a.unwrap(), "foo");
         assert_eq!(b.unwrap_err(), "bar");
         Ok(())
@@ -52,21 +52,21 @@ impl crate::server::exports::test::flavorful::to_test::Handler for Component {
 
     async fn f_list_in_variant2(
         &self,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<ListInVariant2> {
+    ) -> ::std::io::Result<ListInVariant2> {
         Ok(Some("list_in_variant2".to_string()))
     }
 
     async fn f_list_in_variant3(
         &self,
         a: ListInVariant3,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<ListInVariant3> {
+    ) -> ::std::io::Result<ListInVariant3> {
         assert_eq!(a.unwrap(), "input3");
         Ok(Some("output3".to_string()))
     }
 
     async fn errno_result(
         &self,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<::core::result::Result<(), MyErrno>> {
+    ) -> ::std::io::Result<::core::result::Result<(), MyErrno>> {
         static FIRST: ::std::sync::atomic::AtomicBool = ::std::sync::atomic::AtomicBool::new(true);
         MyErrno::A.to_string();
         _ = format!("{:?}", MyErrno::A);
@@ -84,7 +84,7 @@ impl crate::server::exports::test::flavorful::to_test::Handler for Component {
         &self,
         a: ListTypedef,
         c: ListTypedef3,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<(ListTypedef2, ListTypedef3)> {
+    ) -> ::std::io::Result<(ListTypedef2, ListTypedef3)> {
         assert_eq!(a, "typedef1");
         assert_eq!(c.len(), 1);
         assert_eq!(c[0], "typedef2");
@@ -99,7 +99,7 @@ impl crate::server::exports::test::flavorful::to_test::Handler for Component {
         bools: Vec<bool>,
         results: Vec<::core::result::Result<(), ()>>,
         enums: Vec<MyErrno>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<(
+    ) -> ::std::io::Result<(
         Vec<bool>,
         Vec<::core::result::Result<(), ()>>,
         Vec<MyErrno>,

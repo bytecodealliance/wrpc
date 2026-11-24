@@ -10,7 +10,7 @@ impl Handler for Component {
     async fn pending_import(
         &self,
         x: Pin<Box<dyn Future<Output = ()> + Send>>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    ) -> ::std::io::Result<()> {
         x.await;
         Ok(())
     }

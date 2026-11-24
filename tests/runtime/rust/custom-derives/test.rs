@@ -14,7 +14,7 @@ use std::collections::{hash_map::RandomState, HashSet};
 pub struct Component(pub crate::Client);
 
 impl HandlerBlah for Component {
-    async fn bar(&self, cool: Foo) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    async fn bar(&self, cool: Foo) -> ::std::io::Result<()> {
         let _blah: HashSet<Foo, RandomState> = HashSet::from_iter([
             Foo {
                 field1: "hello".to_string(),
@@ -25,7 +25,7 @@ impl HandlerBlah for Component {
         Ok(())
     }
 
-    async fn barry(&self, _warm: Ignoreme) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    async fn barry(&self, _warm: Ignoreme) -> ::std::io::Result<()> {
         Ok(())
     }
 }
@@ -39,7 +39,7 @@ impl HandlerInputStream for Component {
             crate::server::exports::my::inline::blag::InputStream,
         >,
         _len: u64,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<::wit_bindgen_wrpc::bytes::Bytes> {
+    ) -> ::std::io::Result<::wit_bindgen_wrpc::bytes::Bytes> {
         todo!()
     }
 }

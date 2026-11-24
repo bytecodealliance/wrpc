@@ -6,7 +6,7 @@ impl crate::server::exports::my::inline::foo::Handler for Component {}
 impl crate::server::exports::my::inline::foo::HandlerBar for Component {
     async fn new(
         &self,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<
+    ) -> ::std::io::Result<
         ::wit_bindgen_wrpc::wrpc_core::ResourceOwn<
             crate::server::exports::my::inline::foo::Bar,
         >,

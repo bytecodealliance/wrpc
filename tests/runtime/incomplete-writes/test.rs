@@ -42,14 +42,14 @@ impl Handler for Component {
     async fn short_reads_test(
         &self,
         s: BoxStream<'static, Vec<ResourceOwn<TestThing>>>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<BoxStream<'static, Vec<ResourceOwn<TestThing>>>> {
+    ) -> ::std::io::Result<BoxStream<'static, Vec<ResourceOwn<TestThing>>>> {
         Ok(short_reads(s))
     }
 
     async fn short_reads_leaf(
         &self,
         s: BoxStream<'static, Vec<ResourceOwn<LeafThing>>>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<BoxStream<'static, Vec<ResourceOwn<LeafThing>>>> {
+    ) -> ::std::io::Result<BoxStream<'static, Vec<ResourceOwn<LeafThing>>>> {
         Ok(short_reads(s))
     }
 
@@ -57,7 +57,7 @@ impl Handler for Component {
         &self,
         f1: BoxFuture<'static, ResourceOwn<TestThing>>,
         f2: BoxFuture<'static, ResourceOwn<TestThing>>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<(
+    ) -> ::std::io::Result<(
         BoxFuture<'static, ResourceOwn<TestThing>>,
         BoxFuture<'static, ResourceOwn<TestThing>>,
     )> {
@@ -68,7 +68,7 @@ impl Handler for Component {
         &self,
         f1: BoxFuture<'static, ResourceOwn<LeafThing>>,
         f2: BoxFuture<'static, ResourceOwn<LeafThing>>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<(
+    ) -> ::std::io::Result<(
         BoxFuture<'static, ResourceOwn<LeafThing>>,
         BoxFuture<'static, ResourceOwn<LeafThing>>,
     )> {
@@ -80,16 +80,16 @@ impl HandlerTestThing for Component {
     async fn new(
         &self,
         s: String,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<TestThing>> {
+    ) -> ::std::io::Result<ResourceOwn<TestThing>> {
         Ok(ResourceOwn::from(Bytes::from(s)))
     }
 
     async fn get(
         &self,
         self_: ResourceBorrow<TestThing>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<String> {
+    ) -> ::std::io::Result<String> {
         let repr: &[u8] = self_.as_ref();
-        let s = String::from_utf8(repr.to_vec())?;
+        let s = String::from_utf8(repr.to_vec()).map_err(std::io::Error::other)?;
         Ok(s)
     }
 }

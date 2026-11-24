@@ -10,7 +10,7 @@ impl Handler for Component {
     async fn f(
         &self,
         future: Pin<Box<dyn Future<Output = ()> + Send>>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    ) -> ::std::io::Result<()> {
         future.await;
         Ok(())
     }

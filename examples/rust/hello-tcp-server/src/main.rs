@@ -31,7 +31,7 @@ struct Server {
 }
 
 impl bindings::exports::wrpc_examples::hello::handler::Handler for Server {
-    async fn hello(&self) -> anyhow::Result<String> {
+    async fn hello(&self) -> std::io::Result<String> {
         info!(addr = ?self.addr, "received hello");
         Ok("hello from Rust".to_string())
     }

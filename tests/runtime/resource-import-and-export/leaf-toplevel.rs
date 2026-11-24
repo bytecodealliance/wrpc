@@ -7,7 +7,7 @@ impl Handler for Component {
     async fn toplevel_export(
         &self,
         a: ResourceOwn<Thing>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<Thing>> {
+    ) -> ::std::io::Result<ResourceOwn<Thing>> {
         Ok(a)
     }
 }

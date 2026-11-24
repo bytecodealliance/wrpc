@@ -341,7 +341,7 @@
 /// struct MyComponent;
 ///
 /// impl Handler for MyComponent {
-///     async fn hello(&self) -> anyhow::Result<()> { Ok(()) }
+///     async fn hello(&self) -> std::io::Result<()> { Ok(()) }
 /// }
 /// ```
 ///
@@ -386,16 +386,16 @@
 /// struct MyComponent;
 ///
 /// impl Handler for MyComponent {
-///     async fn c(&self) -> anyhow::Result<()> { Ok(()) }
+///     async fn c(&self) -> std::io::Result<()> { Ok(()) }
 /// }
 ///
 /// impl exports::my::test::a::Handler for MyComponent {
-///     async fn func_in_a(&self) -> anyhow::Result<()> { Ok(()) }
-///     async fn second_func_in_a(&self) -> anyhow::Result<()> { Ok(()) }
+///     async fn func_in_a(&self) -> std::io::Result<()> { Ok(()) }
+///     async fn second_func_in_a(&self) -> std::io::Result<()> { Ok(()) }
 /// }
 ///
 /// impl exports::b::Handler for MyComponent {
-///     async fn func_in_b(&self) -> anyhow::Result<()> { Ok(()) }
+///     async fn func_in_b(&self) -> std::io::Result<()> { Ok(()) }
 /// }
 /// # fn main() {}
 /// ```
@@ -435,7 +435,7 @@
 /// struct MyComponent;
 ///
 /// impl bindings::exports::b::Handler for MyComponent {
-///     async fn foo(&self) -> anyhow::Result<u32> {
+///     async fn foo(&self) -> std::io::Result<u32> {
 ///         Ok(42)
 ///     }
 /// }
@@ -465,7 +465,6 @@
 /// ```
 /// use std::sync::{Arc, RwLock};
 ///
-/// use anyhow::Context;
 /// use bytes::Bytes;
 /// use wrpc_core::{ResourceBorrow, ResourceOwn};
 ///
@@ -516,7 +515,7 @@
 /// }
 ///
 /// impl HandlerLogger for MyComponent {
-///     async fn new(&self, level: Level) -> anyhow::Result<ResourceOwn<Logger>> {
+///     async fn new(&self, level: Level) -> std::io::Result<ResourceOwn<Logger>> {
 ///         let mut loggers = self.loggers.write().unwrap();
 ///         let handle = loggers.len().to_le_bytes();
 ///         loggers.push(MyLogger {
@@ -526,11 +525,11 @@
 ///         Ok(ResourceOwn::from(Bytes::copy_from_slice(&handle)))
 ///     }
 ///
-///     async fn log(&self, logger: ResourceBorrow<Logger>, level: Level, msg: String) -> anyhow::Result<()> {
-///         let i = Bytes::from(logger).as_ref().try_into()?;
+///     async fn log(&self, logger: ResourceBorrow<Logger>, level: Level, msg: String) -> std::io::Result<()> {
+///         let i = Bytes::from(logger).as_ref().try_into().map_err(std::io::Error::other)?;
 ///         let i = usize::from_le_bytes(i);
 ///         let loggers = self.loggers.read().unwrap();
-///         let logger = loggers.get(i).context("invalid resource handle")?;
+///         let logger = loggers.get(i).ok_or_else(|| std::io::Error::other("invalid resource handle"))?;
 ///         if level as u32 <= *logger.level.read().unwrap() as u32 {
 ///             let mut contents = logger.contents.write().unwrap();
 ///             contents.push_str(&msg);
@@ -539,20 +538,20 @@
 ///         Ok(())
 ///     }
 ///
-///     async fn level(&self, logger: ResourceBorrow<Logger>) -> anyhow::Result<Level> {
-///         let i = Bytes::from(logger).as_ref().try_into()?;
+///     async fn level(&self, logger: ResourceBorrow<Logger>) -> std::io::Result<Level> {
+///         let i = Bytes::from(logger).as_ref().try_into().map_err(std::io::Error::other)?;
 ///         let i = usize::from_le_bytes(i);
 ///         let loggers = self.loggers.read().unwrap();
-///         let logger = loggers.get(i).context("invalid resource handle")?;
+///         let logger = loggers.get(i).ok_or_else(|| std::io::Error::other("invalid resource handle"))?;
 ///         let level = logger.level.read().unwrap();
 ///         Ok(level.clone())
 ///     }
 ///
-///     async fn set_level(&self, logger: ResourceBorrow<Logger>, level: Level) -> anyhow::Result<()> {
-///         let i = Bytes::from(logger).as_ref().try_into()?;
+///     async fn set_level(&self, logger: ResourceBorrow<Logger>, level: Level) -> std::io::Result<()> {
+///         let i = Bytes::from(logger).as_ref().try_into().map_err(std::io::Error::other)?;
 ///         let i = usize::from_le_bytes(i);
 ///         let loggers = self.loggers.read().unwrap();
-///         let logger = loggers.get(i).context("invalid resource handle")?;
+///         let logger = loggers.get(i).ok_or_else(|| std::io::Error::other("invalid resource handle"))?;
 ///         *logger.level.write().unwrap() = level;
 ///         Ok(())
 ///     }
@@ -602,7 +601,7 @@
 /// struct MyComponent;
 ///
 /// impl Handler for MyComponent {
-/// #   async fn hello(&self) -> anyhow::Result<()> { Ok(()) }
+/// #   async fn hello(&self) -> std::io::Result<()> { Ok(()) }
 ///     // ...
 /// }
 ///
@@ -650,7 +649,7 @@
 /// struct MyComponent;
 ///
 /// impl bindings::Handler for MyComponent {
-/// #   async fn hello(&self) -> anyhow::Result<()> { Ok(()) }
+/// #   async fn hello(&self) -> std::io::Result<()> { Ok(()) }
 ///     // ...
 /// }
 ///

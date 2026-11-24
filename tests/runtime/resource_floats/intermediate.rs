@@ -15,11 +15,11 @@ impl Handler for Component {
         &self,
         a: ResourceBorrow<Float>,
         b: ResourceBorrow<Float>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<Float>> {
+    ) -> ::std::io::Result<ResourceOwn<Float>> {
         let mut clt = self.0.connect().await?;
-        let a = ImportFloat2::get(&mut clt, &a).await?;
-        let b = ImportFloat2::get(&mut clt, &b).await?;
-        ImportFloat2::new(&mut clt, a + b + 5.0).await
+        let a = ImportFloat2::get(&mut clt, &a).await.map_err(std::io::Error::other)?;
+        let b = ImportFloat2::get(&mut clt, &b).await.map_err(std::io::Error::other)?;
+        ImportFloat2::new(&mut clt, a + b + 5.0).await.map_err(std::io::Error::other)
     }
 }
 
@@ -29,19 +29,19 @@ impl HandlerFloat for Component {
     async fn new(
         &self,
         v: f64,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<FloatExport>> {
+    ) -> ::std::io::Result<ResourceOwn<FloatExport>> {
         let clt = self.0.connect().await?;
-        let val = ImportFloat1::new(clt, v + 1.0).await?;
+        let val = ImportFloat1::new(clt, v + 1.0).await.map_err(std::io::Error::other)?;
         Ok(ResourceOwn::from(Bytes::from(val)))
     }
 
     async fn get(
         &self,
         self_: ResourceBorrow<FloatExport>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<f64> {
+    ) -> ::std::io::Result<f64> {
         let val = ResourceBorrow::from(Bytes::from(self_));
         let clt = self.0.connect().await?;
-        let v = ImportFloat1::get(clt, &val).await?;
+        let v = ImportFloat1::get(clt, &val).await.map_err(std::io::Error::other)?;
         Ok(v + 3.0)
     }
 
@@ -49,11 +49,11 @@ impl HandlerFloat for Component {
         &self,
         a: ResourceOwn<FloatExport>,
         b: f64,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<FloatExport>> {
+    ) -> ::std::io::Result<ResourceOwn<FloatExport>> {
         let a = ResourceOwn::from(Bytes::from(a));
         let mut clt = self.0.connect().await?;
-        let a = ImportFloat1::add(&mut clt, &a, b).await?;
-        let v = ImportFloat1::get(&mut clt, &a.as_borrow()).await?;
+        let a = ImportFloat1::add(&mut clt, &a, b).await.map_err(std::io::Error::other)?;
+        let v = ImportFloat1::get(&mut clt, &a.as_borrow()).await.map_err(std::io::Error::other)?;
         self.new(v + 5.0).await
     }
 }

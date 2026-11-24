@@ -24,7 +24,7 @@ async fn generate() -> anyhow::Result<()> {
     struct Handler;
 
     impl bindings::exports::wrpc_test::umbrella::greeter::Handler for Handler {
-        async fn greet(&self, name: String) -> anyhow::Result<String> {
+        async fn greet(&self, name: String) -> std::io::Result<String> {
             Ok(format!("hello, {name}"))
         }
     }

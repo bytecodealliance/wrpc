@@ -1,6 +1,6 @@
 //@ args = '--generate-all'
 
-use ::wit_bindgen_wrpc::anyhow::Result;
+use ::std::io::Result;
 use ::wit_bindgen_wrpc::wrpc_core::ResourceOwn;
 
 use crate::server::exports::i::{C as IC, D as ID, Handler as HandlerI};

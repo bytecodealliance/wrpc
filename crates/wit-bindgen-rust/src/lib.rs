@@ -479,7 +479,6 @@ with: {{\n\t{with_name:?}: generate\n}}
             .map(|path| format!("{path}Handler"))
             .collect::<Vec<_>>()
             .join(" + ");
-        let anyhow = self.anyhow_path();
         let wrpc_core = self.wrpc_core_path();
         uwrite!(
             self.src,
@@ -490,7 +489,7 @@ pub fn handle<S__, H__>(
     func: &str,
     srv: S__,
 ) -> ::core::result::Result<
-    impl ::core::future::Future<Output = ::core::result::Result<S__::Output, {wrpc_core}::ServeError<{anyhow}::Error>>> + ::core::marker::Send + use<S__, H__>,
+    impl ::core::future::Future<Output = ::core::result::Result<S__::Output, {wrpc_core}::ServeError>> + ::core::marker::Send + use<S__, H__>,
     S__,
 >
 where

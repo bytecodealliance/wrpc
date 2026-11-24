@@ -18,7 +18,7 @@ use crate::server::exports::other::test::test::Handler;
 pub struct Component(pub crate::Client);
 
 impl Handler for Component {
-    async fn f(&self) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    async fn f(&self) -> ::std::io::Result<()> {
         Ok(())
     }
 }

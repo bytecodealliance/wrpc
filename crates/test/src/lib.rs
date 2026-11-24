@@ -231,20 +231,17 @@ pub async fn assert_single_invocation(
             let (tx, rx) = accept.await.context("failed to accept")?;
             let mut lis = Listener::new(tx, rx);
             let srv = next_invocation(&mut lis, "foo", "bar").await?;
-            serve::<
-                (Bytes, BoxStream<'static, Bytes>),
-                (Bytes, BoxStream<'static, Bytes>),
-                _,
-                _,
-                _,
-            >(srv, async |(testbar, s)| {
-                assert_eq!(testbar, b"testbar".as_slice());
-                let buf = s.collect::<Vec<_>>().await.concat();
-                assert_eq!(buf, b"client->server");
-                let results: BoxStream<'static, Bytes> =
-                    Box::pin(stream::iter([Bytes::from_static(b"server->client")]));
-                anyhow::Ok((Bytes::from_static(b"foo"), results))
-            })
+            serve::<(Bytes, BoxStream<'static, Bytes>), (Bytes, BoxStream<'static, Bytes>), _, _>(
+                srv,
+                async |(testbar, s)| {
+                    assert_eq!(testbar, b"testbar".as_slice());
+                    let buf = s.collect::<Vec<_>>().await.concat();
+                    assert_eq!(buf, b"client->server");
+                    let results: BoxStream<'static, Bytes> =
+                        Box::pin(stream::iter([Bytes::from_static(b"server->client")]));
+                    Ok((Bytes::from_static(b"foo"), results))
+                },
+            )
             .await
             .context("failed to serve `foo.bar`")?;
             let next = lis.accept().await?;
@@ -309,7 +306,7 @@ where
         },
     )?;
     let srv = next_invocation(&mut lis, "foo", "baz").await?;
-    let res = serve::<(), (), _, _, anyhow::Error>(srv, async |()| Ok(())).await;
+    let res = serve::<(), (), _, _>(srv, async |()| Ok(())).await;
     ensure!(res.is_err(), "invalid data must fail server ingress");
     drop(lis);
     let mut buf = Vec::default();
@@ -671,13 +668,13 @@ pub async fn serve_http_invocation(
         instance == "foo" && name == "bar",
         "unexpected invocation of `{instance}.{name}`",
     );
-    let res = serve::<FooBar, FooBar, _, _, _>(req, async |(testbar, s)| {
+    let res = serve::<FooBar, FooBar, _, _>(req, async |(testbar, s)| {
         assert_eq!(testbar, b"testbar".as_slice());
         let buf = s.collect::<Vec<_>>().await;
         assert_eq!(buf.concat(), b"client->server");
         let results: BoxStream<'static, Bytes> =
             Box::pin(stream::iter([Bytes::from_static(b"server->client")]));
-        anyhow::Ok((Bytes::from_static(b"foo"), results))
+        Ok((Bytes::from_static(b"foo"), results))
     })
     .await?;
     Ok(res)

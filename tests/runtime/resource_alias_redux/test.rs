@@ -9,7 +9,7 @@ impl a1::Handler for Component {
     async fn a(
         &self,
         f: a1::Foo,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<
+    ) -> ::std::io::Result<
         Vec<::wit_bindgen_wrpc::wrpc_core::ResourceOwn<a1::Thing>>,
     > {
         Ok(vec![f.thing])
@@ -20,7 +20,7 @@ impl a1::HandlerThing for Component {
     async fn new(
         &self,
         s: String,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<
+    ) -> ::std::io::Result<
         ::wit_bindgen_wrpc::wrpc_core::ResourceOwn<a1::Thing>,
     > {
         let contents = format!("{s} GuestThing");
@@ -32,7 +32,7 @@ impl a1::HandlerThing for Component {
     async fn get(
         &self,
         self_: ::wit_bindgen_wrpc::wrpc_core::ResourceBorrow<a1::Thing>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<String> {
+    ) -> ::std::io::Result<String> {
         let repr: &[u8] = self_.as_ref();
         let contents = String::from_utf8(repr.to_vec()).unwrap();
         Ok(format!("{contents} GuestThing.get"))
@@ -44,7 +44,7 @@ impl a2::Handler for Component {
         &self,
         f: a2::Foo,
         g: a2::Bar,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<
+    ) -> ::std::io::Result<
         Vec<::wit_bindgen_wrpc::wrpc_core::ResourceOwn<a2::Thing>>,
     > {
         Ok(vec![f.thing, g.thing])
@@ -55,7 +55,7 @@ impl the_test::Handler for Component {
     async fn test(
         &self,
         things: Vec<::wit_bindgen_wrpc::wrpc_core::ResourceOwn<the_test::Thing>>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<
+    ) -> ::std::io::Result<
         Vec<::wit_bindgen_wrpc::wrpc_core::ResourceOwn<the_test::Thing>>,
     > {
         Ok(things)

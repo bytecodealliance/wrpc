@@ -19,8 +19,8 @@
 //!     if instance != "foo" || name != "bar" {
 //!         return Err(format!("`{instance}.{name}` is not exported").into());
 //!     }
-//!     let res = serve::<(String,), (String,), _, _, _>(req, async |(name,)| {
-//!         std::io::Result::Ok((format!("Hello, {name}"),))
+//!     let res = serve::<(String,), (String,), _, _>(req, async |(name,)| {
+//!         Ok((format!("Hello, {name}"),))
 //!     })
 //!     .await?;
 //!     Ok::<_, Box<dyn core::error::Error + Send + Sync>>(res)
@@ -350,11 +350,11 @@ where
     /// [`BrokenPipe`](std::io::ErrorKind::BrokenPipe) after.
     ///
     /// Unlike [`Serve`], this does not require [`Send`] values and futures.
-    pub async fn serve<E, D, R, Err>(
+    pub async fn serve<E, D, R>(
         self,
         codec: Codec<E, D>,
-        f: impl AsyncFnOnce(D::Item) -> Result<R, Err>,
-    ) -> Result<http::Response<ResponseBody<E, D, T>>, ServeError<Err>>
+        f: impl AsyncFnOnce(D::Item) -> std::io::Result<R>,
+    ) -> Result<http::Response<ResponseBody<E, D, T>>, ServeError>
     where
         E: Transmit + Encoder<R, Error = std::io::Error>,
         D: Decoder<Error = std::io::Error> + Receive,
@@ -389,16 +389,16 @@ where
 {
     type Output = http::Response<UnsyncBoxBody<Bytes, std::io::Error>>;
 
-    fn serve<E, D, R, Fut, Err>(
+    fn serve<E, D, R, Fut>(
         self,
         codec: Codec<E, D>,
         f: impl FnOnce(D::Item) -> Fut + Send,
-    ) -> impl Future<Output = Result<Self::Output, ServeError<Err>>> + Send
+    ) -> impl Future<Output = Result<Self::Output, ServeError>> + Send
     where
         E: Transmit + Encoder<R, Error = std::io::Error> + Send + 'static,
         D: Decoder<Error = std::io::Error> + Receive + Send + 'static,
         D::Item: Send,
-        Fut: Future<Output = Result<R, Err>> + Send,
+        Fut: Future<Output = std::io::Result<R>> + Send,
     {
         IncomingRequest::serve(self, codec, async move |params| f(params).await)
             .map_ok(|res| res.map(BodyExt::boxed_unsync))

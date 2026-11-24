@@ -174,7 +174,10 @@ fn client_tls_config() -> rustls::ClientConfig {
 
 impl store::Handler for Handler {
     #[instrument(level = "trace", skip(self), ret(level = "trace"))]
-    async fn open(&self, identifier: String) -> anyhow::Result<Result<ResourceOwn<store::Bucket>>> {
+    async fn open(
+        &self,
+        identifier: String,
+    ) -> std::io::Result<Result<ResourceOwn<store::Bucket>>> {
         if identifier.is_empty() {
             let bucket = match self.mem.open(identifier).await? {
                 Ok(bucket) => bucket,
@@ -221,7 +224,8 @@ impl store::Handler for Handler {
                 }
                 let conf: QuicClientConfig = client_tls_config()
                     .try_into()
-                    .context("failed to convert rustls client config to QUIC client config")?;
+                    .context("failed to convert rustls client config to QUIC client config")
+                    .map_err(std::io::Error::other)?;
                 ep.set_default_client_config(quinn::ClientConfig::new(Arc::new(conf)));
                 let conn = match ep
                     .connect(addr, san)
@@ -295,8 +299,12 @@ impl store::Handler for Handler {
         let clt = remote
             .connect()
             .await
-            .context("failed to connect to remote")?;
-        let bucket = match wrpc_wasi_keyvalue::wasi::keyvalue::store::open(clt, suffix).await? {
+            .context("failed to connect to remote")
+            .map_err(std::io::Error::other)?;
+        let bucket = wrpc_wasi_keyvalue::wasi::keyvalue::store::open(clt, suffix)
+            .await
+            .map_err(std::io::Error::other)?;
+        let bucket = match bucket {
             Ok(bucket) => bucket,
             Err(err) => return Ok(Err(err.into())),
         };
@@ -314,21 +322,24 @@ impl store::HandlerBucket for Handler {
         &self,
         bucket: ResourceBorrow<store::Bucket>,
         key: String,
-    ) -> anyhow::Result<Result<Option<Bytes>>> {
-        let res = match self.bucket(bucket).await? {
+    ) -> std::io::Result<Result<Option<Bytes>>> {
+        let bucket = self.bucket(bucket).await.map_err(std::io::Error::other)?;
+        let res = match bucket {
             Bucket::Mem(bucket) => return self.mem.get(bucket.as_borrow(), key).await,
             Bucket::Redis(bucket) => return self.redis.get(bucket.as_borrow(), key).await,
             Bucket::Remote(bucket, remote) => {
                 let clt = remote
                     .connect()
                     .await
-                    .context("failed to connect to remote")?;
+                    .context("failed to connect to remote")
+                    .map_err(std::io::Error::other)?;
                 wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket::get(
                     clt,
                     &bucket.as_borrow(),
                     &key,
                 )
-                .await?
+                .await
+                .map_err(std::io::Error::other)?
             }
         };
         match res {
@@ -343,8 +354,9 @@ impl store::HandlerBucket for Handler {
         bucket: ResourceBorrow<store::Bucket>,
         key: String,
         value: Bytes,
-    ) -> anyhow::Result<Result<()>> {
-        let res = match self.bucket(bucket).await? {
+    ) -> std::io::Result<Result<()>> {
+        let bucket = self.bucket(bucket).await.map_err(std::io::Error::other)?;
+        let res = match bucket {
             Bucket::Mem(bucket) => return self.mem.set(bucket.as_borrow(), key, value).await,
             Bucket::Redis(bucket) => {
                 return self.redis.set(bucket.as_borrow(), key, value).await;
@@ -353,14 +365,16 @@ impl store::HandlerBucket for Handler {
                 let clt = remote
                     .connect()
                     .await
-                    .context("failed to connect to remote")?;
+                    .context("failed to connect to remote")
+                    .map_err(std::io::Error::other)?;
                 wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket::set(
                     clt,
                     &bucket.as_borrow(),
                     &key,
                     &value,
                 )
-                .await?
+                .await
+                .map_err(std::io::Error::other)?
             }
         };
         match res {
@@ -374,21 +388,24 @@ impl store::HandlerBucket for Handler {
         &self,
         bucket: ResourceBorrow<store::Bucket>,
         key: String,
-    ) -> anyhow::Result<Result<()>> {
-        let res = match self.bucket(bucket).await? {
+    ) -> std::io::Result<Result<()>> {
+        let bucket = self.bucket(bucket).await.map_err(std::io::Error::other)?;
+        let res = match bucket {
             Bucket::Mem(bucket) => return self.mem.delete(bucket.as_borrow(), key).await,
             Bucket::Redis(bucket) => return self.redis.delete(bucket.as_borrow(), key).await,
             Bucket::Remote(bucket, remote) => {
                 let clt = remote
                     .connect()
                     .await
-                    .context("failed to connect to remote")?;
+                    .context("failed to connect to remote")
+                    .map_err(std::io::Error::other)?;
                 wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket::delete(
                     clt,
                     &bucket.as_borrow(),
                     &key,
                 )
-                .await?
+                .await
+                .map_err(std::io::Error::other)?
             }
         };
         match res {
@@ -402,21 +419,24 @@ impl store::HandlerBucket for Handler {
         &self,
         bucket: ResourceBorrow<store::Bucket>,
         key: String,
-    ) -> anyhow::Result<Result<bool>> {
-        let res = match self.bucket(bucket).await? {
+    ) -> std::io::Result<Result<bool>> {
+        let bucket = self.bucket(bucket).await.map_err(std::io::Error::other)?;
+        let res = match bucket {
             Bucket::Mem(bucket) => return self.mem.exists(bucket.as_borrow(), key).await,
             Bucket::Redis(bucket) => return self.redis.exists(bucket.as_borrow(), key).await,
             Bucket::Remote(bucket, remote) => {
                 let clt = remote
                     .connect()
                     .await
-                    .context("failed to connect to remote")?;
+                    .context("failed to connect to remote")
+                    .map_err(std::io::Error::other)?;
                 wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket::exists(
                     clt,
                     &bucket.as_borrow(),
                     &key,
                 )
-                .await?
+                .await
+                .map_err(std::io::Error::other)?
             }
         };
         match res {
@@ -430,8 +450,9 @@ impl store::HandlerBucket for Handler {
         &self,
         bucket: ResourceBorrow<store::Bucket>,
         cursor: Option<String>,
-    ) -> anyhow::Result<Result<store::KeyResponse>> {
-        let res = match self.bucket(bucket).await? {
+    ) -> std::io::Result<Result<store::KeyResponse>> {
+        let bucket = self.bucket(bucket).await.map_err(std::io::Error::other)?;
+        let res = match bucket {
             Bucket::Mem(bucket) => return self.mem.list_keys(bucket.as_borrow(), cursor).await,
             Bucket::Redis(bucket) => {
                 return self.redis.list_keys(bucket.as_borrow(), cursor).await;
@@ -440,13 +461,15 @@ impl store::HandlerBucket for Handler {
                 let clt = remote
                     .connect()
                     .await
-                    .context("failed to connect to remote")?;
+                    .context("failed to connect to remote")
+                    .map_err(std::io::Error::other)?;
                 wrpc_wasi_keyvalue::wasi::keyvalue::store::Bucket::list_keys(
                     clt,
                     &bucket.as_borrow(),
                     cursor.as_deref(),
                 )
-                .await?
+                .await
+                .map_err(std::io::Error::other)?
             }
         };
         match res {

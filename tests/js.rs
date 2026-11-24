@@ -80,11 +80,11 @@ mod echo {
     pub struct Echo;
 
     impl Handler for Echo {
-        async fn echo(&self, v: Values) -> anyhow::Result<Values> {
+        async fn echo(&self, v: Values) -> std::io::Result<Values> {
             Ok(v)
         }
 
-        async fn echo_async(&self, v: Asyncs) -> anyhow::Result<Asyncs> {
+        async fn echo_async(&self, v: Asyncs) -> std::io::Result<Asyncs> {
             Ok(v)
         }
     }

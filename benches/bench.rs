@@ -148,13 +148,13 @@ impl Func {
 struct NativeHandler;
 
 impl ping_bindings_wrpc::exports::wrpc_bench::bench::ping::Handler for NativeHandler {
-    async fn ping(&self) -> anyhow::Result<()> {
+    async fn ping(&self) -> std::io::Result<()> {
         Ok(())
     }
 }
 
 impl greet_bindings_wrpc::exports::wrpc_bench::bench::greet::Handler for NativeHandler {
-    async fn greet(&self, name: String) -> anyhow::Result<String> {
+    async fn greet(&self, name: String) -> std::io::Result<String> {
         Ok(format!("Hello, {name}"))
     }
 }
@@ -255,33 +255,33 @@ impl WasmHandler {
 }
 
 impl ping_bindings_wrpc::exports::wrpc_bench::bench::ping::Handler for WasmHandler {
-    async fn ping(&self) -> anyhow::Result<()> {
+    async fn ping(&self) -> std::io::Result<()> {
         let mut store = self.new_store();
         let ping = self
             .ping_pre
             .instantiate_async(&mut store)
             .await
-            .map_err(anyhow::Error::from)?;
+            .map_err(std::io::Error::other)?;
         ping.wrpc_bench_bench_ping()
             .call_ping(&mut store)
             .await
-            .map_err(anyhow::Error::from)
+            .map_err(std::io::Error::other)
     }
 }
 
 impl greet_bindings_wrpc::exports::wrpc_bench::bench::greet::Handler for WasmHandler {
-    async fn greet(&self, name: String) -> anyhow::Result<String> {
+    async fn greet(&self, name: String) -> std::io::Result<String> {
         let mut store = self.new_store();
         let greet = self
             .greet_pre
             .instantiate_async(&mut store)
             .await
-            .map_err(anyhow::Error::from)?;
+            .map_err(std::io::Error::other)?;
         greet
             .wrpc_bench_bench_greet()
             .call_greet(&mut store, &name)
             .await
-            .map_err(anyhow::Error::from)
+            .map_err(std::io::Error::other)
     }
 }
 

@@ -10,7 +10,7 @@ impl Handler for Component {
     async fn take_then_drop(
         &self,
         x: Pin<Box<dyn Future<Output = String> + Send>>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    ) -> ::std::io::Result<()> {
         drop(x);
         Ok(())
     }
@@ -18,7 +18,7 @@ impl Handler for Component {
     async fn read_and_drop(
         &self,
         x: Pin<Box<dyn Future<Output = String> + Send>>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    ) -> ::std::io::Result<()> {
         let _ = x.await;
         Ok(())
     }

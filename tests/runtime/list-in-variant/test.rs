@@ -7,7 +7,7 @@ impl crate::server::exports::test::list_in_variant::to_test::Handler for Compone
     async fn list_in_option(
         &self,
         data: Option<Vec<String>>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<String> {
+    ) -> ::std::io::Result<String> {
         Ok(match data {
             Some(list) => list.join(","),
             None => "none".to_string(),
@@ -17,7 +17,7 @@ impl crate::server::exports::test::list_in_variant::to_test::Handler for Compone
     async fn list_in_variant(
         &self,
         data: PayloadOrEmpty,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<String> {
+    ) -> ::std::io::Result<String> {
         Ok(match data {
             PayloadOrEmpty::WithData(list) => list.join(","),
             PayloadOrEmpty::Empty => "empty".to_string(),
@@ -27,7 +27,7 @@ impl crate::server::exports::test::list_in_variant::to_test::Handler for Compone
     async fn list_in_result(
         &self,
         data: Result<Vec<String>, String>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<String> {
+    ) -> ::std::io::Result<String> {
         Ok(match data {
             Ok(list) => list.join(","),
             Err(e) => format!("err:{e}"),
@@ -37,7 +37,7 @@ impl crate::server::exports::test::list_in_variant::to_test::Handler for Compone
     async fn list_in_option_with_return(
         &self,
         data: Option<Vec<String>>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<Summary> {
+    ) -> ::std::io::Result<Summary> {
         Ok(match data {
             Some(list) => Summary {
                 count: list.len() as u32,
@@ -53,7 +53,7 @@ impl crate::server::exports::test::list_in_variant::to_test::Handler for Compone
     async fn top_level_list(
         &self,
         items: Vec<String>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<String> {
+    ) -> ::std::io::Result<String> {
         Ok(items.join(","))
     }
 }

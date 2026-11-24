@@ -12,7 +12,7 @@ impl Handler for Component {
     async fn read_stream(
         &self,
         x: Pin<Box<dyn Stream<Item = Bytes> + Send>>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    ) -> ::std::io::Result<()> {
         // Flatten the chunked stream into a stream of items
         let mut stream = x.flat_map(|buf| stream::iter(buf.to_vec()));
         // Read all items via StreamExt::next()

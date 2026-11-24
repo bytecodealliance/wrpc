@@ -241,7 +241,7 @@ async fn invoke_tuple() -> anyhow::Result<()> {
             codec
                 .serve(&mut srv.tx, &mut srv.rx, async |got| {
                     assert_eq!(got, params);
-                    anyhow::Ok(results.as_slice())
+                    Ok(results.as_slice())
                 })
                 .await?;
             anyhow::Ok(())

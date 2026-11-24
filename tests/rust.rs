@@ -32,7 +32,6 @@ use wrpc_test::next_invocation;
 mod sync_bindgen {
     use std::sync::{Arc, Mutex};
 
-    use anyhow::{Context as _, ensure};
     use bytes::Bytes;
     use wrpc_core::{ResourceBorrow, ResourceOwn};
 
@@ -63,8 +62,10 @@ mod sync_bindgen {
         }
     }
 
-    fn ensure_foo(handle: impl Into<Bytes>) -> anyhow::Result<()> {
-        ensure!(handle.into() == "foo", "unknown resource");
+    fn ensure_foo(handle: impl Into<Bytes>) -> std::io::Result<()> {
+        if handle.into() != "foo" {
+            return Err(std::io::Error::other("unknown resource"));
+        }
         Ok(())
     }
 
@@ -87,46 +88,48 @@ mod sync_bindgen {
             &self,
             handle: ResourceBorrow<Counter>,
             f: impl FnOnce(&mut u32) -> T,
-        ) -> anyhow::Result<T> {
+        ) -> std::io::Result<T> {
             let handle = Bytes::from(handle);
-            let i = handle.as_ref().try_into()?;
+            let i = handle.as_ref().try_into().map_err(std::io::Error::other)?;
             let i = usize::from_ne_bytes(i);
             let mut counts = self.counts.lock().unwrap();
-            let count = counts.get_mut(i).context("unknown counter")?;
+            let count = counts
+                .get_mut(i)
+                .ok_or_else(|| std::io::Error::other("unknown counter"))?;
             Ok(f(count))
         }
     }
 
     impl<F: Send + Sync + 'static> resources::HandlerFoo for Handler<F> {
-        async fn new(&self) -> anyhow::Result<ResourceOwn<Foo>> {
+        async fn new(&self) -> std::io::Result<ResourceOwn<Foo>> {
             Ok(ResourceOwn::from(Bytes::from_static(b"foo")))
         }
 
-        async fn foo(&self, v: ResourceOwn<Foo>) -> anyhow::Result<String> {
+        async fn foo(&self, v: ResourceOwn<Foo>) -> std::io::Result<String> {
             ensure_foo(v)?;
             Ok("foo".into())
         }
 
-        async fn bar(&self, self_: ResourceBorrow<Foo>) -> anyhow::Result<String> {
+        async fn bar(&self, self_: ResourceBorrow<Foo>) -> std::io::Result<String> {
             ensure_foo(self_)?;
             Ok("bar".into())
         }
     }
 
     impl<F: Send + Sync + 'static> resources::HandlerCounter for Handler<F> {
-        async fn new(&self, initial: u32) -> anyhow::Result<ResourceOwn<Counter>> {
+        async fn new(&self, initial: u32) -> std::io::Result<ResourceOwn<Counter>> {
             Ok(self.push(initial))
         }
 
         async fn clone_counter(
             &self,
             self_: ResourceBorrow<Counter>,
-        ) -> anyhow::Result<ResourceOwn<Counter>> {
+        ) -> std::io::Result<ResourceOwn<Counter>> {
             let count = self.with(self_, |count| *count)?;
             Ok(self.push(count))
         }
 
-        async fn get_count(&self, self_: ResourceBorrow<Counter>) -> anyhow::Result<u32> {
+        async fn get_count(&self, self_: ResourceBorrow<Counter>) -> std::io::Result<u32> {
             self.with(self_, |count| *count)
         }
 
@@ -134,7 +137,7 @@ mod sync_bindgen {
             &self,
             self_: ResourceBorrow<Counter>,
             num: u32,
-        ) -> anyhow::Result<()> {
+        ) -> std::io::Result<()> {
             self.with(self_, |count| *count = count.wrapping_add(num))
         }
 
@@ -142,7 +145,7 @@ mod sync_bindgen {
             &self,
             a: ResourceBorrow<Counter>,
             b: ResourceBorrow<Counter>,
-        ) -> anyhow::Result<u32> {
+        ) -> std::io::Result<u32> {
             let a = self.with(a, |count| *count)?;
             let b = self.with(b, |count| *count)?;
             Ok(a.wrapping_add(b))
@@ -150,14 +153,14 @@ mod sync_bindgen {
     }
 
     impl<F: Send + Sync + 'static> resources::Handler for Handler<F> {
-        async fn bar(&self, v: ResourceBorrow<Foo>) -> anyhow::Result<String> {
+        async fn bar(&self, v: ResourceBorrow<Foo>) -> std::io::Result<String> {
             ensure_foo(v)?;
             Ok("bar".into())
         }
     }
 
     impl<F: Send + Sync + 'static> sync_server::exports::strange::Handler for Handler<F> {
-        async fn bar(&self, v: ResourceBorrow<Foo>) -> anyhow::Result<u64> {
+        async fn bar(&self, v: ResourceBorrow<Foo>) -> std::io::Result<u64> {
             ensure_foo(v)?;
             Ok(42)
         }
@@ -168,9 +171,11 @@ mod sync_bindgen {
         F: Fn() -> Fut + Send + Sync + 'static,
         Fut: Future<Output = anyhow::Result<u32>> + Send,
     {
-        async fn ping(&self) -> anyhow::Result<String> {
-            let n = (self.count)().await?;
-            ensure!(n == 42);
+        async fn ping(&self) -> std::io::Result<String> {
+            let n = (self.count)().await.map_err(std::io::Error::other)?;
+            if n != 42 {
+                return Err(std::io::Error::other(format!("unexpected count {n}")));
+            }
             Ok("pong".into())
         }
     }
@@ -185,17 +190,17 @@ mod sync_bindgen {
     }
 
     impl<F: Send + Sync + 'static> sync::Handler for Handler<F> {
-        async fn fallible(&self, ok: bool) -> anyhow::Result<Result<bool, String>> {
+        async fn fallible(&self, ok: bool) -> std::io::Result<Result<bool, String>> {
             Ok(if ok { Ok(true) } else { Err("test".into()) })
         }
 
         async fn numbers(
             &self,
-        ) -> anyhow::Result<(u8, u16, u32, u64, i8, i16, i32, i64, f32, f64)> {
+        ) -> std::io::Result<(u8, u16, u32, u64, i8, i16, i32, i64, f32, f64)> {
             Ok((1, 2, 3, 4, 5, 6, 7, 8, 9., 10.))
         }
 
-        async fn with_flags(&self, a: bool, b: bool, c: bool) -> anyhow::Result<Abc> {
+        async fn with_flags(&self, a: bool, b: bool, c: bool) -> std::io::Result<Abc> {
             let mut v = Abc::empty();
             v.set(Abc::A, a);
             v.set(Abc::B, b);
@@ -203,11 +208,11 @@ mod sync_bindgen {
             Ok(v)
         }
 
-        async fn with_variant_option(&self, ok: bool) -> anyhow::Result<Option<Var>> {
+        async fn with_variant_option(&self, ok: bool) -> std::io::Result<Option<Var>> {
             Ok(ok.then(|| Var::Var(rec("bar"))))
         }
 
-        async fn with_variant_list(&self) -> anyhow::Result<Vec<Var>> {
+        async fn with_variant_list(&self) -> std::io::Result<Vec<Var>> {
             Ok(vec![
                 Var::Empty,
                 Var::Var(rec("foo")),
@@ -218,23 +223,23 @@ mod sync_bindgen {
             ])
         }
 
-        async fn with_record(&self) -> anyhow::Result<Rec> {
+        async fn with_record(&self) -> std::io::Result<Rec> {
             Ok(rec("foo"))
         }
 
-        async fn with_record_list(&self, n: u8) -> anyhow::Result<Vec<Rec>> {
+        async fn with_record_list(&self, n: u8) -> std::io::Result<Vec<Rec>> {
             Ok((0..n).map(|i| rec(i.to_string())).collect())
         }
 
-        async fn with_record_tuple(&self) -> anyhow::Result<(Rec, Rec)> {
+        async fn with_record_tuple(&self) -> std::io::Result<(Rec, Rec)> {
             Ok((rec("0"), rec("1")))
         }
 
-        async fn with_enum(&self) -> anyhow::Result<Foobar> {
+        async fn with_enum(&self) -> std::io::Result<Foobar> {
             Ok(Foobar::Bar)
         }
 
-        async fn identity_char(&self, c: char) -> anyhow::Result<char> {
+        async fn identity_char(&self, c: char) -> std::io::Result<char> {
             Ok(c)
         }
 
@@ -242,18 +247,18 @@ mod sync_bindgen {
             &self,
             a: Option<Bytes>,
             b: Option<Vec<String>>,
-        ) -> anyhow::Result<(Option<Bytes>, Option<Vec<String>>)> {
+        ) -> std::io::Result<(Option<Bytes>, Option<Vec<String>>)> {
             Ok((a, b))
         }
     }
 
     impl<F: Send + Sync + 'static> sync_server::exports::foo::Handler for Handler<F> {
-        async fn f(&self, x: String) -> anyhow::Result<u32> {
+        async fn f(&self, x: String) -> std::io::Result<u32> {
             assert_eq!(x, "f");
             Ok(42)
         }
 
-        async fn foo(&self, x: String) -> anyhow::Result<()> {
+        async fn foo(&self, x: String) -> std::io::Result<()> {
             assert_eq!(x, "foo");
             Ok(())
         }
@@ -338,7 +343,7 @@ mod async_bindgen {
     impl async_::Handler for Handler {
         async fn with_streams(
             &self,
-        ) -> anyhow::Result<(
+        ) -> std::io::Result<(
             BoxStream<'static, Bytes>,
             BoxStream<'static, Vec<Vec<String>>>,
         )> {
@@ -355,7 +360,7 @@ mod async_bindgen {
             &self,
             x: Something,
             s: BoxStream<'static, Bytes>,
-        ) -> anyhow::Result<BoxFuture<'static, BoxStream<'static, Bytes>>> {
+        ) -> std::io::Result<BoxFuture<'static, BoxStream<'static, Bytes>>> {
             assert_eq!(x.foo, "bar");
             Ok(Box::pin(async { s }))
         }
@@ -366,7 +371,7 @@ mod async_bindgen {
                 'static,
                 BoxFuture<'static, BoxFuture<'static, BoxStream<'static, Vec<String>>>>,
             >,
-        ) -> anyhow::Result<
+        ) -> std::io::Result<
             BoxFuture<
                 'static,
                 BoxFuture<'static, BoxFuture<'static, BoxStream<'static, Vec<String>>>>,
@@ -378,7 +383,7 @@ mod async_bindgen {
         async fn identity_future(
             &self,
             v: BoxFuture<'static, ()>,
-        ) -> anyhow::Result<BoxFuture<'static, ()>> {
+        ) -> std::io::Result<BoxFuture<'static, ()>> {
             Ok(v)
         }
 
@@ -387,7 +392,7 @@ mod async_bindgen {
             o: Option<BoxFuture<'static, ()>>,
             r: Result<BoxStream<'static, Bytes>, BoxFuture<'static, u32>>,
             v: AsyncCase,
-        ) -> anyhow::Result<(
+        ) -> std::io::Result<(
             Option<BoxFuture<'static, ()>>,
             Result<BoxStream<'static, Bytes>, BoxFuture<'static, u32>>,
             AsyncCase,
@@ -567,16 +572,18 @@ where
             let mut lis = Listener::new(tx, rx);
             for _ in 0..2 {
                 let srv = next_invocation(&mut lis, "test", "sync").await?;
-                serve::<SyncValues, SyncValues, _, _, _>(srv, async |params| {
+                serve::<SyncValues, SyncValues, _, _>(srv, async |params| {
                     assert_eq!(params, sync_values());
-                    anyhow::Ok(sync_values())
+                    Ok(sync_values())
                 })
                 .await?;
             }
             let srv = next_invocation(&mut lis, "test", "async").await?;
-            serve::<AsyncValues, AsyncValues, _, _, _>(srv, async |params| {
-                assert_async_values(params, future::ready(Ok(()))).await?;
-                anyhow::Ok(async_values())
+            serve::<AsyncValues, AsyncValues, _, _>(srv, async |params| {
+                assert_async_values(params, future::ready(Ok(())))
+                    .await
+                    .map_err(std::io::Error::other)?;
+                Ok(async_values())
             })
             .await?;
             let next = lis.accept().await?;
@@ -939,17 +946,19 @@ async fn rust_http_dynamic() -> anyhow::Result<()> {
         let (Header { instance, name }, srv) = wrpc_http::accept(req.into_body()).await?;
         match (instance.as_str(), name.as_str()) {
             ("test", "sync") => {
-                let res = serve::<SyncValues, SyncValues, _, _, _>(srv, async |params| {
+                let res = serve::<SyncValues, SyncValues, _, _>(srv, async |params| {
                     assert_eq!(params, sync_values());
-                    anyhow::Ok(sync_values())
+                    Ok(sync_values())
                 })
                 .await?;
                 Ok(res)
             }
             ("test", "async") => {
-                let res = serve::<AsyncValues, AsyncValues, _, _, _>(srv, |params| async move {
-                    assert_async_values(params, future::ready(Ok(()))).await?;
-                    anyhow::Ok(async_values())
+                let res = serve::<AsyncValues, AsyncValues, _, _>(srv, |params| async move {
+                    assert_async_values(params, future::ready(Ok(())))
+                        .await
+                        .map_err(std::io::Error::other)?;
+                    std::io::Result::Ok(async_values())
                 })
                 .await?;
                 Ok(res)
@@ -1025,9 +1034,9 @@ async fn assert_oneshot(
             let srv = next_invocation(&mut lis, "foo", "bar")
                 .await
                 .expect("failed to read invocation header");
-            serve::<(u32,), (&str,), _, _, _>(srv, async |params| {
+            serve::<(u32,), (&str,), _, _>(srv, async |params| {
                 assert_eq!(params, (42,));
-                anyhow::Ok(("test",))
+                Ok(("test",))
             })
             .await
             .expect("failed to serve invocation");
@@ -1073,7 +1082,7 @@ async fn rust_oneshot_no_params() -> anyhow::Result<()> {
                 let srv = next_invocation(&mut lis, "foo", "bar")
                     .await
                     .expect("failed to read invocation header");
-                serve::<(), (&str,), _, _, _>(srv, async |()| anyhow::Ok(("test",)))
+                serve::<(), (&str,), _, _>(srv, async |()| Ok(("test",)))
                     .await
                     .expect("failed to serve invocation");
             }
@@ -1134,8 +1143,10 @@ async fn rust_serve_errors() -> anyhow::Result<()> {
         let (rx, tx) = split(srv);
         let mut lis = Listener::new(tx, rx);
         let srv = next_invocation(&mut lis, "foo", "bar").await?;
-        let res = serve::<(), (), _, _, _>(srv, async |()| {
-            ensure!(!fail, "foo");
+        let res = serve::<(), (), _, _>(srv, async |()| {
+            if fail {
+                return Err(std::io::Error::other("foo"));
+            }
             Ok(())
         })
         .await;
@@ -1154,16 +1165,13 @@ async fn rust_serve_errors() -> anyhow::Result<()> {
     let (rx, tx) = split(srv);
     let mut lis = Listener::new(tx, rx);
     let srv = next_invocation(&mut lis, "foo", "bar").await?;
-    let res = serve::<(BoxStream<'static, Bytes>,), (), _, _, _>(srv, async |(s,)| {
+    let res = serve::<(BoxStream<'static, Bytes>,), (), _, _>(srv, async |(s,)| {
         drop(s);
         future::pending().await
     })
     .await;
     let err = res.err().context("serving should have failed")?;
-    ensure!(
-        matches!(err, ServeError::<anyhow::Error>::Unread),
-        "{err:?}"
-    );
+    ensure!(matches!(err, ServeError::Unread), "{err:?}");
     Ok(())
 }
 
@@ -1207,7 +1215,7 @@ async fn rust_reuse_streams() -> anyhow::Result<()> {
                     bail!("stream ended");
                 };
                 ensure!(instance == "foo" && name == "bar");
-                serve::<(u32,), (u32,), _, _, _>(srv, async |(n,)| anyhow::Ok((n + 1,))).await?;
+                serve::<(u32,), (u32,), _, _>(srv, async |(n,)| Ok((n + 1,))).await?;
             }
             anyhow::Ok(())
         },
@@ -1305,11 +1313,9 @@ async fn rust_oneshot_raw_strings_invalid_utf8() -> anyhow::Result<()> {
             let srv = next_invocation(&mut lis, "wrpc-test:raw-strings/strings", "bar")
                 .await
                 .expect("failed to read invocation header");
-            serve::<(), (Bytes,), _, _, _>(srv, async |()| {
-                anyhow::Ok((Bytes::from_static(b"\xff"),))
-            })
-            .await
-            .expect("failed to serve invocation");
+            serve::<(), (Bytes,), _, _>(srv, async |()| Ok((Bytes::from_static(b"\xff"),)))
+                .await
+                .expect("failed to serve invocation");
         }
     );
     Ok(())
@@ -1350,11 +1356,11 @@ async fn rust_oneshot_raw_strings_invalid_utf8_result() -> anyhow::Result<()> {
     struct Handler;
 
     impl bindings::exports::wrpc_test::raw_strings::strings::Handler for Handler {
-        async fn bar(&self) -> anyhow::Result<Vec<u8>> {
+        async fn bar(&self) -> std::io::Result<Vec<u8>> {
             Ok(b"\xff".to_vec())
         }
 
-        async fn baz(&self) -> anyhow::Result<Rec> {
+        async fn baz(&self) -> std::io::Result<Rec> {
             Ok(Rec {
                 s: b"\xff".to_vec(),
                 l: Vec::default(),
@@ -1364,7 +1370,7 @@ async fn rust_oneshot_raw_strings_invalid_utf8_result() -> anyhow::Result<()> {
             })
         }
 
-        async fn qux(&self) -> anyhow::Result<Var> {
+        async fn qux(&self) -> std::io::Result<Var> {
             Ok(Var::S(b"\xff".to_vec()))
         }
     }
@@ -1421,7 +1427,7 @@ async fn rust_oneshot_borrowed() -> anyhow::Result<()> {
     struct Handler;
 
     impl bindings::Handler for Handler {
-        async fn greet(&self, name: String) -> anyhow::Result<String> {
+        async fn greet(&self, name: String) -> std::io::Result<String> {
             Ok(format!("Hello, {name}"))
         }
     }
@@ -1492,7 +1498,7 @@ async fn rust_bindgen_not_send() -> anyhow::Result<()> {
     struct Handler;
 
     impl bindings::exports::wrpc_test::not_send::greeter::Handler for Handler {
-        async fn greet(&self, name: BoxFuture<'static, String>) -> anyhow::Result<String> {
+        async fn greet(&self, name: BoxFuture<'static, String>) -> std::io::Result<String> {
             let name = name.await;
             Ok(format!("Hello, {name}"))
         }
@@ -1558,13 +1564,13 @@ async fn rust_bindgen_instance_names() -> anyhow::Result<()> {
     struct Handler;
 
     impl bindings::exports::wrpc_test::instance_names::iface::Handler for Handler {
-        async fn f(&self) -> anyhow::Result<()> {
+        async fn f(&self) -> std::io::Result<()> {
             Ok(())
         }
     }
 
     impl bindings::exports::foo::Handler for Handler {
-        async fn f(&self) -> anyhow::Result<()> {
+        async fn f(&self) -> std::io::Result<()> {
             Ok(())
         }
     }

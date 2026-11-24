@@ -34,7 +34,7 @@ type BoxBody = UnsyncBoxBody<Bytes, std::io::Error>;
 
 fn service<F, Fut>(
     f: F,
-    tx: mpsc::UnboundedSender<Result<(), ServeError<anyhow::Error>>>,
+    tx: mpsc::UnboundedSender<Result<(), ServeError>>,
 ) -> impl Service<
     http::Request<Incoming>,
     Response = http::Response<BoxBody>,
@@ -45,9 +45,7 @@ fn service<F, Fut>(
 + 'static
 where
     F: Fn(Header, IncomingRequest<Incoming>) -> Fut + Clone + Send + Sync + 'static,
-    Fut: Future<Output = Result<http::Response<BoxBody>, ServeError<anyhow::Error>>>
-        + Send
-        + 'static,
+    Fut: Future<Output = Result<http::Response<BoxBody>, ServeError>> + Send + 'static,
 {
     service_fn(move |req: http::Request<Incoming>| {
         let f = f.clone();
@@ -77,13 +75,11 @@ async fn connect<F, Fut>(
     f: F,
 ) -> anyhow::Result<(
     SendRequest<BoxBody>,
-    mpsc::UnboundedReceiver<Result<(), ServeError<anyhow::Error>>>,
+    mpsc::UnboundedReceiver<Result<(), ServeError>>,
 )>
 where
     F: Fn(Header, IncomingRequest<Incoming>) -> Fut + Clone + Send + Sync + 'static,
-    Fut: Future<Output = Result<http::Response<BoxBody>, ServeError<anyhow::Error>>>
-        + Send
-        + 'static,
+    Fut: Future<Output = Result<http::Response<BoxBody>, ServeError>> + Send + 'static,
 {
     let (tx, results) = mpsc::unbounded();
     let (clt, srv) = duplex(65536);
@@ -110,8 +106,10 @@ async fn http2() -> anyhow::Result<()> {
         FrameEncoder.encode(FrameRef { path, data: b"" }, &mut buf)?;
         buf.extend_from_slice(&baz);
         let (mut sender, mut results) = connect(|Header { name, .. }, req| {
-            serve::<(), (), _, _, _>(req, async move |()| {
-                ensure!(name == "baz", "unexpected `{name}`");
+            serve::<(), (), _, _>(req, async move |()| {
+                if name != "baz" {
+                    return Err(std::io::Error::other(format!("unexpected `{name}`")));
+                }
                 Ok(())
             })
         })
@@ -139,9 +137,9 @@ async fn http2() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn unread_params() -> anyhow::Result<()> {
     let (mut sender, mut results) = connect(|_, req| {
-        serve::<(BoxStream<'static, Bytes>,), (), _, _, _>(req, async |(s,)| {
+        serve::<(BoxStream<'static, Bytes>,), (), _, _>(req, async |(s,)| {
             drop(s);
-            anyhow::Ok(())
+            Ok(())
         })
     })
     .await?;
@@ -186,12 +184,14 @@ async fn peer_cancel() -> anyhow::Result<()> {
             if header.name != "stream" {
                 return wrpc_test::serve_http_invocation(header, req)
                     .await
-                    .map_err(ServeError::Handler);
+                    .map_err(|err| ServeError::Handler(std::io::Error::other(err)));
             }
             let _done = done;
-            serve::<(BoxStream<'static, Bytes>,), (), _, _, _>(req, async |(_s,)| {
-                started_tx.unbounded_send(())?;
-                future::pending::<anyhow::Result<()>>().await
+            serve::<(BoxStream<'static, Bytes>,), (), _, _>(req, async |(_s,)| {
+                started_tx
+                    .unbounded_send(())
+                    .map_err(std::io::Error::other)?;
+                future::pending().await
             })
             .await
         }
@@ -249,8 +249,7 @@ async fn response_parts() -> anyhow::Result<()> {
             headers.insert("foo", HeaderValue::from_static("bar"));
             headers.insert("req-content-type", parts.headers[CONTENT_TYPE].clone());
             let res =
-                serve::<(), _, _, _, _>(req, async |()| anyhow::Ok((Bytes::from_static(b"baz"),)))
-                    .await?;
+                serve::<(), _, _, _>(req, async |()| Ok((Bytes::from_static(b"baz"),))).await?;
             Ok(res)
         })
         .await
@@ -304,7 +303,7 @@ async fn buffered() -> anyhow::Result<()> {
             ensure!(size == u64::try_from(body.len()).ok());
             let (Header { instance, name }, srv) = wrpc_http::accept(Full::new(body)).await?;
             ensure!(instance == "foo" && name == "bar");
-            let res = serve::<Bytes, _, _, _, _>(srv, async |params| anyhow::Ok(params)).await?;
+            let res = serve::<Bytes, _, _, _>(srv, async |params| Ok(params)).await?;
             let (res, body) = res.into_parts();
             let body = body.collect().await?;
             ensure!(parts.headers[CONTENT_TYPE] == res.headers[CONTENT_TYPE]);
@@ -338,7 +337,7 @@ async fn local() -> anyhow::Result<()> {
                         <(String,) as Encode>::Encoder,
                         <(LocalBoxFuture<'static, String>,) as Decode>::Decoder,
                     >::default(),
-                    async |(greeting,)| anyhow::Ok((format!("{}, {name}", greeting.await),)),
+                    async |(greeting,)| Ok((format!("{}, {name}", greeting.await),)),
                 )
                 .await?;
             let (res, body) = res.into_parts();
@@ -359,7 +358,7 @@ async fn params_error() -> anyhow::Result<()> {
     use hyper::server::conn::http1::Builder;
 
     async fn assert_params_error<Fut>(
-        mut results: mpsc::UnboundedReceiver<Result<(), ServeError<anyhow::Error>>>,
+        mut results: mpsc::UnboundedReceiver<Result<(), ServeError>>,
         send: impl FnOnce(http::Request<BoxBody>) -> Fut,
     ) -> anyhow::Result<()>
     where
@@ -387,9 +386,9 @@ async fn params_error() -> anyhow::Result<()> {
     }
 
     let f = |_, req| {
-        serve::<(BoxFuture<'static, String>,), (), _, _, _>(req, async |(s,)| {
+        serve::<(BoxFuture<'static, String>,), (), _, _>(req, async |(s,)| {
             spawn(s);
-            anyhow::Ok(())
+            Ok(())
         })
     };
 
@@ -409,9 +408,9 @@ async fn params_error() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn drop_invocation() -> anyhow::Result<()> {
     let (mut sender, mut results) = connect(|_, req| {
-        serve::<(BoxStream<'static, Bytes>,), (), _, _, _>(req, async |(s,)| {
+        serve::<(BoxStream<'static, Bytes>,), (), _, _>(req, async |(s,)| {
             spawn(s.count());
-            anyhow::Ok(())
+            Ok(())
         })
     })
     .await?;
@@ -443,7 +442,7 @@ async fn drop_invocation() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn echo() -> anyhow::Result<()> {
     let (mut sender, ..) = connect(|_, req| {
-        serve::<(BoxStream<'static, Bytes>,), _, _, _, _>(req, async |(s,)| anyhow::Ok((s,)))
+        serve::<(BoxStream<'static, Bytes>,), _, _, _>(req, async |(s,)| Ok((s,)))
     })
     .await?;
     let (tx, rx) = mpsc::unbounded();

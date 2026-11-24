@@ -1,4 +1,3 @@
-use core::convert::Infallible;
 use core::error::Error;
 
 use http_body::Body;
@@ -10,7 +9,7 @@ pub async fn serve<T>(
     req: IncomingRequest<T>,
     codec: Codec<TupleEncoder, TupleDecoder>,
     f: impl AsyncFnOnce(Vec<Val>) -> Vec<Val>,
-) -> Result<(), ServeError<Infallible>>
+) -> Result<(), ServeError>
 where
     T: Body<Error: Into<Box<dyn Error + Send + Sync>>> + Unpin,
 {

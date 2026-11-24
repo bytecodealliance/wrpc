@@ -19,7 +19,7 @@ impl Handler for Component {
     async fn test(
         &self,
         a: Vec<Foo>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<
+    ) -> ::std::io::Result<
         Vec<::wit_bindgen_wrpc::wrpc_core::ResourceOwn<Thing>>,
     > {
         Ok(a
@@ -36,7 +36,7 @@ impl HandlerThing for Component {
     async fn new(
         &self,
         s: String,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<
+    ) -> ::std::io::Result<
         ::wit_bindgen_wrpc::wrpc_core::ResourceOwn<Thing>,
     > {
         Ok(handle_from(&format!("{s} new")))
@@ -45,7 +45,7 @@ impl HandlerThing for Component {
     async fn get(
         &self,
         self_: ::wit_bindgen_wrpc::wrpc_core::ResourceBorrow<Thing>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<String> {
+    ) -> ::std::io::Result<String> {
         let contents = contents_of(self_.as_ref());
         Ok(format!("{contents} get"))
     }

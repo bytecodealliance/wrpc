@@ -15,7 +15,7 @@ impl lists::Handler for Component {
     async fn foo(
         &self,
         list: Vec<Vec<String>>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<Vec<Vec<String>>> {
+    ) -> ::std::io::Result<Vec<Vec<String>>> {
         Ok(list)
     }
 }
@@ -24,7 +24,7 @@ impl thing_in::Handler for Component {
     async fn bar(
         &self,
         _value: thing_in::Thing,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    ) -> ::std::io::Result<()> {
         Ok(())
     }
 }
@@ -33,7 +33,7 @@ impl thing_in_and_out::Handler for Component {
     async fn baz(
         &self,
         value: thing_in_and_out::Thing,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<thing_in_and_out::Thing> {
+    ) -> ::std::io::Result<thing_in_and_out::Thing> {
         Ok(value)
     }
 }
@@ -42,7 +42,7 @@ impl both_list_and_resource::Handler for Component {
     async fn list_and_resource(
         &self,
         value: both_list_and_resource::Thing,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    ) -> ::std::io::Result<()> {
         let idx: &[u8] = value.b.as_ref();
         let idx: [u8; 4] = idx.try_into()?;
         let idx = u32::from_le_bytes(idx);
@@ -56,7 +56,7 @@ impl both_list_and_resource::HandlerTheResource for Component {
     async fn new(
         &self,
         list: Vec<String>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<both_list_and_resource::TheResource>> {
+    ) -> ::std::io::Result<ResourceOwn<both_list_and_resource::TheResource>> {
         let mut resources = RESOURCES.lock().unwrap();
         let idx = u32::try_from(resources.len())?;
         resources.push(list);

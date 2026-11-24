@@ -14,14 +14,14 @@ impl Handler for Component {
     async fn set(
         &self,
         future: Pin<Box<dyn Future<Output = ()> + Send>>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    ) -> ::std::io::Result<()> {
         *SLOT.lock().unwrap() = Some(future);
         Ok(())
     }
 
     async fn get(
         &self,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<Pin<Box<dyn Future<Output = ()> + Send>>> {
+    ) -> ::std::io::Result<Pin<Box<dyn Future<Output = ()> + Send>>> {
         Ok(SLOT.lock().unwrap().take().unwrap())
     }
 }

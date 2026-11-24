@@ -8,7 +8,7 @@ impl e1::Handler for Component {
     async fn a(
         &self,
         f: e1::Foo,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<
+    ) -> ::std::io::Result<
         Vec<::wit_bindgen_wrpc::wrpc_core::ResourceOwn<e1::X>>,
     > {
         Ok(vec![f.x])
@@ -19,7 +19,7 @@ impl e1::HandlerX for Component {
     async fn new(
         &self,
         v: u32,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<
+    ) -> ::std::io::Result<
         ::wit_bindgen_wrpc::wrpc_core::ResourceOwn<e1::X>,
     > {
         Ok(::wit_bindgen_wrpc::wrpc_core::ResourceOwn::from(
@@ -34,7 +34,7 @@ impl e2::Handler for Component {
         f: e2::Foo,
         g: e2::Bar,
         _h: ::wit_bindgen_wrpc::wrpc_core::ResourceBorrow<e2::Y>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<
+    ) -> ::std::io::Result<
         Vec<::wit_bindgen_wrpc::wrpc_core::ResourceOwn<e2::Y>>,
     > {
         Ok(vec![f.x, g.x])

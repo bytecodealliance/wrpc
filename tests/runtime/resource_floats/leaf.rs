@@ -25,14 +25,14 @@ impl GuestFloat for Component {
     async fn new(
         &self,
         v: f64,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<ImportFloat1>> {
+    ) -> ::std::io::Result<ResourceOwn<ImportFloat1>> {
         Ok(my_float(v + 2.0))
     }
 
     async fn get(
         &self,
         self_: ResourceBorrow<ImportFloat1>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<f64> {
+    ) -> ::std::io::Result<f64> {
         Ok(val(self_.as_ref()) + 4.0)
     }
 
@@ -40,7 +40,7 @@ impl GuestFloat for Component {
         &self,
         a: ResourceOwn<ImportFloat1>,
         b: f64,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<ImportFloat1>> {
+    ) -> ::std::io::Result<ResourceOwn<ImportFloat1>> {
         GuestFloat::new(self, val(a.as_ref()) + b + 6.0).await
     }
 }
@@ -51,14 +51,14 @@ impl GuestFloat2 for Component {
     async fn new(
         &self,
         v: f64,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<Float2>> {
+    ) -> ::std::io::Result<ResourceOwn<Float2>> {
         Ok(my_float(v + 1.0))
     }
 
     async fn get(
         &self,
         self_: ResourceBorrow<Float2>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<f64> {
+    ) -> ::std::io::Result<f64> {
         Ok(val(self_.as_ref()) + 3.0)
     }
 }

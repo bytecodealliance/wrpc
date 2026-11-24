@@ -6,7 +6,7 @@ use crate::server::exports::exports::Handler;
 pub struct Component(pub crate::Client);
 
 impl Handler for Component {
-    async fn bar(&self) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    async fn bar(&self) -> ::std::io::Result<()> {
         Ok(())
     }
 }

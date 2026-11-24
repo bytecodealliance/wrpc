@@ -12,9 +12,9 @@ impl Handler for Component {
     async fn toplevel_export(
         &self,
         input: ResourceOwn<Thing>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<Thing>> {
+    ) -> ::std::io::Result<ResourceOwn<Thing>> {
         let clt = self.0.connect().await?;
-        toplevel_import(clt, &input).await
+        toplevel_import(clt, &input).await.map_err(std::io::Error::other)
     }
 }
 
@@ -24,19 +24,19 @@ impl HandlerThing for Component {
     async fn new(
         &self,
         v: u32,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<ExportThing>> {
+    ) -> ::std::io::Result<ResourceOwn<ExportThing>> {
         let clt = self.0.connect().await?;
-        let thing = Thing::new(clt, v + 1).await?;
+        let thing = Thing::new(clt, v + 1).await.map_err(std::io::Error::other)?;
         Ok(ResourceOwn::from(Bytes::from(thing)))
     }
 
     async fn foo(
         &self,
         self_: ResourceBorrow<ExportThing>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<u32> {
+    ) -> ::std::io::Result<u32> {
         let thing = ResourceBorrow::from(Bytes::from(self_));
         let clt = self.0.connect().await?;
-        let v = Thing::foo(clt, &thing).await?;
+        let v = Thing::foo(clt, &thing).await.map_err(std::io::Error::other)?;
         Ok(v + 2)
     }
 
@@ -44,22 +44,22 @@ impl HandlerThing for Component {
         &self,
         self_: ResourceBorrow<ExportThing>,
         v: u32,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    ) -> ::std::io::Result<()> {
         let thing = ResourceBorrow::from(Bytes::from(self_));
         let clt = self.0.connect().await?;
-        Thing::bar(clt, &thing, v + 3).await
+        Thing::bar(clt, &thing, v + 3).await.map_err(std::io::Error::other)
     }
 
     async fn baz(
         &self,
         a: ResourceOwn<ExportThing>,
         b: ResourceOwn<ExportThing>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<ExportThing>> {
+    ) -> ::std::io::Result<ResourceOwn<ExportThing>> {
         let a = ResourceOwn::from(Bytes::from(a));
         let b = ResourceOwn::from(Bytes::from(b));
         let mut clt = self.0.connect().await?;
-        let thing = Thing::baz(&mut clt, &a, &b).await?;
-        let result = Thing::foo(clt, &thing.as_borrow()).await?;
+        let thing = Thing::baz(&mut clt, &a, &b).await.map_err(std::io::Error::other)?;
+        let result = Thing::foo(clt, &thing.as_borrow()).await.map_err(std::io::Error::other)?;
         HandlerThing::new(self, result + 4).await
     }
 }

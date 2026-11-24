@@ -30,7 +30,7 @@ impl store::Handler for Handler {
     async fn open(
         &self,
         identifier: String,
-    ) -> anyhow::Result<Result<ResourceOwn<store::Bucket>, store::Error>> {
+    ) -> std::io::Result<Result<ResourceOwn<store::Bucket>, store::Error>> {
         let client = match redis::Client::open(identifier).context("failed to open Redis client") {
             Ok(client) => client,
             Err(err) => return Ok(Err(store::Error::Other(format!("{err:#}")))),
@@ -57,7 +57,7 @@ impl store::HandlerBucket for Handler {
         &self,
         bucket: ResourceBorrow<store::Bucket>,
         key: String,
-    ) -> anyhow::Result<Result<Option<Bytes>, store::Error>> {
+    ) -> std::io::Result<Result<Option<Bytes>, store::Error>> {
         let mut conn = match self.bucket(bucket).await {
             Ok(conn) => conn,
             Err(err) => return Ok(Err(err)),
@@ -78,7 +78,7 @@ impl store::HandlerBucket for Handler {
         bucket: ResourceBorrow<store::Bucket>,
         key: String,
         value: Bytes,
-    ) -> anyhow::Result<Result<(), store::Error>> {
+    ) -> std::io::Result<Result<(), store::Error>> {
         let mut conn = match self.bucket(bucket).await {
             Ok(conn) => conn,
             Err(err) => return Ok(Err(err)),
@@ -94,7 +94,7 @@ impl store::HandlerBucket for Handler {
         &self,
         bucket: ResourceBorrow<store::Bucket>,
         key: String,
-    ) -> anyhow::Result<Result<(), store::Error>> {
+    ) -> std::io::Result<Result<(), store::Error>> {
         let mut conn = match self.bucket(bucket).await {
             Ok(conn) => conn,
             Err(err) => return Ok(Err(err)),
@@ -110,7 +110,7 @@ impl store::HandlerBucket for Handler {
         &self,
         bucket: ResourceBorrow<store::Bucket>,
         key: String,
-    ) -> anyhow::Result<Result<bool, store::Error>> {
+    ) -> std::io::Result<Result<bool, store::Error>> {
         let mut conn = match self.bucket(bucket).await {
             Ok(conn) => conn,
             Err(err) => return Ok(Err(err)),
@@ -126,7 +126,7 @@ impl store::HandlerBucket for Handler {
         &self,
         bucket: ResourceBorrow<store::Bucket>,
         cursor: Option<String>,
-    ) -> anyhow::Result<Result<store::KeyResponse, store::Error>> {
+    ) -> std::io::Result<Result<store::KeyResponse, store::Error>> {
         Ok(Err(store::Error::Other("not supported".into())))
     }
 }
@@ -137,7 +137,7 @@ impl atomics::Handler for Handler {
         _bucket: ResourceBorrow<store::Bucket>,
         _key: String,
         _delta: i64,
-    ) -> anyhow::Result<Result<i64, store::Error>> {
+    ) -> std::io::Result<Result<i64, store::Error>> {
         Ok(Err(store::Error::Other("not supported".into())))
     }
 
@@ -145,7 +145,7 @@ impl atomics::Handler for Handler {
         &self,
         _cas: ResourceOwn<atomics::Cas>,
         _value: Bytes,
-    ) -> anyhow::Result<Result<(), atomics::CasError>> {
+    ) -> std::io::Result<Result<(), atomics::CasError>> {
         Ok(Err(atomics::CasError::StoreError(store::Error::Other(
             "not supported".into(),
         ))))
@@ -157,14 +157,14 @@ impl atomics::HandlerCas for Handler {
         &self,
         _bucket: ResourceBorrow<store::Bucket>,
         _key: String,
-    ) -> anyhow::Result<Result<ResourceOwn<atomics::Cas>, store::Error>> {
+    ) -> std::io::Result<Result<ResourceOwn<atomics::Cas>, store::Error>> {
         Ok(Err(store::Error::Other("not supported".into())))
     }
 
     async fn current(
         &self,
         _bucket: ResourceBorrow<atomics::Cas>,
-    ) -> anyhow::Result<Result<Option<Bytes>, store::Error>> {
+    ) -> std::io::Result<Result<Option<Bytes>, store::Error>> {
         Ok(Err(store::Error::Other("not supported".into())))
     }
 }
@@ -174,7 +174,7 @@ impl batch::Handler for Handler {
         &self,
         _bucket: ResourceBorrow<store::Bucket>,
         _keys: Vec<String>,
-    ) -> anyhow::Result<Result<Vec<Option<(String, Bytes)>>, store::Error>> {
+    ) -> std::io::Result<Result<Vec<Option<(String, Bytes)>>, store::Error>> {
         Ok(Err(store::Error::Other("not supported".into())))
     }
 
@@ -182,7 +182,7 @@ impl batch::Handler for Handler {
         &self,
         _bucket: ResourceBorrow<store::Bucket>,
         _key_values: Vec<(String, Bytes)>,
-    ) -> anyhow::Result<Result<(), store::Error>> {
+    ) -> std::io::Result<Result<(), store::Error>> {
         Ok(Err(store::Error::Other("not supported".into())))
     }
 
@@ -190,7 +190,7 @@ impl batch::Handler for Handler {
         &self,
         _bucket: ResourceBorrow<store::Bucket>,
         _keys: Vec<String>,
-    ) -> anyhow::Result<Result<(), store::Error>> {
+    ) -> std::io::Result<Result<(), store::Error>> {
         Ok(Err(store::Error::Other("not supported".into())))
     }
 }

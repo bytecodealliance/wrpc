@@ -13,7 +13,7 @@ impl Handler for Component {
     async fn cancel_before_read(
         &self,
         x: Pin<Box<dyn Future<Output = u32> + Send>>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    ) -> ::std::io::Result<()> {
         drop(x);
         Ok(())
     }
@@ -21,7 +21,7 @@ impl Handler for Component {
     async fn cancel_after_read(
         &self,
         mut x: Pin<Box<dyn Future<Output = u32> + Send>>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    ) -> ::std::io::Result<()> {
         let _ = x.as_mut().poll(&mut Context::from_waker(noop_waker_ref()));
         drop(x);
         Ok(())
@@ -31,7 +31,7 @@ impl Handler for Component {
         &self,
         mut data: Pin<Box<dyn Future<Output = u32> + Send>>,
         signal: Pin<Box<dyn Future<Output = ()> + Send>>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    ) -> ::std::io::Result<()> {
         let res = data
             .as_mut()
             .poll(&mut Context::from_waker(noop_waker_ref()));

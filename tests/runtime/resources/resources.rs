@@ -25,59 +25,59 @@ impl Handler for Component {
         &self,
         a: ResourceBorrow<Z>,
         b: ResourceBorrow<Z>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<Z>> {
+    ) -> ::std::io::Result<ResourceOwn<Z>> {
         let val = z_val(a.as_ref()) + z_val(b.as_ref());
         Ok(ResourceOwn::from(Bytes::copy_from_slice(
             &val.to_le_bytes(),
         )))
     }
 
-    async fn consume(&self, x: ResourceOwn<X>) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    async fn consume(&self, x: ResourceOwn<X>) -> ::std::io::Result<()> {
         drop(x);
         Ok(())
     }
 
-    async fn test_imports(&self) -> ::wit_bindgen_wrpc::anyhow::Result<Result<(), String>> {
+    async fn test_imports(&self) -> ::std::io::Result<Result<(), String>> {
         use crate::server::imports::*;
 
         let mut clt = self.0.connect().await?;
-        let y = Y::new(&mut clt, 10).await?;
-        let v = Y::get_a(&mut clt, &y.as_borrow()).await?;
+        let y = Y::new(&mut clt, 10).await.map_err(std::io::Error::other)?;
+        let v = Y::get_a(&mut clt, &y.as_borrow()).await.map_err(std::io::Error::other)?;
         assert_eq!(v, 10);
-        Y::set_a(&mut clt, &y.as_borrow(), 20).await?;
-        let v = Y::get_a(&mut clt, &y.as_borrow()).await?;
+        Y::set_a(&mut clt, &y.as_borrow(), 20).await.map_err(std::io::Error::other)?;
+        let v = Y::get_a(&mut clt, &y.as_borrow()).await.map_err(std::io::Error::other)?;
         assert_eq!(v, 20);
-        let y2 = Y::add(&mut clt, &y, 20).await?;
-        let v = Y::get_a(&mut clt, &y2.as_borrow()).await?;
+        let y2 = Y::add(&mut clt, &y, 20).await.map_err(std::io::Error::other)?;
+        let v = Y::get_a(&mut clt, &y2.as_borrow()).await.map_err(std::io::Error::other)?;
         assert_eq!(v, 40);
 
         // test multiple instances
-        let y1 = Y::new(&mut clt, 1).await?;
-        let y2 = Y::new(&mut clt, 2).await?;
-        let v = Y::get_a(&mut clt, &y1.as_borrow()).await?;
+        let y1 = Y::new(&mut clt, 1).await.map_err(std::io::Error::other)?;
+        let y2 = Y::new(&mut clt, 2).await.map_err(std::io::Error::other)?;
+        let v = Y::get_a(&mut clt, &y1.as_borrow()).await.map_err(std::io::Error::other)?;
         assert_eq!(v, 1);
-        let v = Y::get_a(&mut clt, &y2.as_borrow()).await?;
+        let v = Y::get_a(&mut clt, &y2.as_borrow()).await.map_err(std::io::Error::other)?;
         assert_eq!(v, 2);
-        Y::set_a(&mut clt, &y1.as_borrow(), 10).await?;
-        Y::set_a(&mut clt, &y2.as_borrow(), 20).await?;
-        let v = Y::get_a(&mut clt, &y1.as_borrow()).await?;
+        Y::set_a(&mut clt, &y1.as_borrow(), 10).await.map_err(std::io::Error::other)?;
+        Y::set_a(&mut clt, &y2.as_borrow(), 20).await.map_err(std::io::Error::other)?;
+        let v = Y::get_a(&mut clt, &y1.as_borrow()).await.map_err(std::io::Error::other)?;
         assert_eq!(v, 10);
-        let v = Y::get_a(&mut clt, &y2.as_borrow()).await?;
+        let v = Y::get_a(&mut clt, &y2.as_borrow()).await.map_err(std::io::Error::other)?;
         assert_eq!(v, 20);
-        let y3 = Y::add(&mut clt, &y1, 20).await?;
-        let y4 = Y::add(&mut clt, &y2, 30).await?;
-        let v = Y::get_a(&mut clt, &y3.as_borrow()).await?;
+        let y3 = Y::add(&mut clt, &y1, 20).await.map_err(std::io::Error::other)?;
+        let y4 = Y::add(&mut clt, &y2, 30).await.map_err(std::io::Error::other)?;
+        let v = Y::get_a(&mut clt, &y3.as_borrow()).await.map_err(std::io::Error::other)?;
         assert_eq!(v, 30);
-        let v = Y::get_a(&mut clt, &y4.as_borrow()).await?;
+        let v = Y::get_a(&mut clt, &y4.as_borrow()).await.map_err(std::io::Error::other)?;
         assert_eq!(v, 50);
         Ok(Ok(()))
     }
 }
 
 impl HandlerX for Component {
-    async fn new(&self, a: i32) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<X>> {
+    async fn new(&self, a: i32) -> ::std::io::Result<ResourceOwn<X>> {
         let mut xs = XS.lock().unwrap();
-        let idx = u32::try_from(xs.len())?;
+        let idx = u32::try_from(xs.len()).map_err(std::io::Error::other)?;
         xs.push(a);
         Ok(ResourceOwn::from(Bytes::copy_from_slice(
             &idx.to_le_bytes(),
@@ -87,7 +87,7 @@ impl HandlerX for Component {
     async fn get_a(
         &self,
         self_: ResourceBorrow<X>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<i32> {
+    ) -> ::std::io::Result<i32> {
         Ok(XS.lock().unwrap()[x_index(self_.as_ref())])
     }
 
@@ -95,7 +95,7 @@ impl HandlerX for Component {
         &self,
         self_: ResourceBorrow<X>,
         a: i32,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    ) -> ::std::io::Result<()> {
         XS.lock().unwrap()[x_index(self_.as_ref())] = a;
         Ok(())
     }
@@ -104,25 +104,25 @@ impl HandlerX for Component {
         &self,
         x: ResourceOwn<X>,
         a: i32,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<X>> {
+    ) -> ::std::io::Result<ResourceOwn<X>> {
         XS.lock().unwrap()[x_index(x.as_ref())] += a;
         Ok(x)
     }
 }
 
 impl HandlerZ for Component {
-    async fn new(&self, a: i32) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<Z>> {
+    async fn new(&self, a: i32) -> ::std::io::Result<ResourceOwn<Z>> {
         Ok(ResourceOwn::from(Bytes::copy_from_slice(&a.to_le_bytes())))
     }
 
     async fn get_a(
         &self,
         self_: ResourceBorrow<Z>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<i32> {
+    ) -> ::std::io::Result<i32> {
         Ok(z_val(self_.as_ref()))
     }
 
-    async fn num_dropped(&self) -> ::wit_bindgen_wrpc::anyhow::Result<u32> {
+    async fn num_dropped(&self) -> ::std::io::Result<u32> {
         Ok(1)
     }
 }
@@ -131,14 +131,14 @@ impl HandlerKebabCase for Component {
     async fn new(
         &self,
         a: u32,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<KebabCase>> {
+    ) -> ::std::io::Result<ResourceOwn<KebabCase>> {
         Ok(ResourceOwn::from(Bytes::copy_from_slice(&a.to_le_bytes())))
     }
 
     async fn get_a(
         &self,
         self_: ResourceBorrow<KebabCase>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<u32> {
+    ) -> ::std::io::Result<u32> {
         let bytes: &[u8] = self_.as_ref();
         Ok(u32::from_le_bytes(bytes.try_into().unwrap()))
     }
@@ -146,7 +146,7 @@ impl HandlerKebabCase for Component {
     async fn take_owned(
         &self,
         k: ResourceOwn<KebabCase>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<u32> {
+    ) -> ::std::io::Result<u32> {
         HandlerKebabCase::get_a(self, k.into()).await
     }
 }

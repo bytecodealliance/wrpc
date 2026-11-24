@@ -21,11 +21,11 @@ impl HandlerThing for Component {
     async fn new(
         &self,
         l: Bytes,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<Thing>> {
+    ) -> ::std::io::Result<ResourceOwn<Thing>> {
         let mut l = l.to_vec();
         l.extend_from_slice(" HostThing".as_bytes());
         let mut things = THINGS.lock().unwrap();
-        let idx = u32::try_from(things.len())?;
+        let idx = u32::try_from(things.len()).map_err(std::io::Error::other)?;
         things.push(l);
         Ok(ResourceOwn::from(Bytes::copy_from_slice(
             &idx.to_le_bytes(),
@@ -35,7 +35,7 @@ impl HandlerThing for Component {
     async fn foo(
         &self,
         self_: ResourceBorrow<Thing>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<Bytes> {
+    ) -> ::std::io::Result<Bytes> {
         let mut list = THINGS.lock().unwrap()[index(&self_)].clone();
         list.extend_from_slice(" HostThing.foo".as_bytes());
         Ok(list.into())
@@ -45,14 +45,14 @@ impl HandlerThing for Component {
         &self,
         self_: ResourceBorrow<Thing>,
         l: Bytes,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    ) -> ::std::io::Result<()> {
         let mut l = l.to_vec();
         l.extend_from_slice(" HostThing.bar".as_bytes());
         THINGS.lock().unwrap()[index(&self_)] = l;
         Ok(())
     }
 
-    async fn baz(&self, l: Bytes) -> ::wit_bindgen_wrpc::anyhow::Result<Bytes> {
+    async fn baz(&self, l: Bytes) -> ::std::io::Result<Bytes> {
         let mut l = l.to_vec();
         l.extend_from_slice(" HostThing.baz".as_bytes());
         Ok(l.into())

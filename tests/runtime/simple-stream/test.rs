@@ -11,7 +11,7 @@ impl Handler for Component {
     async fn read_stream(
         &self,
         x: Pin<Box<dyn Stream<Item = Vec<()>> + Send>>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    ) -> ::std::io::Result<()> {
         let mut x = x.flat_map(stream::iter);
         assert_eq!(x.by_ref().take(1).count().await, 1);
         assert_eq!(x.by_ref().take(2).count().await, 2);

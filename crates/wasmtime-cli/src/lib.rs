@@ -358,8 +358,10 @@ async fn serve_conn(
             dec: TupleDecoder::new(Arc::clone(&export.params)).with_max_len(max_len),
         };
         codec
-            .serve(&mut srv.tx, &mut srv.rx, |params| {
+            .serve(&mut srv.tx, &mut srv.rx, async |params| {
                 call(store, func, export, guest, params)
+                    .await
+                    .map_err(std::io::Error::other)
             })
             .await?;
     }

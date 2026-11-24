@@ -305,7 +305,7 @@ fn serve(
         &str,
         &str,
         &'a mut Framed<OwnedReadHalf, OwnedWriteHalf>,
-    ) -> Result<Pin<Box<dyn Future<Output = Result<(), ServeError<anyhow::Error>>> + Send + 'a>>, String>
+    ) -> Result<Pin<Box<dyn Future<Output = Result<(), ServeError>> + Send + 'a>>, String>
     + Send
     + Sync
     + 'static,
