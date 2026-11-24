@@ -141,9 +141,10 @@ struct JsWrpc {
     interfaces: HashMap<InterfaceId, ModulePath>,
     modules: Vec<(String, Module)>,
     world_module: Module,
-    /// The instances served by the world's `serve`, with the module serving
-    /// each, or `None` for the world's own functions, and the functions served.
-    exports: Vec<(String, Option<ModulePath>, Vec<String>)>,
+    /// The instances handled by the world's `handle`, with the module handling
+    /// each, or the cases handling the world's own functions, and the functions
+    /// handled.
+    exports: Vec<(String, Result<ModulePath, String>, Vec<String>)>,
 }
 
 impl JsWrpc {
@@ -299,7 +300,7 @@ fn js_ident(name: &str) -> String {
 /// The JavaScript identifier of the parameter `name`.
 fn param_ident(name: &str) -> String {
     match js_ident(name).as_str() {
-        "transport" => "transport_".to_string(),
+        "clt" => "clt_".to_string(),
         s => s.to_string(),
     }
 }
@@ -520,7 +521,7 @@ impl Gen<'_> {
             TypeDefKind::Future(Some(ty)) => format!("$t.future({})", self.js_ty(resolve, ty)),
             TypeDefKind::Future(None) => "$t.future()".to_string(),
             TypeDefKind::Stream(Some(ty)) => format!("$t.stream({})", self.js_ty(resolve, ty)),
-            TypeDefKind::Stream(None) => "$t.stream($t.tuple())".to_string(),
+            TypeDefKind::Stream(None) => "$t.stream()".to_string(),
             TypeDefKind::Type(..) | TypeDefKind::Unknown => unreachable!(),
         }
     }
@@ -649,9 +650,7 @@ impl Gen<'_> {
             TypeDefKind::Stream(Some(ty)) => {
                 format!("globalThis.AsyncIterable<{}>", self.ts_list(resolve, ty))
             }
-            TypeDefKind::Stream(None) => {
-                "globalThis.AsyncIterable<globalThis.Array<[]>>".to_string()
-            }
+            TypeDefKind::Stream(None) => "globalThis.AsyncIterable<number>".to_string(),
             TypeDefKind::Type(ty) => self.ts_ty(resolve, ty),
             TypeDefKind::Unknown => unreachable!(),
         }
@@ -782,7 +781,7 @@ impl Gen<'_> {
         let (free, resources) = Self::group(funcs);
         for func in free {
             let name = match func_name(func).as_str() {
-                s @ ("serve" | "serveInterface" | "served") if self.path == self.world => {
+                s @ ("handle" | "served") if self.path == self.world => {
                     format!("{s}_")
                 }
                 s => s.to_string(),
@@ -821,17 +820,14 @@ impl Gen<'_> {
     /// The parameter list and the TypeScript signature of the client of
     /// `func`.
     fn client_signature(&mut self, resolve: &Resolve, func: &Function) -> (String, String) {
-        let mut params = vec!["transport".to_string()];
+        let mut params = vec!["clt".to_string()];
         params.extend(func.params.iter().map(|p| param_ident(&p.name)));
         self.m.wrpc_types = true;
-        let mut ts_params = vec!["transport: $wrpc.Transport".to_string()];
+        let mut ts_params = vec!["clt: $wrpc.Invoke".to_string()];
         ts_params.extend(self.ts_params(resolve, func));
         let result = self.ts_opt_ty(resolve, func.result.as_ref());
-        let result = if Self::func_is_async(resolve, func) {
-            match func.result {
-                Some(..) => format!("{{ result: {result}; finished: globalThis.Promise<void> }}"),
-                None => "{ finished: globalThis.Promise<void> }".to_string(),
-            }
+        let result = if func.result.is_some() && Self::func_is_async(resolve, func) {
+            format!("[{result}, globalThis.Promise<void>]")
         } else {
             result
         };
@@ -864,35 +860,30 @@ impl Gen<'_> {
             Some(ty) => self.js_ty(resolve, ty),
             None => String::default(),
         };
+        let pat = if func.result.is_some() { "[$r]" } else { "" };
         let mut out = format!(
-            "{indent}const $r = await $invoke(transport, {instance:?}, {:?}, [{}], [{}], [{results}]);\n",
+            "{indent}const [{pat}, $io] = await $invoke(clt, {instance:?}, {:?}, [{}], [{}], [{results}]);\n",
             rpc_func_name(func),
             types.join(", "),
             args.join(", "),
         );
-        if Self::func_is_async(resolve, func) {
-            if func.result.is_some() {
-                uwriteln!(
-                    out,
-                    "{indent}return {{ result: $r.results[0], finished: $r.finished }};"
-                );
-            } else {
-                uwriteln!(out, "{indent}return {{ finished: $r.finished }};");
-            }
+        if func.result.is_some() && Self::func_is_async(resolve, func) {
+            uwriteln!(out, "{indent}return [$r, $io];");
         } else {
-            uwriteln!(out, "{indent}await $r.finished;");
+            uwriteln!(out, "{indent}await $io;");
             if func.result.is_some() {
-                uwriteln!(out, "{indent}return $r.results[0];");
+                uwriteln!(out, "{indent}return $r;");
             }
         }
         out
     }
 
-    /// Generate the `Handler` of `funcs` and `serveInterface`, serving their
-    /// invocations. Returns the names of the functions served.
-    fn serve_funcs(&mut self, resolve: &Resolve, funcs: &[&Function]) -> Vec<String> {
+    /// Generate the `Handler` of `funcs`. Returns the cases of a `switch` on
+    /// the function name handling their invocations and the names of the
+    /// functions handled.
+    fn serve_funcs(&mut self, resolve: &Resolve, funcs: &[&Function]) -> (String, Vec<String>) {
         if funcs.is_empty() {
-            return Vec::default();
+            return (String::default(), Vec::default());
         }
         let (free, resources) = Self::group(funcs);
         let mut cases = String::default();
@@ -922,32 +913,29 @@ impl Gen<'_> {
             self.m.dts.push_str("  };\n");
         }
         self.m.dts.push_str("}\n");
-        self.m.wrpc_types = true;
-        self.m.dts.push_str(
-            "export function serveInterface(inv: $wrpc.Invocation, handler: Handler): globalThis.Promise<void>;\n",
-        );
-        self.m
-            .js
-            .push_str("export async function serveInterface(inv, handler) {\n");
-        self.m.js.push_str("  switch (inv.func) {\n");
-        self.m.js.push_str(&cases);
-        self.m.js.push_str(
-            r"    default:
-      throw new globalThis.Error(`unknown function \`${inv.func}\` of instance \`${inv.instance}\``);
-  }
-}
-",
-        );
-        funcs
+        let served = funcs
             .iter()
             .map(|func| rpc_func_name(func).to_string())
-            .collect()
+            .collect();
+        (cases, served)
     }
 
     fn handler_signature(&mut self, resolve: &Resolve, func: &Function) -> String {
         let params = self.ts_params(resolve, func);
         let result = self.ts_opt_ty(resolve, func.result.as_ref());
-        if func.result.is_some_and(|ty| may_be_promise(resolve, ty)) {
+        if let Some(Type::Id(id)) = func.result.map(|ty| peel(resolve, ty))
+            && let TypeDefKind::Future(ty) = resolve.types[id].kind
+        {
+            self.m.wrpc_types = true;
+            let thunk = format!(
+                "$wrpc.FutureThunk<{}>",
+                self.ts_opt_ty(resolve, ty.as_ref())
+            );
+            format!(
+                "({}): {result} | {thunk} | globalThis.Promise<{thunk}>",
+                params.join(", ")
+            )
+        } else if func.result.is_some_and(|ty| may_be_promise(resolve, ty)) {
             format!("({}): {result}", params.join(", "))
         } else {
             format!(
@@ -963,32 +951,30 @@ impl Gen<'_> {
             .iter()
             .map(|p| self.js_ty(resolve, &p.ty))
             .collect();
-        uwriteln!(out, "    case {:?}: {{", rpc_func_name(func));
-        uwriteln!(
-            out,
-            "      const {{ params }} = await inv.receiveParams([{}]);",
-            params.join(", ")
-        );
-        match func.result {
+        self.m.runtime.insert("serve");
+        let params = params.join(", ");
+        let (results, f) = match func.result {
             Some(ty) => {
                 let call = if may_be_promise(resolve, ty) {
                     ""
                 } else {
                     "await "
                 };
-                let ty = self.js_ty(resolve, &ty);
-                uwriteln!(
-                    out,
-                    "      await inv.sendResults([{ty}], [{call}{handler}(...params)]);"
-                );
+                (
+                    self.js_ty(resolve, &ty),
+                    format!("async (...$p) => [{call}{handler}(...$p)]"),
+                )
             }
-            None => {
-                uwriteln!(out, "      await {handler}(...params);");
-                uwriteln!(out, "      await inv.sendResults([], []);");
-            }
-        }
-        uwriteln!(out, "      return;");
-        uwriteln!(out, "    }}");
+            None => (
+                String::default(),
+                format!("async (...$p) => {{ await {handler}(...$p); return []; }}"),
+            ),
+        };
+        uwriteln!(out, "    case {:?}:", rpc_func_name(func));
+        uwriteln!(
+            out,
+            "      return $serve(srv, [{params}], [{results}], {f});"
+        );
     }
 }
 
@@ -1078,12 +1064,22 @@ impl WorldGenerator for JsWrpc {
         let types: Vec<_> = iface.types.values().copied().collect();
         r#gen.define_types(resolve, &types);
         let funcs: Vec<_> = iface.functions.values().collect();
-        let served = r#gen.serve_funcs(resolve, &funcs);
+        let (cases, served) = r#gen.serve_funcs(resolve, &funcs);
+        if !served.is_empty() {
+            r#gen.m.wrpc_types = true;
+            r#gen.m.dts.push_str(
+                "export function handle<O>(handler: Handler, func: string, srv: $wrpc.Serve<O>): globalThis.Promise<O> | undefined;\n",
+            );
+            uwrite!(
+                r#gen.m.js,
+                "export function handle(handler, func, srv) {{\n  switch (func) {{\n{cases}  }}\n  return undefined;\n}}\n"
+            );
+        }
         let m = r#gen.m;
         self.modules.push((path.clone(), m));
         if !served.is_empty() {
             self.exports
-                .push((instance, Some(ModulePath::Local(path)), served));
+                .push((instance, Ok(ModulePath::Local(path)), served));
         }
         Ok(())
     }
@@ -1098,10 +1094,10 @@ impl WorldGenerator for JsWrpc {
         let m = mem::take(&mut self.world_module);
         let mut r#gen = self.module(self.world.clone(), m);
         let funcs: Vec<_> = funcs.iter().map(|(.., f)| *f).collect();
-        let served = r#gen.serve_funcs(resolve, &funcs);
+        let (cases, served) = r#gen.serve_funcs(resolve, &funcs);
         self.world_module = r#gen.m;
         if !served.is_empty() {
-            self.exports.push((String::default(), None, served));
+            self.exports.push((String::default(), Err(cases), served));
         }
         Ok(())
     }
@@ -1121,43 +1117,37 @@ impl WorldGenerator for JsWrpc {
         let m = mem::take(&mut self.world_module);
         let mut r#gen = self.module(self.world.clone(), m);
         if !self.exports.is_empty() {
-            r#gen.m.runtime.insert("serve");
-            let mut params = vec!["transport".to_string()];
             r#gen.m.wrpc_types = true;
-            let mut ts_params = vec!["transport: $wrpc.Transport".to_string()];
+            let mut handlers = Vec::default();
             let mut cases = String::default();
             for (i, (instance, path, ..)) in self.exports.iter().enumerate() {
-                params.push(format!("h{i}"));
-                let (handler, serve) = match path {
-                    Some(path) => {
+                match path {
+                    Ok(path) => {
                         let dep = r#gen.dep(path, true);
-                        (format!("{dep}.Handler"), format!("{dep}.serveInterface"))
+                        handlers.push(format!("{dep}.Handler"));
+                        uwrite!(
+                            cases,
+                            "    case {instance:?}:\n      return {dep}.handle(handlers[{i}], func, srv);\n"
+                        );
                     }
-                    None => ("Handler".to_string(), "serveInterface".to_string()),
-                };
-                ts_params.push(format!("h{i}: {handler}"));
-                uwrite!(
-                    cases,
-                    "      case {instance:?}:\n        await {serve}(inv, h{i});\n        break;\n"
-                );
+                    Err(funcs) => {
+                        handlers.push("Handler".to_string());
+                        let funcs: String = funcs.lines().map(|l| format!("    {l}\n")).collect();
+                        uwrite!(
+                            cases,
+                            "    case {instance:?}: {{\n      const handler = handlers[{i}];\n      switch (func) {{\n{funcs}      }}\n      return undefined;\n    }}\n"
+                        );
+                    }
+                }
             }
             uwriteln!(
                 r#gen.m.dts,
-                "export function serve({}): globalThis.Promise<void>;",
-                ts_params.join(", ")
+                "export function handle<O>(handlers: readonly [{}], instance: string, func: string, srv: $wrpc.Serve<O>): globalThis.Promise<O> | undefined;",
+                handlers.join(", ")
             );
             uwrite!(
                 r#gen.m.js,
-                "export function serve({}) {{
-  return $serve(transport, async (inv) => {{
-    switch (inv.instance) {{
-{cases}      default:
-        throw new globalThis.Error(`unknown instance \\`${{inv.instance}}\\``);
-    }}
-  }});
-}}
-",
-                params.join(", ")
+                "export function handle(handlers, instance, func, srv) {{\n  switch (instance) {{\n{cases}  }}\n  return undefined;\n}}\n"
             );
             let served: Vec<_> = self
                 .exports
@@ -1170,7 +1160,7 @@ impl WorldGenerator for JsWrpc {
                 .collect();
             uwriteln!(
                 r#gen.m.dts,
-                "/** The `[instance, function]` pairs `serve` dispatches. */\nexport const served: readonly (readonly [string, string])[];"
+                "/** The `[instance, function]` pairs `handle` handles. */\nexport const served: readonly (readonly [string, string])[];"
             );
             uwriteln!(r#gen.m.js, "export const served = [{}];", served.join(", "));
         }

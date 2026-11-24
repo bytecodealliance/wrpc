@@ -36,7 +36,7 @@ export type Bucket = globalThis.Uint8Array;
  *
  * `error::no-such-store` will be raised if the `identifier` is not recognized.
  */
-export function open(transport: $wrpc.Transport, identifier: string): globalThis.Promise<{ kind: "ok"; value: Bucket } | { kind: "error"; value: Error }>;
+export function open(clt: $wrpc.Invoke, identifier: string): globalThis.Promise<{ kind: "ok"; value: Bucket } | { kind: "error"; value: Error }>;
 export declare const Bucket: {
   /**
    * Get the value associated with the specified `key`
@@ -47,7 +47,7 @@ export declare const Bucket: {
    *
    * If any other error occurs, it returns an `Err(error)`.
    */
-  "get"(transport: $wrpc.Transport, self: Bucket, key: string): globalThis.Promise<{ kind: "ok"; value: globalThis.Uint8Array | undefined } | { kind: "error"; value: Error }>;
+  "get"(clt: $wrpc.Invoke, self: Bucket, key: string): globalThis.Promise<{ kind: "ok"; value: globalThis.Uint8Array | undefined } | { kind: "error"; value: Error }>;
   /**
    * Set the value associated with the key in the store. If the key already
    * exists in the store, it overwrites the value.
@@ -56,7 +56,7 @@ export declare const Bucket: {
    *
    * If any other error occurs, it returns an `Err(error)`.
    */
-  "set"(transport: $wrpc.Transport, self: Bucket, key: string, value: globalThis.Uint8Array): globalThis.Promise<{ kind: "ok" } | { kind: "error"; value: Error }>;
+  "set"(clt: $wrpc.Invoke, self: Bucket, key: string, value: globalThis.Uint8Array): globalThis.Promise<{ kind: "ok" } | { kind: "error"; value: Error }>;
   /**
    * Delete the key-value pair associated with the key in the store.
    *
@@ -64,7 +64,7 @@ export declare const Bucket: {
    *
    * If any other error occurs, it returns an `Err(error)`.
    */
-  "delete"(transport: $wrpc.Transport, self: Bucket, key: string): globalThis.Promise<{ kind: "ok" } | { kind: "error"; value: Error }>;
+  "delete"(clt: $wrpc.Invoke, self: Bucket, key: string): globalThis.Promise<{ kind: "ok" } | { kind: "error"; value: Error }>;
   /**
    * Check if the key exists in the store.
    *
@@ -73,7 +73,7 @@ export declare const Bucket: {
    *
    * If any other error occurs, it returns an `Err(error)`.
    */
-  "exists"(transport: $wrpc.Transport, self: Bucket, key: string): globalThis.Promise<{ kind: "ok"; value: boolean } | { kind: "error"; value: Error }>;
+  "exists"(clt: $wrpc.Invoke, self: Bucket, key: string): globalThis.Promise<{ kind: "ok"; value: boolean } | { kind: "error"; value: Error }>;
   /**
    * Get all the keys in the store with an optional cursor (for use in pagination). It
    * returns a list of keys. Please note that for most KeyValue implementations, this is a
@@ -92,5 +92,5 @@ export declare const Bucket: {
    *
    * If any error occurs, it returns an `Err(error)`.
    */
-  "listKeys"(transport: $wrpc.Transport, self: Bucket, cursor: string | undefined): globalThis.Promise<{ kind: "ok"; value: KeyResponse } | { kind: "error"; value: Error }>;
+  "listKeys"(clt: $wrpc.Invoke, self: Bucket, cursor: string | undefined): globalThis.Promise<{ kind: "ok"; value: KeyResponse } | { kind: "error"; value: Error }>;
 };

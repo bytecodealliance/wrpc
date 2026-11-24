@@ -3,35 +3,35 @@ import { invoke as $invoke, t as $t } from "@bytecodealliance/wrpc";
 
 export const Error = $t.variant({ "no-such-store": null, "access-denied": null, "other": $t.string });
 export const KeyResponse = $t.record({ "keys": $t.list($t.string), "cursor": $t.option($t.string) });
-export async function open(transport, identifier) {
-  const $r = await $invoke(transport, "wasi:keyvalue/store@0.2.0-draft2", "open", [$t.string], [identifier], [$t.result($t.own("bucket"), Error)]);
-  await $r.finished;
-  return $r.results[0];
+export async function open(clt, identifier) {
+  const [[$r], $io] = await $invoke(clt, "wasi:keyvalue/store@0.2.0-draft2", "open", [$t.string], [identifier], [$t.result($t.own("bucket"), Error)]);
+  await $io;
+  return $r;
 }
 export const Bucket = {
-  async get(transport, self, key) {
-    const $r = await $invoke(transport, "wasi:keyvalue/store@0.2.0-draft2", "bucket.get", [$t.borrow("bucket"), $t.string], [self, key], [$t.result($t.option($t.list($t.u8)), Error)]);
-    await $r.finished;
-    return $r.results[0];
+  async get(clt, self, key) {
+    const [[$r], $io] = await $invoke(clt, "wasi:keyvalue/store@0.2.0-draft2", "bucket.get", [$t.borrow("bucket"), $t.string], [self, key], [$t.result($t.option($t.list($t.u8)), Error)]);
+    await $io;
+    return $r;
   },
-  async set(transport, self, key, value) {
-    const $r = await $invoke(transport, "wasi:keyvalue/store@0.2.0-draft2", "bucket.set", [$t.borrow("bucket"), $t.string, $t.list($t.u8)], [self, key, value], [$t.result(null, Error)]);
-    await $r.finished;
-    return $r.results[0];
+  async set(clt, self, key, value) {
+    const [[$r], $io] = await $invoke(clt, "wasi:keyvalue/store@0.2.0-draft2", "bucket.set", [$t.borrow("bucket"), $t.string, $t.list($t.u8)], [self, key, value], [$t.result(null, Error)]);
+    await $io;
+    return $r;
   },
-  async delete(transport, self, key) {
-    const $r = await $invoke(transport, "wasi:keyvalue/store@0.2.0-draft2", "bucket.delete", [$t.borrow("bucket"), $t.string], [self, key], [$t.result(null, Error)]);
-    await $r.finished;
-    return $r.results[0];
+  async delete(clt, self, key) {
+    const [[$r], $io] = await $invoke(clt, "wasi:keyvalue/store@0.2.0-draft2", "bucket.delete", [$t.borrow("bucket"), $t.string], [self, key], [$t.result(null, Error)]);
+    await $io;
+    return $r;
   },
-  async exists(transport, self, key) {
-    const $r = await $invoke(transport, "wasi:keyvalue/store@0.2.0-draft2", "bucket.exists", [$t.borrow("bucket"), $t.string], [self, key], [$t.result($t.bool, Error)]);
-    await $r.finished;
-    return $r.results[0];
+  async exists(clt, self, key) {
+    const [[$r], $io] = await $invoke(clt, "wasi:keyvalue/store@0.2.0-draft2", "bucket.exists", [$t.borrow("bucket"), $t.string], [self, key], [$t.result($t.bool, Error)]);
+    await $io;
+    return $r;
   },
-  async listKeys(transport, self, cursor) {
-    const $r = await $invoke(transport, "wasi:keyvalue/store@0.2.0-draft2", "bucket.list-keys", [$t.borrow("bucket"), $t.option($t.string)], [self, cursor], [$t.result(KeyResponse, Error)]);
-    await $r.finished;
-    return $r.results[0];
+  async listKeys(clt, self, cursor) {
+    const [[$r], $io] = await $invoke(clt, "wasi:keyvalue/store@0.2.0-draft2", "bucket.list-keys", [$t.borrow("bucket"), $t.option($t.string)], [self, cursor], [$t.result(KeyResponse, Error)]);
+    await $io;
+    return $r;
   },
 };

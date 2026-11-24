@@ -49,9 +49,9 @@ export type Chunk = Value[] | TypedArray;
 
 /**
  * The JavaScript representation of a decoded component-model value. Decoded
- * `stream` values are {@link Chan}s of chunks, or `ReadableStream`s of chunks
- * if decoded by a {@link Decoder}, which can be cancelled. The chunks of a
- * `stream` without an element type are their numbers of elements.
+ * `future` values are promises and `stream` values are `ReadableStream`s of
+ * chunks, which are cancelled to stop reading them. The chunks of a `stream`
+ * without an element type are their numbers of elements.
  */
 export type Value =
   | boolean
@@ -64,7 +64,6 @@ export type Value =
   | { [field: string]: Value }
   | { kind: string; value?: Value }
   | Promise<Value>
-  | Chan<Chunk>
   | ReadableStream<Chunk | number>
   | undefined;
 
@@ -87,10 +86,15 @@ export type InputValue =
   | { [field: string]: InputValue }
   | { kind: string; value?: InputValue }
   | Promise<InputValue>
-  | (() => InputValue)
-  | AsyncIterable<Iterable<InputValue>>
+  | (() => InputValue | Promise<InputValue>)
+  | Promise<() => InputValue | Promise<InputValue>>
+  | AsyncIterable<Iterable<InputValue> | number>
+  | Iterable<Iterable<InputValue> | number>
   | null
   | undefined;
+
+/** The thunk form of a `future` value to send, called once it is transmitted. */
+export type FutureThunk<T> = () => T | Promise<T>;
 
 /**
  * A descriptor recorded by {@link decodeValue} for a pending `stream`/`future`
@@ -223,30 +227,6 @@ export class AsyncReader {
   name(max?: number): Promise<string>;
 }
 
-// ----- value.js -------------------------------------------------------------
-//
-// The low-level value codec. Pending `stream`/`future` values require the
-// session's `sink` (collected by `invoke`/`accept`); without it they throw.
-
-export function encodeValue(
-  w: Writer,
-  ty: Type,
-  v: InputValue,
-  sink?: { path: number[]; kind: "stream" | "future"; ty: Type | null; value: InputValue }[],
-  path?: number[],
-): void;
-export function decodeValue(r: Reader, ty: Type, sink?: DecodeDeferred[], path?: number[]): Value;
-/**
- * {@link decodeValue} as a resumable decoder: when `r` runs out, it yields the
- * number of bytes it needs from `r.pos` on, and continues once `r` holds them.
- */
-export function decodeSteps(
-  r: Reader,
-  ty: Type,
-  sink?: DecodeDeferred[],
-  path?: number[],
-): Generator<number, Value, void>;
-
 // ----- frame.js -------------------------------------------------------------
 
 /** The wRPC framing protocol version byte. */
@@ -292,8 +272,13 @@ export class FrameReader {
   header(options?: { maxInstanceLength?: number; maxNameLength?: number }): Promise<Header | null>;
 }
 
-/** Frames written to and read from a byte stream pair. */
-export class Framed {
+/**
+ * Frames written to and read from a byte stream pair, to invoke functions
+ * over one after another or serve an invocation over. Their owner closes or
+ * tears down the byte streams through {@link FrameWriter.writer} and
+ * {@link FrameReader.reader}; once an invocation failed, it must tear them down.
+ */
+export class Framed implements Invoke, Serve<void> {
   constructor(
     writable: WritableStream<Uint8Array>,
     readable: ReadableStream<Uint8Array>,
@@ -301,6 +286,27 @@ export class Framed {
   );
   readonly tx: FrameWriter;
   readonly rx: FrameReader;
+  /**
+   * Invoke `instance#name` with `params` using `codec`: `params` are encoded
+   * before anything is written, then the header and the parameters are sent.
+   * Resolves to the results once they are received, along with the promise
+   * of the rest of the invocation, which resolves once the pending parameters
+   * are transmitted and the pending results received. The next invocation
+   * starts once it resolved.
+   */
+  invoke<P, R>(
+    codec: Codec<P, R>,
+    instance: string,
+    name: string,
+    params: P,
+  ): Promise<[R, Promise<void>]>;
+  /**
+   * Serve the invocation, whose header was read, using `codec` by calling `f`
+   * with its parameters and transmitting the results it returns. Resolves once
+   * all pending parameters are received and all pending results transmitted.
+   * Nothing is transmitted if `f` fails.
+   */
+  serve<P, R>(codec: Codec<R, P>, f: (params: P) => R | Promise<R>): Promise<void>;
 }
 
 /** Accepts the invocations sent over a byte stream pair one after another. */
@@ -390,190 +396,118 @@ export function receive<T>(dec: Decoder<T>, rx: FrameReader): Promise<[T, Promis
 /** The error of receiving data for a pending value whose consumer was cancelled. */
 export class UnreadError extends Error {}
 
+/** The encoder of the parameters and the decoder of the results of an invocation, or vice versa. */
+export interface Codec<E, D> {
+  enc: Encoder<E>;
+  dec: Decoder<D>;
+}
+
+/** A client invoking functions, such as {@link Framed} or {@link fromFetch}. */
+export interface Invoke {
+  /**
+   * Invoke `instance#name` with `params` using `codec`, resolving to the
+   * results once they are received, along with the promise of the rest of the
+   * invocation, which resolves once the pending parameters are transmitted and
+   * the pending results received.
+   */
+  invoke<P, R>(
+    codec: Codec<P, R>,
+    instance: string,
+    name: string,
+    params: P,
+  ): Promise<[R, Promise<void>]>;
+}
+
+/**
+ * A server serving an invocation, such as {@link Framed} or
+ * {@link IncomingRequest}, resolving to `O`.
+ */
+export interface Serve<O> {
+  /** Serve the invocation using `codec` by calling `f` with its parameters. */
+  serve<P, R>(codec: Codec<R, P>, f: (params: P) => R | Promise<R>): Promise<O>;
+}
+
+// ----- rpc.js ---------------------------------------------------------------
+
+/**
+ * Invoke `instance#name` with `values` of `params` using `clt`, resolving to
+ * the values of `results` once they are received, along with the promise of
+ * the rest of the invocation.
+ */
+export function invoke(
+  clt: Invoke,
+  instance: string,
+  name: string,
+  params: Type[],
+  values: InputValue[],
+  results: Type[],
+): Promise<[Value[], Promise<void>]>;
+
+/**
+ * Serve an invocation using `srv` by calling `f` with its values of `params`
+ * and transmitting the values of `results` it returns.
+ */
+export function serve<O>(
+  srv: Serve<O>,
+  params: Type[],
+  results: Type[],
+  f: (...params: any[]) => InputValue[] | Promise<InputValue[]>,
+): Promise<O>;
+
+/**
+ * The error of serving an invocation, by the side at fault: receiving the
+ * parameters or the rest of the invocation failed (`request`), the handler
+ * cancelled a pending parameter, for which data was received (`unread`), the
+ * handler failed (`handler`), or encoding or transmitting the results failed
+ * (`response`). The error it is caused by is its `cause`.
+ */
+export class ServeError extends Error {
+  readonly kind: "request" | "unread" | "handler" | "response";
+}
+
 /** The error for a frame received on `path`, which is not pending. */
 export function errorUnknownPath(path: readonly number[]): Error;
 /** The error for data received after the end of a value. */
 export function errorDataAfterEnd(): Error;
-
-// ----- mux.js ---------------------------------------------------------------
-
-/** The error a discarded sub-stream's reader fails with. */
-export const DISCARDED: Error;
-
-/** A byte-stream transport: a duplex of `Uint8Array` chunks. */
-export interface Transport {
-  read(): Promise<Uint8Array | null | undefined>;
-  write(bytes: Uint8Array): Promise<void> | void;
-  /** Half-close the write side, communicating the end of transmit to the peer. */
-  closeWrite(): Promise<void> | void;
-  /** Tear down both directions after a failure. */
-  abort?(reason: unknown): Promise<void> | void;
-}
-
-export function fromWebStreams(duplex: {
-  readable: ReadableStream<Uint8Array>;
-  writable: WritableStream<Uint8Array>;
-}): Transport;
-
-/** A handle to one (sub-)stream of the connection's write side. */
-export class Outgoing {
-  constructor(mux: Mux, path: number[]);
-  path: number[];
-  write(data: Uint8Array): Promise<void>;
-  close(): Promise<void>;
-  index(rel: number[]): Outgoing;
-}
-
-/**
- * The framing multiplexer over a {@link Transport}. Inbound data is only
- * accepted for the sub-streams the decoded values expect: the root sub-stream
- * `[]`, and those declared with `seal` as each value carrying pending
- * `stream`/`future` values is decoded, until they are finished. Data for a
- * path that may still be declared is buffered until it is; any frame for any
- * other path, or for a closed one, fails the invocation.
- */
-export class Mux {
-  /**
-   * Aborts `transport` and throws a `TypeError` if it does not implement
-   * `closeWrite`. `master` is the reader over `transport`, which must be
-   * shared by the invocations on it, since it holds the bytes read past the
-   * previous one. Without it, `transport` carries this invocation alone, and
-   * data following it fails the invocation.
-   */
-  constructor(transport: Transport, master?: AsyncReader);
-  master: AsyncReader;
-  /**
-   * Resolves once the root and every sub-stream expected are closed and no
-   * more may be expected, or the peer ended transmit and every frame it sent
-   * was routed, and the write side was half-closed, unless the multiplexer is
-   * aborted first: then it rejects with the error it was aborted with.
-   * Without a `master`, it also waits for the peer to end transmit.
-   */
-  readonly ended: Promise<void>;
-  /** Rejects with the error the multiplexer is aborted with, once it is. */
-  readonly failed: Promise<never>;
-  writeHeader(instance: string, func: string): Promise<void>;
-  start(): void;
-  /** The reader for the expected sub-stream at `path`. */
-  incoming(path: number[]): AsyncReader;
-  /**
-   * Declare that sub-streams nested in the root may only be expected at the
-   * root `indices`, at paths at most `depth` long, so that any frame for any
-   * other path fails the invocation as soon as it arrives.
-   */
-  restrict(indices: Iterable<number>, depth: number): void;
-  /**
-   * Declare the sub-streams of the pending values in the value decoded at
-   * `path` (the root tuple, a future's value, or a stream's element, in
-   * order), with paths relative to it. Returns whether they are declared:
-   * nothing is if the value was forgotten, as discarded ones are.
-   */
-  seal(path: number[], expected: { path: number[]; nested: boolean }[]): boolean;
-  /**
-   * Declare that the sub-stream at `path` has no more data: its stream ended,
-   * or its future's value was decoded. Data of it left unread in `reader`
-   * fails the invocation.
-   */
-  finish(path: number[], reader?: AsyncReader): void;
-  /**
-   * Discard the sub-streams nested in elements `from` up to `to` of the
-   * stream at `path`.
-   */
-  discard(path: number[], from: number, to: number): void;
-  /** Call `f` once the sub-stream expected at `path` is discarded, or now if it already is. */
-  onDiscard(path: number[], f: () => void): void;
-  outgoing(path: number[]): Outgoing;
-  abort(err?: unknown): void;
-  /** Flush pending writes and half-close the write side. */
-  closeWrite(): Promise<void>;
-}
 
 // ----- http.js --------------------------------------------------------------
 
 /** The media type of wRPC request and response bodies. */
 export const MEDIA_TYPE: "application/vnd.bytecodealliance.wrpc";
 
-/** Options of {@link fromFetch}: the `fetch` request options, except for the method, body and signal. */
-export interface FetchOptions extends Omit<RequestInit, "method" | "body" | "signal"> {
+/** Options of {@link fromFetch}: the `fetch` request options, except for the method and body. */
+export interface FetchOptions extends Omit<RequestInit, "method" | "body"> {
   /** The `fetch` implementation to use, `globalThis.fetch` by default. */
   fetch?: typeof fetch;
-  /** Buffer the request body and send it once the client ends transmit. */
+  /** Buffer the request body and send it once the parameters are transmitted. */
   buffer?: boolean;
 }
 
 /**
- * A client transport for one invocation, to {@link invoke} over, sending a
- * `POST` request to `input`, with the {@link MEDIA_TYPE} unless `headers` set
- * one, and reading the body of the response, whatever its status. To act on
- * the response, wrap `fetch`.
+ * A client invoking each function with a `POST` request to `input`, with the
+ * {@link MEDIA_TYPE} unless `headers` set one, and reading the body of the
+ * response, whatever its status. To act on the response, wrap `fetch`,
+ * failing the invocation by rejecting. Once an invocation failed, its request
+ * and response bodies are torn down.
  */
-export function fromFetch(input: RequestInfo | URL, options?: FetchOptions): Transport;
+export function fromFetch(input: RequestInfo | URL, options?: FetchOptions): Invoke;
 
 /**
- * A server transport for one invocation over `request`, to {@link accept}, with
- * the response carrying the server's data, with the {@link MEDIA_TYPE}.
- */
-export function fromRequest(request: Request): { transport: Transport; response: Response };
-
-// ----- session.js -----------------------------------------------------------
-
-/**
- * `done` resolves once all asynchronous parameters and results have been
- * transmitted; `finished` once the peer has also closed every path it sent and
- * all the data it sent has been decoded, rejecting with any failure of the
- * invocation, including those after `done`. The transport carries this
- * invocation alone: `finished` also waits for the peer to end transmit, and
- * data following the invocation fails it.
- */
-export function invoke(
-  transport: Transport,
-  instance: string,
-  func: string,
-  paramTypes: Type[],
-  args: InputValue[],
-  resultTypes?: Type[],
-): Promise<{ results: Value[]; done: Promise<void>; finished: Promise<void> }>;
-
-export interface Invocation {
-  instance: string;
-  func: string;
-  mux: Mux;
-  /**
-   * Resolves once the parameters have been received, the peer has closed
-   * every path it sent, the results have been sent and all the data the peer
-   * sent has been decoded, rejecting with any failure of the invocation,
-   * including those after the parameters' `done`.
-   */
-  finished: Promise<void>;
-  /**
-   * Start reading the frames of the invocation and decode the parameters
-   * against `paramTypes`. It must be called, with `[]` for a function without
-   * parameters, for `finished` to resolve.
-   */
-  receiveParams(paramTypes: Type[]): Promise<{ params: Value[]; done: Promise<void> }>;
-  sendResults(resultTypes: Type[], values: InputValue[]): Promise<void>;
-}
-
-/**
- * Accept an invocation. The transport carries this invocation alone:
- * `finished` also waits for the peer to end transmit, and data following the
- * invocation fails it. Instance and function names longer than
- * `maxInstanceLength` and `maxNameLength` bytes, 1 KiB by default, are
- * rejected.
+ * Receive the invocation header of `request`, resolving to it along with the
+ * request to serve the invocation over.
  */
 export function accept(
-  transport: Transport,
-  options?: { maxInstanceLength?: number; maxNameLength?: number },
-): Promise<Invocation>;
+  request: Request,
+  options?: { maxDepth?: number; maxInstanceLength?: number; maxNameLength?: number },
+): Promise<[Header, IncomingRequest]>;
 
-/**
- * Serve the invocations on `transport` one after another, until the peer ends
- * transmit in place of the next one, and then half-close the write side,
- * passing each accepted invocation to `f`, which must start receiving its
- * parameters before it resolves, and reading the next one once it is finished.
- */
-export function serve(
-  transport: Transport,
-  f: (inv: Invocation) => Promise<void>,
-  options?: { maxInstanceLength?: number; maxNameLength?: number },
-): Promise<void>;
+/** A request carrying an invocation. */
+export class IncomingRequest implements Serve<Response> {
+  /**
+   * Serve the invocation using `codec` by calling `f` with its parameters,
+   * resolving to the response, with the {@link MEDIA_TYPE}, once the results
+   * are encoded. Its body transmits the pending results, while the rest of
+   * the request is received; a failure after that tears both down.
+   */
+  serve<P, R>(codec: Codec<R, P>, f: (params: P) => R | Promise<R>): Promise<Response>;
+}

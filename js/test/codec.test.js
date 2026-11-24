@@ -4,6 +4,7 @@ import { test } from "node:test";
 import * as t from "../src/types.js";
 import { FrameReader, FrameWriter, Framed, Listener } from "../src/frame.js";
 import { UnreadError, decoder, encoder, receive, transmit } from "../src/codec.js";
+import { ServeError, invoke, serve } from "../src/rpc.js";
 
 /**
  * @typedef {import("../src/index.js").Type} Type
@@ -33,32 +34,6 @@ async function collect(s) {
     else out.push(...chunk);
   }
   return out;
-}
-
-/**
- * Invoke `instance#name` over `io`, as `wrpc-core`'s `invoke` does.
- * @param {Framed} io @param {Type[]} params @param {InputValue[]} values @param {Type[]} results
- * @returns {Promise<[any[], Promise<unknown>]>}
- */
-async function invoke(io, params, values, results) {
-  await io.tx.header({ instance: "i", name: "f" });
-  const tx = transmit(encoder(t.tuple(...params)), io.tx, values);
-  const [out, rx] = await Promise.race([
-    receive(decoder(t.tuple(...results)), io.rx),
-    tx.then(() => new Promise(() => {})),
-  ]);
-  return [out, Promise.all([tx, rx])];
-}
-
-/**
- * Serve the invocation over `io`, as `wrpc-core`'s `serve` does.
- * @param {Framed} io @param {Type[]} params @param {Type[]} results
- * @param {(...params: any[]) => InputValue[] | Promise<InputValue[]>} f
- */
-async function serve(io, params, results, f) {
-  const [values, rx] = await receive(decoder(t.tuple(...params)), io.rx);
-  const tx = (async () => transmit(encoder(t.tuple(...results)), io.tx, await f(...values)))();
-  await Promise.all([rx, tx]);
 }
 
 test("frames", async () => {
@@ -159,6 +134,8 @@ test("invocations echo pending values one after another", { timeout: 1000 }, asy
   for (let i = 0; i < 2; i++) {
     const [[bytes, futs, rec, nested], done] = await invoke(
       io,
+      "i",
+      "f",
       types,
       [
         (async function* () {
@@ -188,6 +165,54 @@ test("invocations echo pending values one after another", { timeout: 1000 }, asy
   await io.tx.writer.close();
   await served;
   assert.equal((await io.rx.reader.read()).done, true);
+});
+
+test("a future is closed before the values nested in it", async () => {
+  /** @type {number[]} */
+  const written = [];
+  const tx = new FrameWriter(new WritableStream({ write: (c) => void written.push(...c) }));
+  await transmit(encoder(t.tuple(t.future(t.stream(t.u8)))), tx, [
+    [[], Uint8Array.of(1, 2), new Uint8Array()],
+  ]);
+  assert.deepEqual(written, [
+    ...frame([], "\0"),
+    ...frame([], ""),
+    ...frame([0], "\0"),
+    ...frame([0], ""),
+    ...frame([0, 0], "\x02\x01\x02"),
+    ...frame([0, 0], ""),
+  ]);
+});
+
+test("serving fails by the side at fault", { timeout: 1000 }, async () => {
+  const boom = new Error("boom");
+  const bytes = [Uint8Array.of(1), Uint8Array.of(2), Uint8Array.of(3)];
+  for (const [params, values, results, f, kind, cause] of /** @type {const} */ ([
+    [[t.u8], [1], [t.u8], () => Promise.reject(boom), "handler", boom],
+    [[t.u8], [1], [t.u8], () => [256], "response", undefined],
+    [
+      [t.stream(t.u8)],
+      [bytes],
+      [],
+      async (/** @type {ReadableStream} */ s) => {
+        await s.cancel();
+        return [];
+      },
+      "unread",
+      undefined,
+    ],
+  ])) {
+    const up = new TransformStream();
+    const down = new TransformStream();
+    const lis = new Listener(down.writable, up.readable);
+    const clt = new Framed(up.writable, down.readable);
+    void invoke(clt, "i", "f", [...params], [...values], [...results]).catch(() => {});
+    const [, io] = /** @type {[unknown, Framed]} */ (await lis.accept());
+    const err = await serve(io, [...params], [...results], f).catch((err) => err);
+    assert.ok(err instanceof ServeError);
+    assert.equal(err.kind, kind);
+    if (cause) assert.equal(err.cause, cause);
+  }
 });
 
 test("invalid values fail before anything is written", async () => {
@@ -242,6 +267,8 @@ test("pending values nested in every kind echo", { timeout: 1000 }, async () => 
   const io = new Framed(up.writable, down.readable);
   const [out, done] = await invoke(
     io,
+    "i",
+    "f",
     types,
     cases.map(([, v]) => v),
     types,

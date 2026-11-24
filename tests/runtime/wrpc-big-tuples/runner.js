@@ -8,11 +8,11 @@ export async function run(connect) {
 
   const { promise, resolve } = Promise.withResolvers();
   const elements = [...Array.from({ length: 16 }, (_, i) => i), promise];
-  const [{ result, finished }] = await Promise.all([
+  const [[result, io]] = await Promise.all([
     toTest.nestedFuture(await connect(), elements),
     resolve(16),
   ]);
-  const [v] = await Promise.all([result, finished]);
+  const [v] = await Promise.all([result, io]);
   assert.equal(v, 16);
 
   assert.equal(await toTest.manyParams(await connect(), ...a), "foo");

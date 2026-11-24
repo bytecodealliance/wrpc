@@ -1,12 +1,11 @@
 import * as i from "./my/test/i.js";
 
 export async function run(connect) {
-  const { finished } = await i.readStream(
+  await i.readStream(
     await connect(),
     (async function* () {
-      yield [[]];
-      yield [[], []];
+      yield 1;
+      yield 2;
     })(),
   );
-  await finished;
 }

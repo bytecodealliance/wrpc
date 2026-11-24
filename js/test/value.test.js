@@ -233,6 +233,19 @@ test("maps", () => {
   assert.deepEqual(encode(ty, new Map(entries)), want);
   assert.deepEqual(encode(ty, runInNewContext("new Map(entries)", { entries })), want);
   assert.throws(() => encode(ty, entries), { name: "TypeError", message: /expected a `Map`/ });
+  assert.throws(
+    () =>
+      encode(
+        ty,
+        new Map(
+          /** @type {[InputValue, number][]} */ ([
+            ["1", 1],
+            [1, 2],
+          ]),
+        ),
+      ),
+    /duplicate map key/,
+  );
   roundtrip(ty, new Map(entries));
   roundtrip(
     t.map(t.u64, t.map(t.char, t.list(t.u8))),

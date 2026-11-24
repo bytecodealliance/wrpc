@@ -24,11 +24,14 @@ use wrpc_core::{FrameEncoder, FrameRef, Framed, Header, HeaderEncoder, HeaderRef
 
 pub mod common;
 
-/// Generate the bindings of each of `worlds` of the WIT at `wit` into a
-/// temporary directory, in a subdirectory named after the world.
-async fn bindgen(wit: &str, worlds: &[&str]) -> anyhow::Result<TempDir> {
+/// Generate the bindings of each of the worlds of the WIT at each path of
+/// `wits` into a temporary directory, in a subdirectory named after the world.
+async fn bindgen(wits: &[(&str, &[&str])]) -> anyhow::Result<TempDir> {
     let dir = tempdir().context("failed to create temporary directory")?;
-    for world in worlds {
+    for (wit, world) in wits
+        .iter()
+        .flat_map(|(wit, worlds)| worlds.iter().map(move |world| (wit, world)))
+    {
         let status = Command::new(env!("CARGO_BIN_EXE_wit-bindgen-wrpc"))
             .args(["js", "--world", world, "--wrpc-path"])
             .arg(concat!(env!("CARGO_MANIFEST_DIR"), "/js/src/index.js"))
@@ -43,6 +46,12 @@ async fn bindgen(wit: &str, worlds: &[&str]) -> anyhow::Result<TempDir> {
     }
     Ok(dir)
 }
+
+/// The worlds `tests/js/server.js` serves.
+const SERVER_WORLDS: &[(&str, &[&str])] = &[
+    ("tests/wit", &["sync-server", "async-server"]),
+    ("tests/js/wit", &["echo-server"]),
+];
 
 /// Start the server script `script` listening on `addr` with the bindings in
 /// `bindings` and wait until it is ready.
@@ -101,7 +110,7 @@ where
     E: core::error::Error + Send + Sync + 'static,
     Fut: Future<Output = anyhow::Result<()>> + Send + 'static,
 {
-    let bindings = bindgen("tests/js/wit", &["echo-client"]).await?;
+    let bindings = bindgen(&[("tests/js/wit", &["echo-client"])]).await?;
     info!("running `tests/js/client.js`");
     let mut client = pin!(
         Command::new("node")
@@ -128,7 +137,16 @@ where
 #[instrument(ret)]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn js_server() -> anyhow::Result<()> {
-    let bindings = bindgen("tests/wit", &["sync-server", "async-server"]).await?;
+    mod bindings {
+        wit_bindgen_wrpc::generate!({
+            world: "echo-client",
+            path: "tests/js/wit",
+        });
+    }
+
+    use bindings::wrpc_test::js::echo::{self, Asyncs};
+
+    let bindings = bindgen(SERVER_WORLDS).await?;
     let port = wrpc_test::free_port()
         .await
         .context("failed to find free port")?;
@@ -166,39 +184,6 @@ async fn js_server() -> anyhow::Result<()> {
     let mut clt = Framed::new(tx, rx);
     common::assert_sync(&mut clt).await?;
     common::assert_async(&mut clt).await?;
-    common::assert_eof(clt).await?;
-
-    server.start_kill().context("failed to kill `node`")?;
-    server.wait().await.context("failed to wait for `node`")?;
-    Ok(())
-}
-
-#[instrument(ret)]
-#[test_log::test(tokio::test(flavor = "multi_thread"))]
-async fn js_tree_server() -> anyhow::Result<()> {
-    mod bindings {
-        wit_bindgen_wrpc::generate!({
-            world: "echo-client",
-            path: "tests/js/wit",
-        });
-    }
-
-    use bindings::wrpc_test::js::echo::{self, Asyncs};
-
-    let bindings = bindgen("tests/js/wit", &["echo-server"]).await?;
-    let port = wrpc_test::free_port()
-        .await
-        .context("failed to find free port")?;
-    let addr = SocketAddr::from((Ipv6Addr::LOCALHOST, port));
-    let mut server = start_server(
-        "tests/js/tree-server.js",
-        &addr.to_string(),
-        bindings.path(),
-    )
-    .await?;
-
-    let (tx, rx) = wrpc_test::tcp_streams(addr).await?;
-    let mut clt = Framed::new(tx, rx);
     for i in 0..2 {
         let (out, io) = echo::echo_async(
             &mut clt,
@@ -238,7 +223,6 @@ async fn js_tree_server() -> anyhow::Result<()> {
         ensure!(str == "str");
         ensure!(nested == u32::from(i));
     }
-    common::assert_async(&mut clt).await?;
     common::assert_eof(clt).await?;
 
     server.start_kill().context("failed to kill `node`")?;
@@ -249,7 +233,7 @@ async fn js_tree_server() -> anyhow::Result<()> {
 #[instrument(ret)]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn js_http_server() -> anyhow::Result<()> {
-    let bindings = bindgen("tests/wit", &["sync-server", "async-server"]).await?;
+    let bindings = bindgen(SERVER_WORLDS).await?;
     let port = wrpc_test::free_port()
         .await
         .context("failed to find free port")?;

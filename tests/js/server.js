@@ -1,22 +1,20 @@
-// Serves the `sync-server` and `async-server` worlds of `tests/wit` on the
-// address given as the first argument, for the Rust clients in `tests/js.rs`,
-// with their bindings in the directory given as the second argument.
+// Serves the `sync-server` and `async-server` worlds of `tests/wit` and the
+// `echo-server` world of `tests/js/wit` on the address given as the first
+// argument, for the Rust clients in `tests/js.rs`, with their bindings in the
+// directory given as the second argument.
 
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { accept, serve } from "../../js/src/index.js";
+import { accept } from "../../js/src/index.js";
 import { listen } from "./transport.js";
 
 const [addr, bindings] = process.argv.slice(2);
 const load = (path) => import(pathToFileURL(join(bindings, path)).href);
-const [world, foo, sync, resources, strange, async] = await Promise.all([
+const [sync, async, echo] = await Promise.all([
   load("sync-server/sync-server.js"),
-  load("sync-server/exports/foo.js"),
-  load("sync-server/exports/wrpc-test/integration/sync.js"),
-  load("sync-server/exports/wrpc-test/integration/resources.js"),
-  load("sync-server/exports/strange.js"),
-  load("async-server/exports/wrpc-test/integration/async.js"),
+  load("async-server/async-server.js"),
+  load("echo-server/echo-server.js"),
 ]);
 
 const r = (foo) => ({ nested: { foo } });
@@ -98,30 +96,38 @@ const asyncHandler = {
   identityCases: (o, r, v) => [o, r, v],
 };
 
-const instances = {
-  "": (inv) => world.serveInterface(inv, worldHandler),
-  foo: (inv) => foo.serveInterface(inv, fooHandler),
-  "wrpc-test:integration/sync": (inv) => sync.serveInterface(inv, syncHandler),
-  "wrpc-test:integration/resources": (inv) => resources.serveInterface(inv, resourcesHandler),
-  strange: (inv) => strange.serveInterface(inv, strangeHandler),
-  "wrpc-test:integration/async": (inv) => async.serveInterface(inv, asyncHandler),
+const echoHandler = {
+  echo: (v) => v,
+  echoAsync: (v) => v,
 };
 
-const route = (inv) =>
-  (instances[inv.instance] ?? fail(`unknown instance \`${inv.instance}\``))(inv);
+const route = (instance, name, srv) =>
+  sync.handle(
+    [worldHandler, syncHandler, fooHandler, resourcesHandler, strangeHandler],
+    instance,
+    name,
+    srv,
+  ) ??
+  async.handle([asyncHandler], instance, name, srv) ??
+  echo.handle([echoHandler], instance, name, srv) ??
+  fail(`\`${instance}#${name}\` is not exported`);
 
-listen(addr, async (transport) => {
-  try {
-    if (!addr.startsWith("http:")) return await serve(transport, route);
-    const inv = await accept(transport);
+listen(
+  addr,
+  async (lis, sock) => {
     try {
-      await route(inv);
-      await inv.finished;
+      for (let inv; (inv = await lis.accept());) {
+        const [{ instance, name }, io] = inv;
+        await route(instance, name, io);
+      }
+      await lis.io.tx.writer.close();
     } catch (err) {
-      inv.mux.abort(err);
-      throw err;
+      console.error("failed to serve:", err);
+      sock.resetAndDestroy();
     }
-  } catch (err) {
-    console.error("failed to serve:", err);
-  }
-});
+  },
+  async (req) => {
+    const [{ instance, name }, srv] = await accept(req);
+    return route(instance, name, srv);
+  },
+);

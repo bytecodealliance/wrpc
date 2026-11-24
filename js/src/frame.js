@@ -4,6 +4,7 @@
 // streams, which their owner ends or tears down.
 
 import { AsyncReader, UNEXPECTED_EOF, Writer, atomic, readVarU32 } from "./io.js";
+import { invokeOver, serveOver } from "./rpc.js";
 
 /** The wRPC framing protocol version byte. */
 export const PROTOCOL = 0x01;
@@ -155,6 +156,19 @@ export class Framed {
   constructor(writable, readable, options) {
     this.tx = new FrameWriter(writable);
     this.rx = new FrameReader(readable, options);
+  }
+
+  /**
+   * @param {import("./rpc.js").Codec} codec @param {string} instance @param {string} name
+   * @param {any} params
+   */
+  invoke(codec, instance, name, params) {
+    return invokeOver(codec, this.tx, this.rx, instance, name, params);
+  }
+
+  /** @param {import("./rpc.js").Codec} codec @param {(params: any) => any} f */
+  serve(codec, f) {
+    return serveOver(codec, this.tx, this.rx, f);
   }
 }
 
