@@ -35,6 +35,8 @@ use core::mem;
 use core::pin::{Pin, pin};
 use core::task::{Context, Poll, ready};
 
+use std::collections::VecDeque;
+
 use bytes::{Bytes, BytesMut};
 use futures::channel::oneshot;
 use futures::{StreamExt as _, TryFutureExt as _, TryStreamExt as _};
@@ -47,9 +49,9 @@ use tokio::io::{AsyncRead, ReadBuf};
 use tokio_util::codec::{Decoder, Encoder, FramedRead};
 use tokio_util::io::StreamReader;
 use wrpc_core::{
-    Codec, FrameDecoder, FrameEncoder, FrameRef, Header, HeaderDecodeError, HeaderDecoder,
-    HeaderEncoder, HeaderRef, Invoke, InvokeError, Receipt, Receive, ReceiveError, Serve,
-    ServeError, Transmit, receive,
+    Codec, FrameDecoder, FrameEncoder, FrameHeaderEncoder, FrameHeaderRef, FrameRef, Header,
+    HeaderDecodeError, HeaderDecoder, HeaderEncoder, HeaderRef, Invoke, InvokeError, Receipt,
+    Receive, ReceiveError, Serve, ServeError, Transmit, receive,
 };
 
 /// Media type of wRPC request and response bodies
@@ -66,6 +68,7 @@ pub type BodyReader<T> = StreamReader<
 pub struct Body<E> {
     enc: E,
     path: Vec<usize>,
+    frames: VecDeque<Bytes>,
     buffer: BytesMut,
     error: Option<oneshot::Sender<std::io::Error>>,
 }
@@ -79,8 +82,15 @@ impl<E> Body<E> {
     {
         let mut data = BytesMut::default();
         enc.encode(value, &mut data)?;
-        for data in data.chunks(usize::try_from(u32::MAX).unwrap_or(usize::MAX)) {
-            FrameEncoder.encode(FrameRef { path: &[], data }, &mut buffer)?;
+        let mut data = data.freeze();
+        let mut frames = VecDeque::default();
+        while !data.is_empty() {
+            let size = data
+                .len()
+                .min(usize::try_from(u32::MAX).unwrap_or(usize::MAX));
+            FrameHeaderEncoder.encode(FrameHeaderRef { path: &[], size }, &mut buffer)?;
+            frames.push_back(buffer.split().freeze());
+            frames.push_back(data.split_to(size));
         }
         FrameEncoder.encode(
             FrameRef {
@@ -92,6 +102,7 @@ impl<E> Body<E> {
         Ok(Self {
             enc,
             path: Vec::default(),
+            frames,
             buffer,
             error: None,
         })
@@ -109,6 +120,7 @@ impl<E: Transmit> http_body::Body for Body<E> {
         let Self {
             enc,
             path,
+            frames,
             buffer,
             error,
         } = self.get_mut();
@@ -116,6 +128,9 @@ impl<E: Transmit> http_body::Body for Body<E> {
             && tx.poll_canceled(cx).is_ready()
         {
             return Poll::Ready(Some(Err(std::io::ErrorKind::BrokenPipe.into())));
+        }
+        if let Some(frame) = frames.pop_front() {
+            return Poll::Ready(Some(Ok(Frame::data(frame))));
         }
         let complete = enc.is_complete()
             || match enc.poll_transmit(cx, path, buffer) {
@@ -145,11 +160,16 @@ impl<E: Transmit> http_body::Body for Body<E> {
     }
 
     fn is_end_stream(&self) -> bool {
-        self.buffer.is_empty() && self.enc.is_complete()
+        self.frames.is_empty() && self.buffer.is_empty() && self.enc.is_complete()
     }
 
     fn size_hint(&self) -> SizeHint {
-        let n = u64::try_from(self.buffer.len()).unwrap_or(u64::MAX);
+        let n = self
+            .frames
+            .iter()
+            .map(Bytes::len)
+            .fold(self.buffer.len(), usize::saturating_add);
+        let n = u64::try_from(n).unwrap_or(u64::MAX);
         if self.enc.is_complete() {
             SizeHint::with_exact(n)
         } else {
