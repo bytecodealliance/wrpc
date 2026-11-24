@@ -4,7 +4,7 @@ import { runInNewContext } from "node:vm";
 
 import * as t from "../src/types.js";
 import { AsyncReader, Chan, Reader, Writer } from "../src/io.js";
-import { encodeValue, decodeSteps, decodeValue } from "../src/value.js";
+import { decoder, encoder, pack, unpack } from "../src/codec.js";
 
 /**
  * @typedef {import("../src/index.js").Chunk} Chunk
@@ -21,7 +21,7 @@ import { encodeValue, decodeSteps, decodeValue } from "../src/value.js";
  */
 function encode(ty, v) {
   const w = new Writer();
-  encodeValue(w, ty, v);
+  pack(encoder(ty), v, w);
   return w.finish();
 }
 
@@ -30,7 +30,7 @@ function encode(ty, v) {
  * @param {Type} ty @param {Uint8Array} bytes
  */
 function decode(ty, bytes) {
-  return decodeValue(new Reader(bytes), ty);
+  return unpack(decoder(ty), new Reader(bytes));
 }
 
 /**
@@ -382,13 +382,13 @@ test("flags", () => {
   assert.equal(decode(wide, Uint8Array.of(0, 1)).f8, true);
 });
 
-test("streams and futures are decoded synchronously only if ready", async () => {
+test("streams and futures are unpacked only if ready", async () => {
   for (const [ty, v] of /** @type {[Type, InputValue][]} */ ([
     [t.stream(t.u8), Uint8Array.of(1)],
     [t.future(t.string), "x"],
   ])) {
-    assert.throws(() => encode(ty, v), /async session API/);
-    assert.throws(() => decode(ty, Uint8Array.of(0)), /async session API/);
+    assert.throws(() => encode(ty, v), /asynchronous value is pending/);
+    assert.throws(() => decode(ty, Uint8Array.of(0)), /pending asynchronous values/);
   }
   /** @param {Value} chunks */
   const collect = async (chunks) => {
@@ -401,6 +401,7 @@ test("streams and futures are decoded synchronously only if ready", async () => 
     [t.stream(t.u16), [1, 1, 0x80, 0x02], [Uint16Array.of(256)]],
     [t.stream(t.string), [1, 1, 1, 0x61], [["a"]]],
     [t.stream(t.u8), [1, 0], []],
+    [t.stream(), [1, 3], [3]],
   ])) {
     assert.deepEqual(await collect(decode(ty, Uint8Array.from(bytes))), chunks);
   }
@@ -419,7 +420,7 @@ test("values decode resumably across chunk boundaries", async () => {
   ])) {
     const chunks = Array.from(encode(ty, v), (b) => Uint8Array.of(b));
     const ar = new AsyncReader(async () => chunks.shift() ?? null);
-    assert.deepEqual(await ar.decode((r) => decodeSteps(r, ty)), v);
+    assert.deepEqual(await ar.decode((r) => decoder(ty).decode(r)), v);
   }
 });
 

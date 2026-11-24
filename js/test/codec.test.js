@@ -28,7 +28,10 @@ const readable = (...chunks) =>
 /** @param {ReadableStream<any>} s */
 async function collect(s) {
   const out = [];
-  for await (const chunk of s) out.push(...chunk);
+  for await (const chunk of s) {
+    if (typeof chunk === "number") out.push(chunk);
+    else out.push(...chunk);
+  }
   return out;
 }
 
@@ -195,6 +198,59 @@ test("invalid values fail before anything is written", async () => {
   await assert.rejects(transmit(enc, tx, [[], 256]), RangeError);
   await assert.rejects(transmit(enc, tx, [42, 0]), TypeError);
   assert.deepEqual(written, []);
+});
+
+test("pending values nested in every kind echo", { timeout: 1000 }, async () => {
+  /** @param {any} f */
+  const all = (f) => Promise.all(f);
+  const cases = /** @type {[Type, InputValue, (v: any) => unknown, unknown][]} */ ([
+    [t.list(t.future(t.u32)), [1, Promise.resolve(2)], all, [1, 2]],
+    [
+      t.list(t.stream(t.u8), 2),
+      [[Uint8Array.of(1)], [Uint8Array.of(2)]],
+      (v) => Promise.all(v.map(collect)),
+      [[1], [2]],
+    ],
+    [
+      t.map(t.string, t.future(t.string)),
+      new Map([["a", "x"]]),
+      (v) => Promise.all([...v].map(async ([k, f]) => [k, await f])),
+      [["a", "x"]],
+    ],
+    [t.option(t.future(t.u32)), () => 3, (v) => v, 3],
+    [
+      t.result(t.stream(t.u8), t.future(t.u32)),
+      { kind: "error", value: 4 },
+      async (v) => [v.kind, await v.value],
+      ["error", 4],
+    ],
+    [
+      t.variant({ a: t.future(t.string), b: null }),
+      { kind: "a", value: "v" },
+      async (v) => [v.kind, await v.value],
+      ["a", "v"],
+    ],
+    [t.stream(t.option(t.future(t.u8))), [[null, 5]], (v) => collect(v).then(all), [undefined, 5]],
+    [t.stream(), [2, 0, 3], (v) => collect(v), [2, 3]],
+    [t.own("r"), Uint8Array.of(9), (v) => v, Uint8Array.of(9)],
+  ]);
+  const types = cases.map(([ty]) => ty);
+  const up = new TransformStream();
+  const down = new TransformStream();
+  const lis = new Listener(down.writable, up.readable);
+  void lis.accept().then((inv) => inv && serve(inv[1], types, types, (...v) => v));
+  const io = new Framed(up.writable, down.readable);
+  const [out, done] = await invoke(
+    io,
+    types,
+    cases.map(([, v]) => v),
+    types,
+  );
+  const [got] = await Promise.all([Promise.all(cases.map(([, , read], i) => read(out[i]))), done]);
+  assert.deepEqual(
+    got,
+    cases.map(([, , , want]) => want),
+  );
 });
 
 test("an unread stream stalls receiving, a cancelled one fails it", { timeout: 1000 }, async () => {

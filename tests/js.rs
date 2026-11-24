@@ -238,6 +238,7 @@ async fn js_tree_server() -> anyhow::Result<()> {
         ensure!(str == "str");
         ensure!(nested == u32::from(i));
     }
+    common::assert_async(&mut clt).await?;
     common::assert_eof(clt).await?;
 
     server.start_kill().context("failed to kill `node`")?;

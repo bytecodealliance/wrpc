@@ -145,14 +145,16 @@ const status = (what) => (r) => {
   if (b > 1) throw new RangeError(`invalid ${what} byte \`${b}\``);
   return b === 1;
 };
-const optionStatus = status("option status");
-const resultStatus = status("result status");
+export const optionStatus = status("option status");
+export const resultStatus = status("result status");
 const boolStatus = status("bool value");
 
 /** @param {string} kind @param {string} [op] */
 const asyncRequired = (kind, op = "decode") =>
   `\`${kind}\` values require the async session API (\`invoke\`/\`accept\`), ` +
   `not the synchronous \`${op}\``;
+
+const unitStream = "a `stream` without an element type requires an `Encoder`/`Decoder`";
 
 /** Scratch space to convert floats to and from their little-endian bytes. */
 const floatView = new DataView(new ArrayBuffer(8));
@@ -225,59 +227,10 @@ export function* readChunk(r, elem, n, sink, path) {
  */
 export function encodeValue(w, ty, v, sink, path) {
   switch (ty.kind) {
-    case "bool":
-      w.u8(v ? 1 : 0);
-      return;
-    case "u8":
-    case "s8":
-      w.u8(/** @type {number} */ (checkInt(ty.kind, v)) & 0xff);
-      return;
-    case "u16":
-    case "u32":
-    case "u64":
-      w.varU(checkInt(ty.kind, v));
-      return;
-    case "s16":
-    case "s32":
-    case "s64":
-      w.varS(checkInt(ty.kind, v));
-      return;
-    case "f32": {
-      const n = +v;
-      if (Number.isNaN(n)) floatView.setUint32(0, 0x7fc00000, true);
-      else floatView.setFloat32(0, n, true);
-      w.bytes(f32Bytes);
-      return;
-    }
-    case "f64": {
-      const n = +v;
-      if (Number.isNaN(n)) floatView.setBigUint64(0, 0x7ff8000000000000n, true);
-      else floatView.setFloat64(0, n, true);
-      w.bytes(floatBytes);
-      return;
-    }
-    case "char": {
-      const s = `${v}`;
-      const cp = s.codePointAt(0);
-      if (
-        cp === undefined ||
-        s.length !== (cp > 0xffff ? 2 : 1) ||
-        (cp >= 0xd800 && cp <= 0xdfff)
-      ) {
-        throw new TypeError(`expected a single Unicode scalar value for a \`char\`, got ${s}`);
-      }
-      w.bytes(textEncoder.encode(s));
-      return;
-    }
-    case "string":
-      w.name(`${v}`);
-      return;
-    case "list":
-    case "own":
-    case "borrow": {
-      const elem = ty.kind === "list" ? ty.elem : u8;
+    case "list": {
+      const elem = ty.elem;
       const elems = toList(v, elem);
-      const length = ty.kind === "list" ? ty.length : undefined;
+      const length = ty.length;
       if (length === undefined) w.varU(elems.length);
       else if (elems.length !== length)
         throw new RangeError(
@@ -333,13 +286,6 @@ export function encodeValue(w, ty, v, sink, path) {
       if (pty) encodeValue(w, pty, v.value, sink, path);
       return;
     }
-    case "enum": {
-      const s = `${v}`;
-      const i = ty.names.indexOf(s);
-      if (i < 0) throw new TypeError(`unknown enum case \`${s}\``);
-      w.varU(i);
-      return;
-    }
     case "variant": {
       const i = caseIndex(
         v,
@@ -354,10 +300,78 @@ export function encodeValue(w, ty, v, sink, path) {
     case "future":
     case "stream": {
       // Mark the value pending; its data flows over the framed sub-stream.
+      if (ty.kind === "stream" && !ty.elem) throw new Error(unitStream);
       w.u8(0x00);
       if (!sink) throw new Error(asyncRequired(ty.kind, "encode"));
       const elem = ty.kind === "future" ? ty.some : ty.elem;
       sink.push({ path: path ?? [], kind: ty.kind, ty: elem, value: v });
+      return;
+    }
+    default:
+      encodeScalar(w, ty, v);
+  }
+}
+
+/**
+ * Encode a value of a type, which is not {@link COMPOSITE}, into `w`.
+ * @param {Writer} w
+ * @param {Type} ty
+ * @param {any} v
+ */
+export function encodeScalar(w, ty, v) {
+  switch (ty.kind) {
+    case "bool":
+      w.u8(v ? 1 : 0);
+      return;
+    case "u8":
+    case "s8":
+      w.u8(/** @type {number} */ (checkInt(ty.kind, v)) & 0xff);
+      return;
+    case "u16":
+    case "u32":
+    case "u64":
+      w.varU(checkInt(ty.kind, v));
+      return;
+    case "s16":
+    case "s32":
+    case "s64":
+      w.varS(checkInt(ty.kind, v));
+      return;
+    case "f32": {
+      const n = +v;
+      if (Number.isNaN(n)) floatView.setUint32(0, 0x7fc00000, true);
+      else floatView.setFloat32(0, n, true);
+      w.bytes(f32Bytes);
+      return;
+    }
+    case "f64": {
+      const n = +v;
+      if (Number.isNaN(n)) floatView.setBigUint64(0, 0x7ff8000000000000n, true);
+      else floatView.setFloat64(0, n, true);
+      w.bytes(floatBytes);
+      return;
+    }
+    case "char": {
+      const s = `${v}`;
+      const cp = s.codePointAt(0);
+      if (
+        cp === undefined ||
+        s.length !== (cp > 0xffff ? 2 : 1) ||
+        (cp >= 0xd800 && cp <= 0xdfff)
+      ) {
+        throw new TypeError(`expected a single Unicode scalar value for a \`char\`, got ${s}`);
+      }
+      w.bytes(textEncoder.encode(s));
+      return;
+    }
+    case "string":
+      w.name(`${v}`);
+      return;
+    case "enum": {
+      const s = `${v}`;
+      const i = ty.names.indexOf(s);
+      if (i < 0) throw new TypeError(`unknown enum case \`${s}\``);
+      w.varU(i);
       return;
     }
     case "flags": {
@@ -366,6 +380,13 @@ export function encodeValue(w, ty, v, sink, path) {
       ty.flags.forEach(({ key }, i) => {
         if (v[key]) bytes[i >> 3] |= 1 << (i & 7);
       });
+      w.bytes(bytes);
+      return;
+    }
+    case "own":
+    case "borrow": {
+      const bytes = /** @type {Uint8Array} */ (toList(v, u8));
+      w.varU(bytes.length);
       w.bytes(bytes);
       return;
     }
@@ -465,6 +486,7 @@ export function* decodeSteps(r, ty, sink, path) {
       return promise;
     }
     case "stream": {
+      if (!ty.elem) throw new Error(unitStream);
       if (yield* atomic(r, optionStatus)) {
         // A stream sent inline as a single ready chunk.
         const n = yield* atomic(r, readVarU32);
@@ -492,7 +514,7 @@ export function* decodeSteps(r, ty, sink, path) {
  * @param {Type} ty
  * @returns {any}
  */
-function decodeScalar(r, ty) {
+export function decodeScalar(r, ty) {
   switch (ty.kind) {
     case "bool":
       return boolStatus(r);
@@ -597,7 +619,7 @@ export function hasAsync(ty) {
 }
 
 /** @param {unknown} v @returns {v is Record<string, any>} */
-const isObject = (v) => (typeof v === "object" && v !== null) || typeof v === "function";
+export const isObject = (v) => (typeof v === "object" && v !== null) || typeof v === "function";
 
 /**
  * The values `v` iterates, or `undefined` if `v` is not an iterable object.
@@ -614,7 +636,7 @@ export function iterableToValues(v) {
  * The entries of `v`, or `undefined` if `v` is not a `Map` from any realm.
  * @param {unknown} v @returns {[unknown, unknown][] | undefined}
  */
-function mapEntries(v) {
+export function mapEntries(v) {
   try {
     return [...Map.prototype.entries.call(v)];
   } catch {
@@ -649,14 +671,14 @@ const u8 = /** @type {Type} */ ({ kind: "u8" });
  * @param {Extract<Type, { kind: "map" }>} ty @returns {Type}
  */
 const mapEntry = (ty) => ({ kind: "tuple", elems: [ty.key, ty.value] });
-const OPTION_CASES = ["none", "some"];
-const RESULT_CASES = ["ok", "error"];
+export const OPTION_CASES = ["none", "some"];
+export const RESULT_CASES = ["ok", "error"];
 
 /**
  * A null-prototype `{ kind, value? }` object, with `value` only if given.
  * @param {string} kind @param {...any} value
  */
-function tagged(kind, ...value) {
+export function tagged(kind, ...value) {
   const out = Object.create(null);
   out.kind = kind;
   if (value.length) out.value = value[0];
@@ -667,7 +689,7 @@ function tagged(kind, ...value) {
  * The index of the case of `cases` that the `{ kind, value? }` object `v` is.
  * @param {any} v @param {string[]} cases @param {string} what @returns {number}
  */
-function caseIndex(v, cases, what) {
+export function caseIndex(v, cases, what) {
   if (!isObject(v)) throw new TypeError(`expected \`{ kind, value? }\` for ${what}`);
   const kind = `${v.kind}`;
   const i = cases.indexOf(kind);
