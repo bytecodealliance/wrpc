@@ -4,7 +4,7 @@ use crate::client::test::resource_with_lists::test::Thing;
 
 pub async fn run(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let mut clt = wrpc.connect().await?;
     let thing_instance = Thing::new(&mut clt, &Bytes::from_static(b"Hi")).await?;
     let v = Thing::foo(&mut clt, &thing_instance.as_borrow()).await?;

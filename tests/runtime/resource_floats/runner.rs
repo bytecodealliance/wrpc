@@ -2,7 +2,7 @@ use crate::client::exports::Float as Float2;
 
 pub async fn run(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let mut clt = wrpc.connect().await?;
     let a = Float::new(&mut clt, 42.0).await?;
     let b = Float::new(&mut clt, 55.0).await?;

@@ -1077,7 +1077,6 @@ pub struct UnimplementedFeatureTests;
 #[cfg(docsrs)]
 pub mod examples;
 
-pub use anyhow;
 pub use bitflags;
 pub use bytes;
 pub use futures;

@@ -2,7 +2,7 @@ use crate::client::test::flavorful::to_test::*;
 
 pub async fn run(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let mut clt = wrpc.connect().await?;
     f_list_in_record1(
         &mut clt,

@@ -2,7 +2,7 @@ use crate::client::test::resource_import_and_export::test::Thing;
 
 pub async fn run(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let mut clt = wrpc.connect().await?;
     let thing1 = Thing::new(&mut clt, 42).await?;
 

@@ -4,7 +4,7 @@ use crate::client::the_test::test;
 
 pub async fn run(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let mut clt = wrpc.connect().await?;
     let thing1 = a1::Thing::new(&mut clt, "Ni Hao").await?;
     let result = test(&mut clt, &[thing1]).await?;

@@ -6,7 +6,7 @@ use crate::client::a::b::the_test::f;
 
 pub async fn run(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let (tx, rx) = oneshot::channel();
 
     drop(tx);

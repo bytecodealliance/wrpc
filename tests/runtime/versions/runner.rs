@@ -1,6 +1,6 @@
 pub async fn run(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     use crate::client::test::dep0_1_0::test as v1;
     let mut clt = wrpc.connect().await?;
     assert_eq!(v1::x(&mut clt).await?, 1.0);
