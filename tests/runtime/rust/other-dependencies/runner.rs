@@ -17,5 +17,6 @@ pub async fn run(
     wrpc: &crate::Client,
 ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
     let clt = wrpc.connect().await?;
-    other::test::test::f(clt).await
+    other::test::test::f(clt).await?;
+    Ok(())
 }

@@ -411,12 +411,6 @@ where
             return;
         }
 
-        let fqn = if instance.is_empty() {
-            func.name.to_string()
-        } else {
-            format!("{instance}.{}", func.name)
-        };
-
         let mut sig = FnSig::default();
         match func.kind {
             FunctionKind::Method(id) | FunctionKind::AsyncMethod(id) => {
@@ -444,20 +438,20 @@ where
         let async_params = func.params.iter().any(|param| self.is_async(&param.ty));
         let async_results = func.result.iter().any(|ty| self.is_async(ty));
 
-        let anyhow = self.r#gen.anyhow_path();
+        let wrpc_core = self.r#gen.wrpc_core_path();
 
         let params = self.print_docs_and_params(func, &sig);
         match func.result.iter().collect::<Vec<_>>().as_slice() {
             [] => {
                 uwrite!(
                     self.src,
-                    " -> impl ::core::future::Future<Output = {anyhow}::Result<()>> + use<'a, C__>"
+                    " -> impl ::core::future::Future<Output = ::core::result::Result<(), {wrpc_core}::InvokeError>> + use<'a, C__>"
                 );
             }
             [ty] => {
                 uwrite!(
                     self.src,
-                    " -> impl ::core::future::Future<Output = {anyhow}::Result<"
+                    " -> impl ::core::future::Future<Output = ::core::result::Result<"
                 );
                 if async_params || async_results {
                     self.push_str("(");
@@ -466,15 +460,15 @@ where
                 if async_params || async_results {
                     uwrite!(
                         self.src,
-                        ", impl ::core::future::Future<Output = ::std::io::Result<()>> + use<C__>)",
+                        ", impl ::core::future::Future<Output = ::core::result::Result<(), {wrpc_core}::InvokeError>> + use<C__>)",
                     );
                 }
-                uwrite!(self.src, ">> + use<'a, C__>");
+                uwrite!(self.src, ", {wrpc_core}::InvokeError>> + use<'a, C__>");
             }
             types => {
                 uwrite!(
                     self.src,
-                    " -> impl ::core::future::Future<Output = {anyhow}::Result<(",
+                    " -> impl ::core::future::Future<Output = ::core::result::Result<(",
                 );
                 for ty in types {
                     self.print_ty(ty, true, false);
@@ -483,10 +477,10 @@ where
                 if async_params || async_results {
                     uwrite!(
                         self.src,
-                        "impl ::core::future::Future<Output = ::std::io::Result<()>> + use<C__>",
+                        "impl ::core::future::Future<Output = ::core::result::Result<(), {wrpc_core}::InvokeError>> + use<C__>",
                     );
                 }
-                uwrite!(self.src, ")>> + use<'a, C__>");
+                uwrite!(self.src, "), {wrpc_core}::InvokeError>> + use<'a, C__>");
             }
         };
         self.push_str("{\n");
@@ -507,7 +501,6 @@ where
             .as_ref()
             .map(|ty| format!("{}, ", self.decoded_ty(ty)))
             .unwrap_or_default();
-        let wrpc_core = self.r#gen.wrpc_core_path();
         let params = {
             let s = params.join(", ");
             if params.len() == 1 {
@@ -533,7 +526,7 @@ where
                 (String::default(), format!("({result}, io__)"))
             }
             result => (
-                format!(r#"{anyhow}::Context::context(io__.await, "failed to invoke `{fqn}`")?;"#),
+                "io__.await?;".to_string(),
                 result.unwrap_or_else(|| "()".to_string()),
             ),
         };
@@ -541,7 +534,7 @@ where
             self.src,
             r#"
                 async move {{
-                    let {pat} = {anyhow}::Context::context({call}.await, "failed to invoke `{fqn}`")?;
+                    let {pat} = {call}.await?;
                     {io}
                     Ok({ret})
                 }}

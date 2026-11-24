@@ -19,5 +19,6 @@ pub async fn run(
             res.unwrap_or(0)
         }),
     )
-    .await
+    .await?;
+    Ok(())
 }

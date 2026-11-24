@@ -16,5 +16,6 @@ pub async fn run(
     let b = f(wrpc_clt, Box::pin(async move { rx.await.unwrap() }));
     let (a_result, b_result) = join!(a, b);
     a_result.unwrap();
-    b_result
+    b_result?;
+    Ok(())
 }

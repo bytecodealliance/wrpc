@@ -1,6 +1,8 @@
 //! wRPC transport client handle
 
 use core::borrow::BorrowMut;
+use core::error::Error;
+use core::fmt;
 use core::future::poll_fn;
 use core::pin::{Pin, pin};
 use core::task::{Context, Poll, ready};
@@ -14,12 +16,66 @@ use crate::{
     Receive, ReceiveError, Transmission, Transmit, receive, transmit,
 };
 
+/// Error of invoking a function, by the side at fault
+#[derive(Debug)]
+pub enum InvokeError {
+    /// Encoding or transmitting the parameters failed
+    Request(std::io::Error),
+    /// The caller dropped an asynchronous result, for which the peer was still sending data
+    ///
+    /// The caller, not the peer, is at fault.
+    Unread,
+    /// Receiving the results failed, such as on malformed, truncated or unexpected data
+    ///
+    /// It never holds [`ReceiveError::Unread`], which is [`InvokeError::Unread`].
+    Response(ReceiveError),
+}
+
+impl fmt::Display for InvokeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Request(..) => f.write_str("failed to send request"),
+            Self::Unread => f.write_str("caller dropped an unread result"),
+            Self::Response(..) => f.write_str("failed to receive response"),
+        }
+    }
+}
+
+impl Error for InvokeError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Request(err) => Some(err),
+            Self::Unread => None,
+            Self::Response(err) => Some(err),
+        }
+    }
+}
+
+impl From<ReceiveError> for InvokeError {
+    fn from(err: ReceiveError) -> Self {
+        match err {
+            ReceiveError::Unread => Self::Unread,
+            err => Self::Response(err),
+        }
+    }
+}
+
+impl From<InvokeError> for std::io::Error {
+    fn from(err: InvokeError) -> Self {
+        match err {
+            InvokeError::Request(err) => err,
+            InvokeError::Unread => Self::new(std::io::ErrorKind::BrokenPipe, err),
+            InvokeError::Response(err) => err.into(),
+        }
+    }
+}
+
 /// Client invoking functions with parameters encoded by `E`, such as [`Framed`], see
 /// [`Codec::invoke`]
 pub trait Invoke<E: Transmit> {
     /// Future transmitting the asynchronous parameters and receiving the asynchronous results of
     /// an invocation
-    type Invocation<D: Receive>: Future<Output = std::io::Result<()>>;
+    type Invocation<D: Receive>: Future<Output = Result<(), InvokeError>>;
 
     /// Invokes function `func` on instance `instance` with `params` using `codec`, see
     /// [`Codec::invoke`]
@@ -29,7 +85,7 @@ pub trait Invoke<E: Transmit> {
         instance: &str,
         func: &str,
         params: T,
-    ) -> impl Future<Output = std::io::Result<(D::Item, Self::Invocation<D>)>> + use<Self, E, D, T>
+    ) -> impl Future<Output = Result<(D::Item, Self::Invocation<D>), InvokeError>> + use<Self, E, D, T>
     where
         E: Encoder<T, Error = std::io::Error>,
         D: Decoder<Error = std::io::Error> + Receive;
@@ -52,7 +108,7 @@ where
         instance: &str,
         func: &str,
         params: T,
-    ) -> impl Future<Output = std::io::Result<(D::Item, Self::Invocation<D>)>> + use<I, O, E, D, T>
+    ) -> impl Future<Output = Result<(D::Item, Self::Invocation<D>), InvokeError>> + use<I, O, E, D, T>
     where
         E: Encoder<T, Error = std::io::Error>,
         D: Decoder<Error = std::io::Error> + Receive,
@@ -79,7 +135,7 @@ where
         instance: &str,
         func: &str,
         params: T,
-    ) -> impl Future<Output = std::io::Result<(D::Item, Self::Invocation<D>)>> + use<'a, I, O, E, D, T>
+    ) -> impl Future<Output = Result<(D::Item, Self::Invocation<D>), InvokeError>> + use<'a, I, O, E, D, T>
     where
         E: Encoder<T, Error = std::io::Error>,
         D: Decoder<Error = std::io::Error> + Receive,
@@ -117,7 +173,10 @@ where
         func: &str,
         params: T,
     ) -> impl Future<
-        Output = std::io::Result<(D::Item, Invocation<Transmission<E, W, O>, Receipt<D, F, I>>)>,
+        Output = Result<
+            (D::Item, Invocation<Transmission<E, W, O>, Receipt<D, F, I>>),
+            InvokeError,
+        >,
     > + use<F, W, I, O, E, T, D>
     where
         F: BorrowMut<FramedRead<I, FrameDecoder>>,
@@ -137,17 +196,17 @@ where
             )
             .and_then(|()| transmit(enc, tx, params));
         async move {
-            let tx = res?;
+            let tx = res.map_err(InvokeError::Request)?;
             debug!("invoking function");
             let mut tx = Some(tx);
             let (results, rx) = {
                 let mut results = pin!(receive(dec, rx));
                 poll_fn(|cx| {
                     if let Poll::Ready(results) = results.as_mut().poll(cx) {
-                        return Poll::Ready(results);
+                        return Poll::Ready(results.map_err(InvokeError::from));
                     }
                     if let Some(fut) = &mut tx {
-                        ready!(Pin::new(fut).poll(cx))?;
+                        ready!(Pin::new(fut).poll(cx)).map_err(InvokeError::Request)?;
                         tx = None;
                     }
                     Poll::Pending
@@ -168,7 +227,7 @@ pub fn invoke<P, R, C>(
     instance: &str,
     func: &str,
     params: P,
-) -> impl Future<Output = std::io::Result<(R, C::Invocation<R::Decoder>)>> + use<P, R, C>
+) -> impl Future<Output = Result<(R, C::Invocation<R::Decoder>), InvokeError>> + use<P, R, C>
 where
     C: Invoke<P::Encoder>,
     P: Encode,
@@ -195,13 +254,13 @@ where
     T: Future<Output = std::io::Result<()>> + Unpin,
     U: Future<Output = Result<(), ReceiveError>> + Unpin,
 {
-    type Output = std::io::Result<()>;
+    type Output = Result<(), InvokeError>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         if let Some(tx) = &mut self.tx
             && let Poll::Ready(res) = Pin::new(tx).poll(cx)
         {
-            res?;
+            res.map_err(InvokeError::Request)?;
             self.tx = None;
         }
         if let Some(rx) = &mut self.rx
