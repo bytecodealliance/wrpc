@@ -21,7 +21,7 @@ use wasm_tokio::{
     Leb128Encoder, Utf8Codec,
 };
 
-use crate::{ReceiveError, error_unknown_path};
+use crate::ReceiveError;
 
 mod future;
 mod list;
@@ -149,10 +149,10 @@ impl<T: Receive> Receive for BTreeMap<usize, T> {
         src: &mut BytesMut,
     ) -> Poll<Result<(), ReceiveError>> {
         let Some((i, rest)) = path.split_first() else {
-            return Poll::Ready(Err(error_unknown_path(path).into()));
+            return Poll::Ready(Err(ReceiveError::UnknownPath));
         };
         let Some(r) = self.get_mut(i) else {
-            return Poll::Ready(Err(error_unknown_path(path).into()));
+            return Poll::Ready(Err(ReceiveError::UnknownPath));
         };
         ready!(r.poll_receive(cx, rest, src))?;
         if r.is_complete() {
@@ -188,10 +188,10 @@ macro_rules! sync_receive {
         fn poll_receive(
             &mut self,
             _cx: &mut Context<'_>,
-            path: &[usize],
+            _path: &[usize],
             _src: &mut BytesMut,
         ) -> Poll<Result<(), ReceiveError>> {
-            Poll::Ready(Err(error_unknown_path(path).into()))
+            Poll::Ready(Err(ReceiveError::UnknownPath))
         }
 
         fn is_complete(&self) -> bool {
@@ -726,7 +726,7 @@ impl<T: AsRef<[u8]>> tokio_util::codec::Encoder<Utf8Bytes<T>> for Utf8BytesEncod
     fn encode(&mut self, item: Utf8Bytes<T>, dst: &mut BytesMut) -> Result<(), Self::Error> {
         let Utf8Bytes(item) = item;
         let item = str::from_utf8(item.as_ref())
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
         CoreNameEncoder.encode(item, dst)
     }
 }
@@ -932,17 +932,11 @@ mod tests {
 
         let (_fut, rx) = receive_value::<BoxFuture<'static, ()>>(b"\x2a").await?;
         let err = rx.await.unwrap_err();
-        assert!(
-            matches!(&err, ReceiveError::Io(err) if err.kind() == std::io::ErrorKind::InvalidData),
-            "{err:?}"
-        );
+        assert!(matches!(err, ReceiveError::DataAfterEnd), "{err:?}");
 
         let (_fut, rx) = receive_value::<BoxFuture<'static, Bytes>>(b"\x03foo\x2a").await?;
         let err = rx.await.unwrap_err();
-        assert!(
-            matches!(&err, ReceiveError::Io(err) if err.kind() == std::io::ErrorKind::InvalidData),
-            "{err:?}"
-        );
+        assert!(matches!(err, ReceiveError::DataAfterEnd), "{err:?}");
 
         let (fut, rx) = receive_value::<BoxFuture<'static, Bytes>>(b"\x03foo").await?;
         drop(fut);

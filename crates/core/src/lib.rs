@@ -40,7 +40,8 @@ mod serve;
 mod value;
 
 pub use frame::{
-    FrameDecoder, FrameEncoder, FrameHeaderDecoder, FrameHeaderEncoder, FrameHeaderRef, FrameRef,
+    FrameDecodeError, FrameDecoder, FrameEncoder, FrameHeaderDecoder, FrameHeaderEncoder,
+    FrameHeaderRef, FrameRef,
 };
 pub use header::{Header, HeaderDecodeError, HeaderDecoder, HeaderEncoder, HeaderRef, PROTOCOL};
 pub use invoke::{Invocation, Invoke, invoke};
@@ -101,36 +102,32 @@ fn encode_close(path: &[usize], dst: &mut BytesMut) -> std::io::Result<()> {
     FrameEncoder.encode(FrameRef { path, data: &[] }, dst)
 }
 
-/// Returns the error for a frame received on `path`, which is not pending
-pub fn error_unknown_path(path: &[usize]) -> std::io::Error {
-    std::io::Error::new(
-        std::io::ErrorKind::InvalidData,
-        format!("received frame on unknown path `{path:?}`"),
-    )
-}
-
-/// Returns the error for data received after the end of a value
-pub fn error_data_after_end() -> std::io::Error {
-    std::io::Error::new(
-        std::io::ErrorKind::InvalidData,
-        "received data after value end",
-    )
-}
-
 /// Error of [receiving](Receive) a value
 #[derive(Debug)]
 pub enum ReceiveError {
     /// Data arrived for an asynchronous value whose consumer was dropped
     Unread,
-    /// Malformed, truncated or unexpected data, or a transport error
-    Io(std::io::Error),
+    /// A frame arrived on a path, which is not pending
+    UnknownPath,
+    /// Data arrived on a path after its value ended or after the path was closed
+    DataAfterEnd,
+    /// The frames ended before all paths were closed or a path was closed without a value
+    Truncated,
+    /// A decoder rejected the data of a value, including a value cut short by its path closing
+    Decode(std::io::Error),
+    /// Reading the frames failed
+    Frame(FrameDecodeError),
 }
 
 impl fmt::Display for ReceiveError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Unread => f.write_str("received data for a dropped consumer"),
-            Self::Io(..) => f.write_str("failed to receive value"),
+            Self::UnknownPath => f.write_str("received frame on a path, which is not pending"),
+            Self::DataAfterEnd => f.write_str("received data after value end"),
+            Self::Truncated => f.write_str("value is incomplete"),
+            Self::Decode(..) => f.write_str("failed to decode value"),
+            Self::Frame(..) => f.write_str("failed to receive frame"),
         }
     }
 }
@@ -138,23 +135,35 @@ impl fmt::Display for ReceiveError {
 impl Error for ReceiveError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::Unread => None,
-            Self::Io(err) => Some(err),
+            Self::Unread | Self::UnknownPath | Self::DataAfterEnd | Self::Truncated => None,
+            Self::Decode(err) => Some(err),
+            Self::Frame(err) => Some(err),
         }
     }
 }
 
 impl From<std::io::Error> for ReceiveError {
     fn from(err: std::io::Error) -> Self {
-        Self::Io(err)
+        Self::Decode(err)
+    }
+}
+
+impl From<FrameDecodeError> for ReceiveError {
+    fn from(err: FrameDecodeError) -> Self {
+        Self::Frame(err)
     }
 }
 
 impl From<ReceiveError> for std::io::Error {
     fn from(err: ReceiveError) -> Self {
         match err {
+            ReceiveError::Decode(err) => err,
+            ReceiveError::Frame(err) => err.into(),
             ReceiveError::Unread => Self::new(std::io::ErrorKind::BrokenPipe, err),
-            ReceiveError::Io(err) => err,
+            ReceiveError::Truncated => Self::new(std::io::ErrorKind::UnexpectedEof, err),
+            ReceiveError::UnknownPath | ReceiveError::DataAfterEnd => {
+                Self::new(std::io::ErrorKind::InvalidData, err)
+            }
         }
     }
 }

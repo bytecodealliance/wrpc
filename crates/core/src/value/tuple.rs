@@ -9,7 +9,7 @@ use tracing::instrument;
 use wasm_tokio::cm::{TupleDecoder, TupleEncoder};
 use wasm_tokio::{CoreVecDecoder, Leb128DecoderU32};
 
-use crate::{Decode, Encode, ListDecoder, Receive, ReceiveError, Transmit, error_unknown_path};
+use crate::{Decode, Encode, ListDecoder, Receive, ReceiveError, Transmit};
 
 /// Codec for `()`
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
@@ -123,12 +123,12 @@ macro_rules! impl_tuple_codec {
                 src: &mut BytesMut,
             ) -> Poll<Result<(), ReceiveError>> {
                 let Some((i, rest)) = path.split_first() else {
-                    return Poll::Ready(Err(error_unknown_path(path).into()));
+                    return Poll::Ready(Err(ReceiveError::UnknownPath));
                 };
                 let ($($cn),+,) = self.get_mut();
                 match i {
                     $($i => $cn.poll_receive(cx, rest, src),)+
-                    _ => Poll::Ready(Err(error_unknown_path(path).into())),
+                    _ => Poll::Ready(Err(ReceiveError::UnknownPath)),
                 }
             }
 

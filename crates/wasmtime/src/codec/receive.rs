@@ -11,7 +11,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::PollSender;
 use tracing::error;
 use wasmtime::component::Type;
-use wrpc_core::{Receive, ReceiveError, error_data_after_end, error_unknown_path};
+use wrpc_core::{Receive, ReceiveError};
 
 use crate::{TupleDecoder, Val};
 
@@ -34,13 +34,13 @@ impl Receive for FutureReceiver {
     ) -> Poll<Result<(), ReceiveError>> {
         if let Some((i, rest)) = path.split_first() {
             if *i != 0 || self.tx.is_some() {
-                return Poll::Ready(Err(error_unknown_path(path).into()));
+                return Poll::Ready(Err(ReceiveError::UnknownPath));
             }
             return self.dec.poll_receive(cx, rest, src);
         }
         let Some(tx) = self.tx.take() else {
             if !src.is_empty() || self.closed {
-                return Poll::Ready(Err(error_data_after_end().into()));
+                return Poll::Ready(Err(ReceiveError::DataAfterEnd));
             }
             self.closed = true;
             return Poll::Ready(Ok(()));
@@ -59,17 +59,13 @@ impl Receive for FutureReceiver {
         };
         let Some(v) = v else {
             if self.closed {
-                return Poll::Ready(Err(std::io::Error::new(
-                    std::io::ErrorKind::UnexpectedEof,
-                    "future closed without a value",
-                )
-                .into()));
+                return Poll::Ready(Err(ReceiveError::Truncated));
             }
             self.tx = Some(tx);
             return Poll::Ready(Ok(()));
         };
         if !self.buffer.is_empty() {
-            return Poll::Ready(Err(error_data_after_end().into()));
+            return Poll::Ready(Err(ReceiveError::DataAfterEnd));
         }
         if tx.send(v).is_err() {
             return Poll::Ready(Err(ReceiveError::Unread));
@@ -173,7 +169,7 @@ impl Receive for StreamReceiver {
         }
         if src.is_empty() {
             let Some((.., end)) = self.tx.take() else {
-                return Poll::Ready(Err(error_data_after_end().into()));
+                return Poll::Ready(Err(ReceiveError::DataAfterEnd));
             };
             if self.list.is_some() || !self.buffer.is_empty() {
                 return Poll::Ready(Err(std::io::Error::new(
@@ -186,7 +182,7 @@ impl Receive for StreamReceiver {
             return Poll::Ready(Ok(()));
         }
         let Some((tx, ..)) = &mut self.tx else {
-            return Poll::Ready(Err(error_data_after_end().into()));
+            return Poll::Ready(Err(ReceiveError::DataAfterEnd));
         };
         ready!(tx.poll_reserve(cx)).map_err(|_| ReceiveError::Unread)?;
         self.buffer.extend_from_slice(src);

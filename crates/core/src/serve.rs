@@ -19,7 +19,9 @@ use crate::{
 pub enum ServeError {
     /// Receiving the parameters or the rest of the invocation failed, such as on malformed,
     /// truncated or unexpected data
-    Request(std::io::Error),
+    ///
+    /// It never holds [`ReceiveError::Unread`], which is [`ServeError::Unread`].
+    Request(ReceiveError),
     /// The handler dropped an asynchronous parameter, for which the peer was still sending data
     ///
     /// The handler, not the peer, is at fault.
@@ -44,7 +46,8 @@ impl fmt::Display for ServeError {
 impl Error for ServeError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::Request(err) | Self::Handler(err) | Self::Response(err) => Some(err),
+            Self::Request(err) => Some(err),
+            Self::Handler(err) | Self::Response(err) => Some(err),
             Self::Unread => None,
         }
     }
@@ -54,7 +57,7 @@ impl From<ReceiveError> for ServeError {
     fn from(err: ReceiveError) -> Self {
         match err {
             ReceiveError::Unread => Self::Unread,
-            ReceiveError::Io(err) => Self::Request(err),
+            err => Self::Request(err),
         }
     }
 }

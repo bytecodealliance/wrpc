@@ -750,7 +750,7 @@ mod {module}__ {{
         fn poll_receive(&mut self, cx: &mut ::core::task::Context<'_>, path: &[usize], src: &mut {bytes}::BytesMut) -> ::core::task::Poll<::core::result::Result<(), {wrpc_core}::ReceiveError>> {{
             match path.split_first() {{
                 {receive}
-                _ => ::core::task::Poll::Ready(::core::result::Result::Err({wrpc_core}::ReceiveError::Io({wrpc_core}::error_unknown_path(path)))),
+                _ => ::core::task::Poll::Ready(::core::result::Result::Err({wrpc_core}::ReceiveError::UnknownPath)),
             }}
         }}
 

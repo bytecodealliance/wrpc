@@ -9,7 +9,7 @@ use tracing::instrument;
 use wasm_tokio::{CoreVecDecoder, CoreVecDecoderBytes, CoreVecEncoderBytes};
 
 use crate::value::sync_receive;
-use crate::{Decode, Encode, Receive, ReceiveError, error_unknown_path};
+use crate::{Decode, Encode, Receive, ReceiveError};
 
 macro_rules! impl_resource {
     ($(#[$attr:meta])* $name:ident, $kind:literal) => {

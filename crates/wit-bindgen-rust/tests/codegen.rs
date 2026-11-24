@@ -45,9 +45,7 @@ mod newtyped_list {
 
     use wit_bindgen_wrpc::bytes::BytesMut;
     use wit_bindgen_wrpc::tokio_util::codec::{Decoder, Encoder};
-    use wit_bindgen_wrpc::wrpc_core::{
-        Decode, Encode, Receive, ReceiveError, Transmit, error_unknown_path,
-    };
+    use wit_bindgen_wrpc::wrpc_core::{Decode, Encode, Receive, ReceiveError, Transmit};
 
     wit_bindgen_wrpc::generate!({
         inline: r#"
@@ -206,7 +204,7 @@ mod newtyped_list {
             path: &[usize],
             src: &mut BytesMut,
         ) -> Poll<Result<(), ReceiveError>> {
-            Poll::Ready(Err(error_unknown_path(path).into()))
+            Poll::Ready(Err(ReceiveError::UnknownPath))
         }
 
         fn is_complete(&self) -> bool {

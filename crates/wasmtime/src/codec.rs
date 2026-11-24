@@ -23,9 +23,7 @@ use wasmtime::component::types::{self, Case, Field};
 use wasmtime::component::{self, Type};
 use wasmtime::error::Context as _;
 use wasmtime::{bail, format_err};
-use wrpc_core::{
-    Encode, FutureEncoder, Receive, ReceiveError, StreamEncoder, Transmit, error_unknown_path,
-};
+use wrpc_core::{Encode, FutureEncoder, Receive, ReceiveError, StreamEncoder, Transmit};
 
 use crate::Val;
 use crate::codec::receive::{pending_future, pending_stream};
@@ -515,7 +513,7 @@ impl Receive for TupleDecoder {
             .next_back()
             .filter(|(p, ..)| path.starts_with(p))
         else {
-            return Poll::Ready(Err(error_unknown_path(path).into()));
+            return Poll::Ready(Err(ReceiveError::UnknownPath));
         };
         ready!(r.poll_receive(cx, &path[p.len()..], src))?;
         if r.is_complete() {

@@ -374,7 +374,7 @@ async fn params_error() -> anyhow::Result<()> {
         let err = io
             .await
             .expect_err("parameter error must fail the invocation");
-        assert_eq!(err.kind(), ErrorKind::InvalidData);
+        assert_eq!(err.kind(), ErrorKind::InvalidInput);
         assert!(err.get_ref().is_some_and(|err| err.is::<Utf8Error>()));
         let res = results.next().await.context("missing invocation")?;
         res.context("a peer parameter error must not fail serving")

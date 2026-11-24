@@ -682,7 +682,7 @@ fn async_max_len() -> wasmtime::Result<()> {
         assert!(vs.is_some());
         let res = dec.poll_receive(&mut cx, &path, &mut buf.into());
         assert!(
-            matches!(&res, Poll::Ready(Err(ReceiveError::Io(err))) if err.kind() == std::io::ErrorKind::InvalidData),
+            matches!(&res, Poll::Ready(Err(ReceiveError::Decode(err))) if err.kind() == std::io::ErrorKind::InvalidData),
             "{res:?}"
         );
     }
