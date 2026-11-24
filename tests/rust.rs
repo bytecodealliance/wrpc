@@ -4,7 +4,6 @@
 pub mod common;
 
 use core::iter;
-use core::pin::Pin;
 use core::time::Duration;
 
 use std::sync::Arc;
@@ -23,7 +22,6 @@ use tokio::task::yield_now;
 use tokio::time;
 use tokio::{join, spawn, try_join};
 use tokio_util::codec::{Encoder as _, FramedParts, FramedRead, FramedWrite};
-use tokio_util::io::StreamReader;
 use tracing::instrument;
 use wrpc_core::{
     Decode, Encode, FrameDecoder, FrameEncoder, FrameRef, Framed, Header, HeaderDecoder,
@@ -452,7 +450,7 @@ type SyncValues = (
 type AsyncValues = (
     BoxStream<'static, Vec<u32>>,
     BoxStream<'static, Vec<String>>,
-    Pin<Box<dyn AsyncRead + Send>>,
+    BoxStream<'static, Vec<u8>>,
     BoxFuture<'static, Vec<u64>>,
     BoxStream<'static, Bytes>,
     Vec<BoxFuture<'static, String>>,
@@ -500,9 +498,7 @@ fn async_values() -> AsyncValues {
     (
         pending([vec![0xc0, 0xff], vec![], vec![0xee]]),
         pending([vec!["foo".into()], vec![], vec!["bar".into()]]),
-        Box::pin(StreamReader::new(pending([Ok::<_, std::io::Error>(
-            Bytes::from("test"),
-        )]))),
+        pending([b"test".to_vec()]),
         Box::pin(async {
             yield_now().await;
             vec![1, 2, 3]
@@ -516,7 +512,7 @@ fn async_values() -> AsyncValues {
 }
 
 async fn assert_async_values(
-    (a, b, mut c, d, e, f): AsyncValues,
+    (a, b, c, d, e, f): AsyncValues,
     io: impl Future<Output = std::io::Result<()>>,
 ) -> anyhow::Result<()> {
     try_join!(
@@ -524,19 +520,14 @@ async fn assert_async_values(
             let (a, b, c, d, e, f) = join!(
                 a.concat(),
                 b.concat(),
-                async {
-                    let mut s = String::default();
-                    let res = c.read_to_string(&mut s).await;
-                    res.map(|_| s)
-                },
+                c.concat(),
                 d,
                 e.collect::<Vec<_>>(),
                 future::join_all(f),
             );
             assert_eq!(a, [0xc0, 0xff, 0xee]);
             assert_eq!(b, ["foo", "bar"]);
-            let c = c?;
-            assert_eq!(c, "test");
+            assert_eq!(c, b"test");
             assert_eq!(d, [1, 2, 3]);
             assert_eq!(e.concat(), b"abcd".repeat(1 << 16));
             assert_eq!(f, ["foo", "bar"]);

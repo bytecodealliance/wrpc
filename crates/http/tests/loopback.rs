@@ -1,4 +1,4 @@
-use core::pin::Pin;
+use core::str::Utf8Error;
 use core::time::Duration;
 
 use std::io::ErrorKind;
@@ -8,7 +8,7 @@ use anyhow::{Context as _, bail, ensure};
 use bytes::{Bytes, BytesMut};
 use futures::StreamExt as _;
 use futures::channel::{mpsc, oneshot};
-use futures::future::{self, LocalBoxFuture};
+use futures::future::{self, BoxFuture, LocalBoxFuture};
 use futures::stream::{self, BoxStream};
 use http::header::CONTENT_TYPE;
 use http::{HeaderValue, StatusCode};
@@ -19,14 +19,13 @@ use hyper::body::Incoming;
 use hyper::client::conn::http2::{SendRequest, handshake};
 use hyper::server::conn::http2::Builder;
 use hyper_util::rt::{TokioExecutor, TokioIo};
-use tokio::io::{AsyncRead, copy, duplex, sink};
+use tokio::io::duplex;
 use tokio::time::sleep;
 use tokio::{join, select, spawn, try_join};
 use tokio_util::codec::Encoder as _;
-use tokio_util::io::StreamReader;
 use wrpc_core::{
     Codec, Decode, Encode, FrameEncoder, FrameRef, Header, HeaderEncoder, HeaderRef, ServeError,
-    invoke, serve,
+    Utf8Bytes, invoke, serve,
 };
 use wrpc_http::{Body, Listener, OutgoingRequest};
 
@@ -335,8 +334,8 @@ async fn params_error() -> anyhow::Result<()> {
         async {
             let (_, _, req) = lis.next().await.context("missing invocation")??;
             let (res, next) = join!(
-                serve::<(Pin<Box<dyn AsyncRead + Send>>,), (), _, _, _>(req, async |(mut s,)| {
-                    spawn(async move { copy(&mut s, &mut sink()).await });
+                serve::<(BoxFuture<'static, String>,), (), _, _, _>(req, async |(s,)| {
+                    spawn(s);
                     anyhow::Ok(())
                 }),
                 lis.next()
@@ -347,11 +346,10 @@ async fn params_error() -> anyhow::Result<()> {
         },
         async move {
             let (tx, rx) = oneshot::channel::<()>();
-            let s = stream::once(async {
+            let s: BoxFuture<'static, Utf8Bytes<&'static [u8]>> = Box::pin(async {
                 _ = rx.await;
-                Err(std::io::Error::new(ErrorKind::PermissionDenied, "foo"))
+                Utf8Bytes(&b"\xff"[..])
             });
-            let s: Pin<Box<dyn AsyncRead + Send>> = Box::pin(StreamReader::<_, Bytes>::new(s));
             sender.ready().await?;
             let (parts, ()) = http::Request::new(()).into_parts();
             let clt = OutgoingRequest {
@@ -365,8 +363,8 @@ async fn params_error() -> anyhow::Result<()> {
             let err = io
                 .await
                 .expect_err("parameter error must fail the invocation");
-            assert_eq!(err.kind(), ErrorKind::PermissionDenied);
-            assert_eq!(err.to_string(), "foo");
+            assert_eq!(err.kind(), ErrorKind::InvalidData);
+            assert!(err.get_ref().is_some_and(|err| err.is::<Utf8Error>()));
             Ok(())
         },
     )?;
