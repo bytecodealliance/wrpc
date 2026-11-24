@@ -9,7 +9,7 @@ impl HandlerBar for Component {
     async fn new(
         &self,
         data: u32,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<
+    ) -> ::std::io::Result<
         ::wit_bindgen_wrpc::wrpc_core::ResourceOwn<Bar>,
     > {
         Ok(::wit_bindgen_wrpc::wrpc_core::ResourceOwn::from(
@@ -20,7 +20,7 @@ impl HandlerBar for Component {
     async fn get_data(
         &self,
         self_: ::wit_bindgen_wrpc::wrpc_core::ResourceBorrow<Bar>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<u32> {
+    ) -> ::std::io::Result<u32> {
         let bytes: &[u8] = self_.as_ref();
         Ok(u32::from_le_bytes(bytes.try_into().unwrap()))
     }
@@ -28,7 +28,7 @@ impl HandlerBar for Component {
     async fn consume(
         &self,
         self_: ::wit_bindgen_wrpc::wrpc_core::ResourceOwn<Bar>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<u32> {
+    ) -> ::std::io::Result<u32> {
         let bytes: &[u8] = self_.as_ref();
         let data = u32::from_le_bytes(bytes.try_into().unwrap());
         Ok(data + 1)

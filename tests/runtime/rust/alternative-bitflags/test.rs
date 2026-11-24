@@ -8,7 +8,7 @@ use crate::server::exports::my::inline::t::{Bar, Handler};
 pub struct Component(pub crate::Client);
 
 impl Handler for Component {
-    async fn get_flag(&self) -> ::wit_bindgen_wrpc::anyhow::Result<Bar> {
+    async fn get_flag(&self) -> ::std::io::Result<Bar> {
         Ok(Bar::BAZ)
     }
 }

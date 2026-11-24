@@ -11,7 +11,7 @@ use crate::server::exports::foo::bar::component::UnusedVariant as _;
 pub struct Component(pub crate::Client);
 
 impl crate::server::exports::foo::bar::component::Handler for Component {
-    async fn foo(&self) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    async fn foo(&self) -> ::std::io::Result<()> {
         Ok(())
     }
 }

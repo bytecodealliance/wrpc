@@ -140,7 +140,6 @@ async fn go() -> anyhow::Result<()> {
 #[instrument(ret)]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn go_core() -> anyhow::Result<()> {
-    use core::convert::Infallible;
     use core::time::Duration;
 
     use std::env::consts::EXE_SUFFIX;
@@ -218,14 +217,13 @@ async fn go_core() -> anyhow::Result<()> {
         while let Some((Header { instance, name }, srv)) = lis.accept().await? {
             match (instance.as_str(), name.as_str()) {
                 ("test", "echo") => {
-                    serve::<Echo, (BoxStream<'static, Bytes>,), _, _, Infallible>(
-                        srv,
-                        |(s, f)| async move { Ok((s.chain(f.map(Bytes::from).into_stream()).boxed(),)) },
-                    )
+                    serve::<Echo, (BoxStream<'static, Bytes>,), _, _>(srv, |(s, f)| async move {
+                        Ok((s.chain(f.map(Bytes::from).into_stream()).boxed(),))
+                    })
                     .await?;
                 }
                 ("test", "futs") => {
-                    serve::<Futs, (Vec<String>,), _, _, Infallible>(srv, |(s,)| async move {
+                    serve::<Futs, (Vec<String>,), _, _>(srv, |(s,)| async move {
                         let fs: Vec<_> = s.concat().await;
                         Ok((future::join_all(fs).await,))
                     })

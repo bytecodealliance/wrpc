@@ -110,7 +110,7 @@ pub fn handle_interface<S__, H__>(
     func: &str,
     srv: S__,
 ) -> ::core::result::Result<
-    impl ::core::future::Future<Output = ::core::result::Result<S__::Output, {wrpc_core}::ServeError<{anyhow}::Error>>> + ::core::marker::Send + use<S__, H__>,
+    impl ::core::future::Future<Output = ::core::result::Result<S__::Output, {wrpc_core}::ServeError>> + ::core::marker::Send + use<S__, H__>,
     S__,
 >
 where
@@ -126,7 +126,6 @@ where
 pub(crate) fn lookup__(instance: &str, func: &str) -> ::core::option::Option<usize> {{
     match (instance, func) {{"#,
             resource_traits = trait_names.join(""),
-            anyhow = self.r#gen.anyhow_path(),
             wrpc_core = self.r#gen.wrpc_core_path(),
         );
         for (i, func) in funcs_to_export.iter().enumerate() {
@@ -148,14 +147,13 @@ pub(crate) async fn serve__<S__, H__>(
     handler: H__,
     func: usize,
     srv: S__,
-) -> ::core::result::Result<S__::Output, {wrpc_core}::ServeError<{anyhow}::Error>>
+) -> ::core::result::Result<S__::Output, {wrpc_core}::ServeError>
 where
     S__: {wrpc_core}::Serve,
     H__: Handler{resource_traits} + ::core::marker::Send + ::core::marker::Sync,
 {{
     match func {{"#,
             resource_traits = trait_names.join(""),
-            anyhow = self.r#gen.anyhow_path(),
             wrpc_core = self.r#gen.wrpc_core_path(),
         );
         for (i, func) in funcs_to_export.iter().enumerate() {
@@ -178,7 +176,7 @@ where
                 self.src,
                 r#"
         {i} => {{
-            let res = {wrpc_core}::serve::<{params_ty}, ({results_ty}), _, _, _>(srv, move |{params_tuple}("#,
+            let res = {wrpc_core}::serve::<{params_ty}, ({results_ty}), _, _>(srv, move |{params_tuple}("#,
                 wrpc_core = self.r#gen.wrpc_core_path(),
                 params_tuple = params_tuple.unwrap_or_default(),
             );
@@ -234,11 +232,10 @@ where
             uwrite!(
                 self.src,
                 r#"
-                    ::core::result::Result::Ok::<_, {anyhow}::Error>({results})
+                    ::core::result::Result::Ok::<_, ::std::io::Error>({results})
             }});
             res.await
         }}"#,
-                anyhow = self.r#gen.anyhow_path(),
             );
         }
 
@@ -266,15 +263,13 @@ where
             0 => {
                 uwrite!(
                     self.src,
-                    " -> impl ::core::future::Future<Output = {}::Result<()>> + ::core::marker::Send",
-                    self.r#gen.anyhow_path()
+                    " -> impl ::core::future::Future<Output = ::std::io::Result<()>> + ::core::marker::Send",
                 );
             }
             1 => {
                 uwrite!(
                     self.src,
-                    " -> impl ::core::future::Future<Output = {}::Result<",
-                    self.r#gen.anyhow_path()
+                    " -> impl ::core::future::Future<Output = ::std::io::Result<",
                 );
                 let ty = func.result.iter().next().unwrap();
                 self.print_ty(ty, true, false);
@@ -283,8 +278,7 @@ where
             _ => {
                 uwrite!(
                     self.src,
-                    " -> impl ::core::future::Future<Output = {}::Result<(",
-                    self.r#gen.anyhow_path()
+                    " -> impl ::core::future::Future<Output = ::std::io::Result<(",
                 );
                 for ty in func.result.iter() {
                     self.print_ty(ty, true, false);

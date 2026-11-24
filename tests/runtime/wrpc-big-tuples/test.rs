@@ -7,7 +7,7 @@ use crate::server::exports::wrpc_test::big_tuples::to_test::{Handler, T17};
 pub struct Component(pub crate::Client);
 
 impl Handler for Component {
-    async fn roundtrip(&self, a: Vec<T17>) -> ::wit_bindgen_wrpc::anyhow::Result<Vec<T17>> {
+    async fn roundtrip(&self, a: Vec<T17>) -> ::std::io::Result<Vec<T17>> {
         Ok(a)
     }
 
@@ -32,7 +32,7 @@ impl Handler for Component {
             u8,
             Pin<Box<dyn Future<Output = u8> + Send>>,
         >,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<Pin<Box<dyn Future<Output = u8> + Send>>> {
+    ) -> ::std::io::Result<Pin<Box<dyn Future<Output = u8> + Send>>> {
         Ok(a.16)
     }
 
@@ -55,7 +55,7 @@ impl Handler for Component {
         a14: u8,
         a15: u8,
         a16: String,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<String> {
+    ) -> ::std::io::Result<String> {
         assert_eq!(
             [
                 a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15

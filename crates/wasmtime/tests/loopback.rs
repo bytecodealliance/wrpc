@@ -119,7 +119,9 @@ async fn serve_conn_shared(
         };
         codec
             .serve(&mut srv.tx, &mut srv.rx, async |params| {
-                call(guest.store, func, export, params).await
+                call(guest.store, func, export, params)
+                    .await
+                    .map_err(std::io::Error::other)
             })
             .await?;
     }
@@ -169,7 +171,9 @@ async fn serve_conn(
                 };
                 codec
                     .serve(&mut srv.tx, &mut srv.rx, async |params| {
-                        call(store, func, export, params).await
+                        call(store, func, export, params)
+                            .await
+                            .map_err(std::io::Error::other)
                     })
                     .await
             })

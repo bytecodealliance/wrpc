@@ -4,11 +4,11 @@ use ::wit_bindgen_wrpc::bytes::Bytes;
 pub struct Component(pub crate::Client);
 
 impl crate::server::exports::test::lists::to_test::Handler for Component {
-    async fn allocated_bytes(&self) -> ::wit_bindgen_wrpc::anyhow::Result<u32> {
+    async fn allocated_bytes(&self) -> ::std::io::Result<u32> {
         Ok(0)
     }
 
-    async fn empty_list_param(&self, a: Bytes) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    async fn empty_list_param(&self, a: Bytes) -> ::std::io::Result<()> {
         assert!(a.is_empty());
         Ok(())
     }
@@ -16,25 +16,25 @@ impl crate::server::exports::test::lists::to_test::Handler for Component {
     async fn empty_string_param(
         &self,
         a: String,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    ) -> ::std::io::Result<()> {
         assert!(a.is_empty());
         Ok(())
     }
 
-    async fn empty_list_result(&self) -> ::wit_bindgen_wrpc::anyhow::Result<Bytes> {
+    async fn empty_list_result(&self) -> ::std::io::Result<Bytes> {
         Ok(Bytes::new())
     }
 
-    async fn empty_string_result(&self) -> ::wit_bindgen_wrpc::anyhow::Result<String> {
+    async fn empty_string_result(&self) -> ::std::io::Result<String> {
         Ok(String::new())
     }
 
-    async fn list_param(&self, list: Bytes) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    async fn list_param(&self, list: Bytes) -> ::std::io::Result<()> {
         assert_eq!(list, &[1, 2, 3, 4][..]);
         Ok(())
     }
 
-    async fn list_param2(&self, ptr: String) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    async fn list_param2(&self, ptr: String) -> ::std::io::Result<()> {
         assert_eq!(ptr, "foo");
         Ok(())
     }
@@ -42,7 +42,7 @@ impl crate::server::exports::test::lists::to_test::Handler for Component {
     async fn list_param3(
         &self,
         ptr: Vec<String>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    ) -> ::std::io::Result<()> {
         assert_eq!(ptr.len(), 3);
         assert_eq!(ptr[0], "foo");
         assert_eq!(ptr[1], "bar");
@@ -53,7 +53,7 @@ impl crate::server::exports::test::lists::to_test::Handler for Component {
     async fn list_param4(
         &self,
         ptr: Vec<Vec<String>>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    ) -> ::std::io::Result<()> {
         assert_eq!(ptr.len(), 2);
         assert_eq!(ptr[0][0], "foo");
         assert_eq!(ptr[0][1], "bar");
@@ -64,7 +64,7 @@ impl crate::server::exports::test::lists::to_test::Handler for Component {
     async fn list_param5(
         &self,
         ptr: Vec<(u8, u32, u8)>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    ) -> ::std::io::Result<()> {
         assert_eq!(ptr, [(1, 2, 3), (4, 5, 6)]);
         Ok(())
     }
@@ -72,31 +72,31 @@ impl crate::server::exports::test::lists::to_test::Handler for Component {
     async fn list_param_large(
         &self,
         ptr: Vec<String>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    ) -> ::std::io::Result<()> {
         assert_eq!(ptr.len(), 1000);
         Ok(())
     }
 
-    async fn list_result(&self) -> ::wit_bindgen_wrpc::anyhow::Result<Bytes> {
+    async fn list_result(&self) -> ::std::io::Result<Bytes> {
         Ok(Bytes::from_static(&[1, 2, 3, 4, 5]))
     }
 
-    async fn list_result2(&self) -> ::wit_bindgen_wrpc::anyhow::Result<String> {
+    async fn list_result2(&self) -> ::std::io::Result<String> {
         Ok("hello!".to_string())
     }
 
-    async fn list_result3(&self) -> ::wit_bindgen_wrpc::anyhow::Result<Vec<String>> {
+    async fn list_result3(&self) -> ::std::io::Result<Vec<String>> {
         Ok(vec!["hello,".to_string(), "world!".to_string()])
     }
 
-    async fn list_roundtrip(&self, x: Bytes) -> ::wit_bindgen_wrpc::anyhow::Result<Bytes> {
+    async fn list_roundtrip(&self, x: Bytes) -> ::std::io::Result<Bytes> {
         Ok(x.clone())
     }
 
     async fn string_roundtrip(
         &self,
         x: String,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<String> {
+    ) -> ::std::io::Result<String> {
         Ok(x.clone())
     }
 
@@ -104,7 +104,7 @@ impl crate::server::exports::test::lists::to_test::Handler for Component {
         &self,
         a: Bytes,
         b: Vec<i8>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<(Bytes, Vec<i8>)> {
+    ) -> ::std::io::Result<(Bytes, Vec<i8>)> {
         Ok((a, b))
     }
 
@@ -112,7 +112,7 @@ impl crate::server::exports::test::lists::to_test::Handler for Component {
         &self,
         a: Vec<u16>,
         b: Vec<i16>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<(Vec<u16>, Vec<i16>)> {
+    ) -> ::std::io::Result<(Vec<u16>, Vec<i16>)> {
         Ok((a, b))
     }
 
@@ -120,7 +120,7 @@ impl crate::server::exports::test::lists::to_test::Handler for Component {
         &self,
         a: Vec<u32>,
         b: Vec<i32>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<(Vec<u32>, Vec<i32>)> {
+    ) -> ::std::io::Result<(Vec<u32>, Vec<i32>)> {
         Ok((a, b))
     }
 
@@ -128,7 +128,7 @@ impl crate::server::exports::test::lists::to_test::Handler for Component {
         &self,
         a: Vec<u64>,
         b: Vec<i64>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<(Vec<u64>, Vec<i64>)> {
+    ) -> ::std::io::Result<(Vec<u64>, Vec<i64>)> {
         Ok((a, b))
     }
 
@@ -136,14 +136,14 @@ impl crate::server::exports::test::lists::to_test::Handler for Component {
         &self,
         a: Vec<f32>,
         b: Vec<f64>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<(Vec<f32>, Vec<f64>)> {
+    ) -> ::std::io::Result<(Vec<f32>, Vec<f64>)> {
         Ok((a, b))
     }
 
     async fn wasi_http_headers_roundtrip(
         &self,
         headers: Vec<(String, Bytes)>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<Vec<(String, Bytes)>> {
+    ) -> ::std::io::Result<Vec<(String, Bytes)>> {
         Ok(headers)
     }
 }

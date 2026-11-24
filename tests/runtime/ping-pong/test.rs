@@ -11,7 +11,7 @@ impl Handler for Component {
         &self,
         x: Pin<Box<dyn Future<Output = String> + Send>>,
         y: String,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<Pin<Box<dyn Future<Output = String> + Send>>> {
+    ) -> ::std::io::Result<Pin<Box<dyn Future<Output = String> + Send>>> {
         let msg = x.await + y.as_str();
         Ok(Box::pin(async move { msg }))
     }
@@ -19,7 +19,7 @@ impl Handler for Component {
     async fn pong(
         &self,
         x: Pin<Box<dyn Future<Output = String> + Send>>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<String> {
+    ) -> ::std::io::Result<String> {
         Ok(x.await)
     }
 }

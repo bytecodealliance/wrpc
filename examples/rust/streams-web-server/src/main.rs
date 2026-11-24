@@ -39,7 +39,7 @@ impl bindings::exports::wrpc_examples::streams::handler::Handler for Server {
     async fn echo(
         &self,
         Req { numbers, bytes }: Req,
-    ) -> anyhow::Result<(
+    ) -> std::io::Result<(
         Pin<Box<dyn Stream<Item = Vec<u64>> + Send>>,
         Pin<Box<dyn Stream<Item = Bytes> + Send>>,
     )> {

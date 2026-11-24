@@ -13,7 +13,7 @@ impl Handler for Component {
     async fn named_roundtrip(
         &self,
         a: NamesById,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<IdsByName> {
+    ) -> ::std::io::Result<IdsByName> {
         assert_eq!(a.get(&1).map(String::as_str), Some("uno"));
         assert_eq!(a.get(&2).map(String::as_str), Some("two"));
 
@@ -27,7 +27,7 @@ impl Handler for Component {
     async fn bytes_roundtrip(
         &self,
         a: BytesByName,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<BytesByName> {
+    ) -> ::std::io::Result<BytesByName> {
         assert_eq!(a.get("hello").map(|v| &v[..]), Some(b"world".as_slice()));
         assert_eq!(a.get("bin").map(|v| &v[..]), Some([0u8, 1, 2].as_slice()));
         Ok(a)
@@ -36,7 +36,7 @@ impl Handler for Component {
     async fn empty_roundtrip(
         &self,
         a: NamesById,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<NamesById> {
+    ) -> ::std::io::Result<NamesById> {
         assert!(a.is_empty());
         Ok(a)
     }
@@ -44,7 +44,7 @@ impl Handler for Component {
     async fn option_roundtrip(
         &self,
         a: BTreeMap<String, Option<u32>>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<BTreeMap<String, Option<u32>>> {
+    ) -> ::std::io::Result<BTreeMap<String, Option<u32>>> {
         assert_eq!(a.get("some"), Some(&Some(42)));
         assert_eq!(a.get("none"), Some(&None));
         Ok(a)
@@ -53,7 +53,7 @@ impl Handler for Component {
     async fn record_roundtrip(
         &self,
         a: LabeledEntry,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<LabeledEntry> {
+    ) -> ::std::io::Result<LabeledEntry> {
         assert_eq!(a.label, "test-label");
         assert_eq!(a.values.len(), 2);
         assert_eq!(a.values.get(&10).map(String::as_str), Some("ten"));
@@ -64,7 +64,7 @@ impl Handler for Component {
     async fn inline_roundtrip(
         &self,
         a: BTreeMap<u32, String>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<BTreeMap<String, u32>> {
+    ) -> ::std::io::Result<BTreeMap<String, u32>> {
         let mut result = BTreeMap::new();
         for (k, v) in a {
             result.insert(v, k);
@@ -75,7 +75,7 @@ impl Handler for Component {
     async fn large_roundtrip(
         &self,
         a: NamesById,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<NamesById> {
+    ) -> ::std::io::Result<NamesById> {
         Ok(a)
     }
 
@@ -83,7 +83,7 @@ impl Handler for Component {
         &self,
         a: NamesById,
         b: BytesByName,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<(IdsByName, BytesByName)> {
+    ) -> ::std::io::Result<(IdsByName, BytesByName)> {
         assert_eq!(a.len(), 2);
         assert_eq!(b.len(), 1);
         let mut ids = IdsByName::new();
@@ -96,7 +96,7 @@ impl Handler for Component {
     async fn nested_roundtrip(
         &self,
         a: BTreeMap<String, BTreeMap<u32, String>>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<BTreeMap<String, BTreeMap<u32, String>>> {
+    ) -> ::std::io::Result<BTreeMap<String, BTreeMap<u32, String>>> {
         assert_eq!(a.len(), 2);
         let inner = a.get("group-a").unwrap();
         assert_eq!(inner.get(&1).map(String::as_str), Some("one"));
@@ -109,21 +109,21 @@ impl Handler for Component {
     async fn variant_roundtrip(
         &self,
         a: MapOrString,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<MapOrString> {
+    ) -> ::std::io::Result<MapOrString> {
         Ok(a)
     }
 
     async fn result_roundtrip(
         &self,
         a: Result<NamesById, String>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<Result<NamesById, String>> {
+    ) -> ::std::io::Result<Result<NamesById, String>> {
         Ok(a)
     }
 
     async fn tuple_roundtrip(
         &self,
         a: (NamesById, u64),
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<(NamesById, u64)> {
+    ) -> ::std::io::Result<(NamesById, u64)> {
         assert_eq!(a.0.len(), 1);
         assert_eq!(a.0.get(&7).map(String::as_str), Some("seven"));
         assert_eq!(a.1, 42);
@@ -133,7 +133,7 @@ impl Handler for Component {
     async fn single_entry_roundtrip(
         &self,
         a: NamesById,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<NamesById> {
+    ) -> ::std::io::Result<NamesById> {
         assert_eq!(a.len(), 1);
         Ok(a)
     }

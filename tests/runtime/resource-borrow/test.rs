@@ -7,7 +7,7 @@ impl Handler for Component {
     async fn foo(
         &self,
         v: ::wit_bindgen_wrpc::wrpc_core::ResourceBorrow<Thing>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<u32> {
+    ) -> ::std::io::Result<u32> {
         let bytes: &[u8] = v.as_ref();
         let val = u32::from_le_bytes(bytes.try_into().unwrap());
         Ok(val + 2)
@@ -18,7 +18,7 @@ impl HandlerThing for Component {
     async fn new(
         &self,
         v: u32,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<
+    ) -> ::std::io::Result<
         ::wit_bindgen_wrpc::wrpc_core::ResourceOwn<Thing>,
     > {
         let val = v + 1;

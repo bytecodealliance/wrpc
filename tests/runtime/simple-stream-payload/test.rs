@@ -12,7 +12,7 @@ impl Handler for Component {
     async fn read_stream(
         &self,
         x: Pin<Box<dyn Stream<Item = Bytes> + Send>>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    ) -> ::std::io::Result<()> {
         let mut x = x.flat_map(|buf| stream::iter(buf.to_vec()));
         // read one item
         assert_eq!(x.by_ref().take(1).collect::<Vec<_>>().await, [0]);

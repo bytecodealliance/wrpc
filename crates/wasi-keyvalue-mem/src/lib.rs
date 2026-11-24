@@ -1,5 +1,3 @@
-use core::num::ParseIntError;
-
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -31,7 +29,7 @@ impl store::Handler for Handler {
     async fn open(
         &self,
         identifier: String,
-    ) -> anyhow::Result<Result<ResourceOwn<store::Bucket>, store::Error>> {
+    ) -> std::io::Result<Result<ResourceOwn<store::Bucket>, store::Error>> {
         let identifier = Bytes::from(identifier);
         {
             // first, optimistically try read-only lock
@@ -52,8 +50,8 @@ impl store::HandlerBucket for Handler {
         &self,
         bucket: ResourceBorrow<store::Bucket>,
         key: String,
-    ) -> anyhow::Result<Result<Option<Bytes>, store::Error>> {
-        let bucket = self.bucket(bucket).await?;
+    ) -> std::io::Result<Result<Option<Bytes>, store::Error>> {
+        let bucket = self.bucket(bucket).await.map_err(std::io::Error::other)?;
         let bucket = bucket.read().await;
         Ok(Ok(bucket.get(&key).cloned()))
     }
@@ -64,8 +62,8 @@ impl store::HandlerBucket for Handler {
         bucket: ResourceBorrow<store::Bucket>,
         key: String,
         value: Bytes,
-    ) -> anyhow::Result<Result<(), store::Error>> {
-        let bucket = self.bucket(bucket).await?;
+    ) -> std::io::Result<Result<(), store::Error>> {
+        let bucket = self.bucket(bucket).await.map_err(std::io::Error::other)?;
         let mut bucket = bucket.write().await;
         bucket.insert(key, value);
         Ok(Ok(()))
@@ -76,8 +74,8 @@ impl store::HandlerBucket for Handler {
         &self,
         bucket: ResourceBorrow<store::Bucket>,
         key: String,
-    ) -> anyhow::Result<Result<(), store::Error>> {
-        let bucket = self.bucket(bucket).await?;
+    ) -> std::io::Result<Result<(), store::Error>> {
+        let bucket = self.bucket(bucket).await.map_err(std::io::Error::other)?;
         let mut bucket = bucket.write().await;
         bucket.remove(&key);
         Ok(Ok(()))
@@ -88,8 +86,8 @@ impl store::HandlerBucket for Handler {
         &self,
         bucket: ResourceBorrow<store::Bucket>,
         key: String,
-    ) -> anyhow::Result<Result<bool, store::Error>> {
-        let bucket = self.bucket(bucket).await?;
+    ) -> std::io::Result<Result<bool, store::Error>> {
+        let bucket = self.bucket(bucket).await.map_err(std::io::Error::other)?;
         let bucket = bucket.read().await;
         Ok(Ok(bucket.contains_key(&key)))
     }
@@ -99,14 +97,12 @@ impl store::HandlerBucket for Handler {
         &self,
         bucket: ResourceBorrow<store::Bucket>,
         cursor: Option<String>,
-    ) -> anyhow::Result<Result<store::KeyResponse, store::Error>> {
-        let bucket = self.bucket(bucket).await?;
+    ) -> std::io::Result<Result<store::KeyResponse, store::Error>> {
+        let bucket = self.bucket(bucket).await.map_err(std::io::Error::other)?;
         let bucket = bucket.read().await;
         let bucket = bucket.keys();
         let keys = if let Some(cursor) = cursor {
-            let cursor = cursor
-                .parse()
-                .map_err(|err: ParseIntError| store::Error::Other(err.to_string()))?;
+            let cursor = cursor.parse().map_err(std::io::Error::other)?;
             bucket.skip(cursor).cloned().collect()
         } else {
             bucket.cloned().collect()
@@ -121,7 +117,7 @@ impl atomics::Handler for Handler {
         _bucket: ResourceBorrow<store::Bucket>,
         _key: String,
         _delta: i64,
-    ) -> anyhow::Result<Result<i64, store::Error>> {
+    ) -> std::io::Result<Result<i64, store::Error>> {
         Ok(Err(store::Error::Other("not supported".to_string())))
     }
 
@@ -129,7 +125,7 @@ impl atomics::Handler for Handler {
         &self,
         _cas: ResourceOwn<atomics::Cas>,
         _value: Bytes,
-    ) -> anyhow::Result<Result<(), atomics::CasError>> {
+    ) -> std::io::Result<Result<(), atomics::CasError>> {
         Ok(Err(atomics::CasError::StoreError(store::Error::Other(
             "not supported".to_string(),
         ))))
@@ -141,14 +137,14 @@ impl atomics::HandlerCas for Handler {
         &self,
         _bucket: ResourceBorrow<store::Bucket>,
         _key: String,
-    ) -> anyhow::Result<Result<ResourceOwn<atomics::Cas>, store::Error>> {
+    ) -> std::io::Result<Result<ResourceOwn<atomics::Cas>, store::Error>> {
         Ok(Err(store::Error::Other("not supported".to_string())))
     }
 
     async fn current(
         &self,
         _bucket: ResourceBorrow<atomics::Cas>,
-    ) -> anyhow::Result<Result<Option<Bytes>, store::Error>> {
+    ) -> std::io::Result<Result<Option<Bytes>, store::Error>> {
         Ok(Err(store::Error::Other("not supported".to_string())))
     }
 }
@@ -158,7 +154,7 @@ impl batch::Handler for Handler {
         &self,
         _bucket: ResourceBorrow<store::Bucket>,
         _keys: Vec<String>,
-    ) -> anyhow::Result<Result<Vec<Option<(String, Bytes)>>, store::Error>> {
+    ) -> std::io::Result<Result<Vec<Option<(String, Bytes)>>, store::Error>> {
         Ok(Err(store::Error::Other("not supported".to_string())))
     }
 
@@ -166,7 +162,7 @@ impl batch::Handler for Handler {
         &self,
         _bucket: ResourceBorrow<store::Bucket>,
         _key_values: Vec<(String, Bytes)>,
-    ) -> anyhow::Result<Result<(), store::Error>> {
+    ) -> std::io::Result<Result<(), store::Error>> {
         Ok(Err(store::Error::Other("not supported".to_string())))
     }
 
@@ -174,7 +170,7 @@ impl batch::Handler for Handler {
         &self,
         _bucket: ResourceBorrow<store::Bucket>,
         _keys: Vec<String>,
-    ) -> anyhow::Result<Result<(), store::Error>> {
+    ) -> std::io::Result<Result<(), store::Error>> {
         Ok(Err(store::Error::Other("not supported".to_string())))
     }
 }

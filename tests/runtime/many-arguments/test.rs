@@ -20,7 +20,7 @@ impl crate::server::exports::test::many_arguments::to_test::Handler for Componen
         a14: u64,
         a15: u64,
         a16: u64,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    ) -> ::std::io::Result<()> {
         assert_eq!(a1, 1);
         assert_eq!(a2, 2);
         assert_eq!(a3, 3);

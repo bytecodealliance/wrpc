@@ -7,7 +7,7 @@ impl imports::Handler for Component {
     async fn string_error(
         &self,
         a: f32,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<Result<f32, String>> {
+    ) -> ::std::io::Result<Result<f32, String>> {
         if a == 0.0 {
             Ok(Err("zero".to_owned()))
         } else {
@@ -18,7 +18,7 @@ impl imports::Handler for Component {
     async fn enum_error(
         &self,
         a: f32,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<Result<f32, imports::E>> {
+    ) -> ::std::io::Result<Result<f32, imports::E>> {
         if a == 0.0 {
             Ok(Err(imports::E::A))
         } else {
@@ -29,7 +29,7 @@ impl imports::Handler for Component {
     async fn record_error(
         &self,
         a: f32,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<Result<f32, imports::E2>> {
+    ) -> ::std::io::Result<Result<f32, imports::E2>> {
         if a == 0.0 {
             Ok(Err(imports::E2 {
                 line: 420,
@@ -48,7 +48,7 @@ impl imports::Handler for Component {
     async fn variant_error(
         &self,
         a: f32,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<Result<f32, imports::E3>> {
+    ) -> ::std::io::Result<Result<f32, imports::E3>> {
         if a == 0.0 {
             Ok(Err(imports::E3::E2(imports::E2 {
                 line: 420,
@@ -66,7 +66,7 @@ impl imports::Handler for Component {
     async fn empty_error(
         &self,
         a: u32,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<Result<u32, ()>> {
+    ) -> ::std::io::Result<Result<u32, ()>> {
         if a == 0 {
             Ok(Err(()))
         } else if a == 1 {
@@ -79,7 +79,7 @@ impl imports::Handler for Component {
     async fn double_error(
         &self,
         a: u32,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<Result<Result<(), String>, String>> {
+    ) -> ::std::io::Result<Result<Result<(), String>, String>> {
         if a == 0 {
             Ok(Ok(Ok(())))
         } else if a == 1 {

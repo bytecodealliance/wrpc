@@ -15,7 +15,7 @@ pub struct Component(pub crate::Client);
 impl Handler for Component {}
 
 impl HandlerA for Component {
-    async fn new(&self) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<A>> {
+    async fn new(&self) -> ::std::io::Result<ResourceOwn<A>> {
         Ok(ResourceOwn::from(Bytes::from_static(b"a")))
     }
 
@@ -23,7 +23,7 @@ impl HandlerA for Component {
         &self,
         _self_: ResourceBorrow<A>,
         a: u32,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    ) -> ::std::io::Result<()> {
         PROPS.lock().unwrap().0 = a;
         Ok(())
     }
@@ -32,7 +32,7 @@ impl HandlerA for Component {
         &self,
         _self_: ResourceBorrow<A>,
         b: bool,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    ) -> ::std::io::Result<()> {
         PROPS.lock().unwrap().1 = b;
         Ok(())
     }
@@ -40,7 +40,7 @@ impl HandlerA for Component {
     async fn do_(
         &self,
         _self_: ResourceBorrow<A>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    ) -> ::std::io::Result<()> {
         Ok(())
     }
 }

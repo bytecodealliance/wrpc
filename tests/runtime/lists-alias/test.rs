@@ -4,12 +4,12 @@ use ::wit_bindgen_wrpc::bytes::Bytes;
 pub struct Component(pub crate::Client);
 
 impl crate::server::exports::cat::Handler for Component {
-    async fn foo(&self, x: Bytes) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    async fn foo(&self, x: Bytes) -> ::std::io::Result<()> {
         assert_eq!(x, &b"hello"[..]);
         Ok(())
     }
 
-    async fn bar(&self) -> ::wit_bindgen_wrpc::anyhow::Result<Bytes> {
+    async fn bar(&self) -> ::std::io::Result<Bytes> {
         Ok(Bytes::from_static(b"world"))
     }
 }

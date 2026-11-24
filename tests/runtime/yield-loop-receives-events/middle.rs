@@ -11,13 +11,13 @@ static HIT: AtomicBool = AtomicBool::new(false);
 pub struct Component(pub crate::Client);
 
 impl Handler for Component {
-    async fn f(&self) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    async fn f(&self) -> ::std::io::Result<()> {
         let clt = self.0;
         let task = tokio::spawn(async move {
             let clt = clt.connect().await?;
-            f(clt).await?;
+            f(clt).await.map_err(std::io::Error::other)?;
             HIT.store(true, Ordering::Relaxed);
-            ::wit_bindgen_wrpc::anyhow::Ok(())
+            ::std::io::Result::Ok(())
         });
         // This is an "infinite loop" but it's also effectively a yield which
         // should enable not only making progress on sibling rust-level tasks

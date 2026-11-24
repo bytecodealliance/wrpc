@@ -32,7 +32,7 @@ struct Args {
 struct Handler;
 
 impl bindings::exports::wrpc_examples::hello::handler::Handler for Handler {
-    async fn hello(&self) -> anyhow::Result<String> {
+    async fn hello(&self) -> std::io::Result<String> {
         Ok("hello from Rust".to_string())
     }
 }

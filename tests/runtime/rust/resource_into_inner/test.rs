@@ -4,7 +4,7 @@ use crate::server::exports::test::resource_into_inner::to_test::{Handler, Handle
 pub struct Component(pub crate::Client);
 
 impl Handler for Component {
-    async fn test(&self) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    async fn test(&self) -> ::std::io::Result<()> {
         Ok(())
     }
 }
@@ -13,7 +13,7 @@ impl HandlerThing for Component {
     async fn new(
         &self,
         text: String,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<
+    ) -> ::std::io::Result<
         ::wit_bindgen_wrpc::wrpc_core::ResourceOwn<Thing>,
     > {
         Ok(::wit_bindgen_wrpc::wrpc_core::ResourceOwn::from(

@@ -16,7 +16,7 @@ use crate::{
 
 /// Error of serving an invocation, by the side at fault
 #[derive(Debug)]
-pub enum ServeError<E> {
+pub enum ServeError {
     /// Receiving the parameters or the rest of the invocation failed, such as on malformed,
     /// truncated or unexpected data
     Request(std::io::Error),
@@ -25,32 +25,32 @@ pub enum ServeError<E> {
     /// The handler, not the peer, is at fault.
     Unread,
     /// The handler failed
-    Handler(E),
+    Handler(std::io::Error),
     /// Encoding or transmitting the results failed
     Response(std::io::Error),
 }
 
-impl<E: fmt::Display> fmt::Display for ServeError<E> {
+impl fmt::Display for ServeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Request(..) => f.write_str("failed to receive request"),
             Self::Unread => f.write_str("handler dropped an unread parameter"),
-            Self::Handler(err) => write!(f, "{err:#}"),
+            Self::Handler(..) => f.write_str("handler failed"),
             Self::Response(..) => f.write_str("failed to send response"),
         }
     }
 }
 
-impl<E: fmt::Debug + fmt::Display> Error for ServeError<E> {
+impl Error for ServeError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::Request(err) | Self::Response(err) => Some(err),
-            Self::Unread | Self::Handler(..) => None,
+            Self::Request(err) | Self::Handler(err) | Self::Response(err) => Some(err),
+            Self::Unread => None,
         }
     }
 }
 
-impl<E> From<ReceiveError> for ServeError<E> {
+impl From<ReceiveError> for ServeError {
     fn from(err: ReceiveError) -> Self {
         match err {
             ReceiveError::Unread => Self::Unread,
@@ -69,16 +69,16 @@ pub trait Serve {
     ///
     /// The future resolves once all I/O of the invocation is done or the transport took over the
     /// rest of it, such as the response body of a request-response transport.
-    fn serve<E, D, T, Fut, Err>(
+    fn serve<E, D, T, Fut>(
         self,
         codec: Codec<E, D>,
         f: impl FnOnce(D::Item) -> Fut + Send,
-    ) -> impl Future<Output = Result<Self::Output, ServeError<Err>>> + Send
+    ) -> impl Future<Output = Result<Self::Output, ServeError>> + Send
     where
         E: Transmit + Encoder<T, Error = std::io::Error> + Send + 'static,
         D: Decoder<Error = std::io::Error> + Receive + Send + 'static,
         D::Item: Send,
-        Fut: Future<Output = Result<T, Err>> + Send;
+        Fut: Future<Output = std::io::Result<T>> + Send;
 }
 
 impl<I, O> Serve for Framed<I, O>
@@ -88,16 +88,16 @@ where
 {
     type Output = ();
 
-    fn serve<E, D, T, Fut, Err>(
+    fn serve<E, D, T, Fut>(
         self,
         codec: Codec<E, D>,
         f: impl FnOnce(D::Item) -> Fut + Send,
-    ) -> impl Future<Output = Result<(), ServeError<Err>>> + Send
+    ) -> impl Future<Output = Result<(), ServeError>> + Send
     where
         E: Transmit + Encoder<T, Error = std::io::Error> + Send + 'static,
         D: Decoder<Error = std::io::Error> + Receive + Send + 'static,
         D::Item: Send,
-        Fut: Future<Output = Result<T, Err>> + Send,
+        Fut: Future<Output = std::io::Result<T>> + Send,
     {
         let Self { tx, rx } = self;
         codec.serve(tx, rx, async move |params| f(params).await)
@@ -111,16 +111,16 @@ where
 {
     type Output = ();
 
-    fn serve<E, D, T, Fut, Err>(
+    fn serve<E, D, T, Fut>(
         self,
         codec: Codec<E, D>,
         f: impl FnOnce(D::Item) -> Fut + Send,
-    ) -> impl Future<Output = Result<(), ServeError<Err>>> + Send
+    ) -> impl Future<Output = Result<(), ServeError>> + Send
     where
         E: Transmit + Encoder<T, Error = std::io::Error> + Send + 'static,
         D: Decoder<Error = std::io::Error> + Receive + Send + 'static,
         D::Item: Send,
-        Fut: Future<Output = Result<T, Err>> + Send,
+        Fut: Future<Output = std::io::Result<T>> + Send,
     {
         let Framed { tx, rx } = self;
         codec.serve(tx, rx, async move |params| f(params).await)
@@ -140,12 +140,12 @@ where
     /// resolves once all I/O is done. Nothing is transmitted if `f` fails.
     ///
     /// Unlike [`Serve`], this does not require [`Send`] values and futures.
-    pub async fn serve<F, W, I, O, T, Err>(
+    pub async fn serve<F, W, I, O, T>(
         self,
         tx: W,
         rx: F,
-        f: impl AsyncFnOnce(D::Item) -> Result<T, Err>,
-    ) -> Result<(), ServeError<Err>>
+        f: impl AsyncFnOnce(D::Item) -> std::io::Result<T>,
+    ) -> Result<(), ServeError>
     where
         F: BorrowMut<FramedRead<I, FrameDecoder>>,
         W: BorrowMut<FramedWrite<O, FrameEncoder>>,
@@ -172,15 +172,15 @@ where
 
 /// Serves an invocation using `srv` and the default codecs of parameters `P` and results `R`, see
 /// [`Codec::serve`]
-pub fn serve<P, R, S, Fut, Err>(
+pub fn serve<P, R, S, Fut>(
     srv: S,
     f: impl FnOnce(P) -> Fut + Send,
-) -> impl Future<Output = Result<S::Output, ServeError<Err>>> + Send
+) -> impl Future<Output = Result<S::Output, ServeError>> + Send
 where
     S: Serve,
     P: Decode<Decoder: Send + 'static> + Send,
     R: Encode<Encoder: Send + 'static>,
-    Fut: Future<Output = Result<R, Err>> + Send,
+    Fut: Future<Output = std::io::Result<R>> + Send,
 {
     srv.serve(Codec::<R::Encoder, P::Decoder>::default(), f)
 }

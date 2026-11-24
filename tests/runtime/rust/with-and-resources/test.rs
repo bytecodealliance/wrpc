@@ -7,7 +7,7 @@ pub struct Component(pub crate::Client);
 impl HandlerFoo for Component {
     async fn bar(
         &self,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<::wit_bindgen_wrpc::wrpc_core::ResourceOwn<A>> {
+    ) -> ::std::io::Result<::wit_bindgen_wrpc::wrpc_core::ResourceOwn<A>> {
         Ok(::wit_bindgen_wrpc::wrpc_core::ResourceOwn::from(
             ::wit_bindgen_wrpc::bytes::Bytes::from_static(b"a"),
         ))
@@ -20,7 +20,7 @@ impl HandlerBar for Component {
     async fn bar(
         &self,
         m: ::wit_bindgen_wrpc::wrpc_core::ResourceOwn<A>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<
+    ) -> ::std::io::Result<
         Vec<::wit_bindgen_wrpc::wrpc_core::ResourceOwn<A>>,
     > {
         Ok(vec![m])

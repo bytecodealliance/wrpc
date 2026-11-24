@@ -10,12 +10,12 @@ impl Handler for Component {
     async fn pending_import(
         &self,
         x: Pin<Box<dyn Future<Output = ()> + Send>>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    ) -> ::std::io::Result<()> {
         x.await;
         Ok(())
     }
 
-    async fn backpressure_set(&self, _x: bool) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    async fn backpressure_set(&self, _x: bool) -> ::std::io::Result<()> {
         Ok(())
     }
 }

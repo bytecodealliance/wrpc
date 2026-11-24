@@ -16,28 +16,28 @@ impl HandlerInputStream for Component {
         &self,
         _self_: ResourceBorrow<InputStream>,
         _len: u64,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<Bytes> {
+    ) -> ::std::io::Result<Bytes> {
         Ok(Bytes::default())
     }
 }
 
 impl Handler for Component {
-    async fn f(&self, x: Kind1) -> ::wit_bindgen_wrpc::anyhow::Result<Kind1> {
+    async fn f(&self, x: Kind1) -> ::std::io::Result<Kind1> {
         let clt = self.0.connect().await?;
-        blag::f(clt, &x).await
+        blag::f(clt, &x).await.map_err(std::io::Error::other)
     }
 
-    async fn g(&self, _x: Kind3) -> ::wit_bindgen_wrpc::anyhow::Result<Kind4> {
+    async fn g(&self, _x: Kind3) -> ::std::io::Result<Kind4> {
         todo!()
     }
 
-    async fn h(&self, x: TStream) -> ::wit_bindgen_wrpc::anyhow::Result<Tree> {
+    async fn h(&self, x: TStream) -> ::std::io::Result<Tree> {
         let x = blag::TStream {
             tree: x.tree,
             stream: None,
         };
         let clt = self.0.connect().await?;
-        blag::h(clt, &x).await
+        blag::h(clt, &x).await.map_err(std::io::Error::other)
     }
 }
 
@@ -47,25 +47,25 @@ use crate::server::exports::test::equal_types::blah::{
 use crate::server::test::equal_types::blah;
 
 impl HHandler for Component {
-    async fn f(&self, x: Kind6) -> ::wit_bindgen_wrpc::anyhow::Result<Kind5> {
+    async fn f(&self, x: Kind6) -> ::std::io::Result<Kind5> {
         let clt = self.0.connect().await?;
-        blah::f(clt, &x).await
+        blah::f(clt, &x).await.map_err(std::io::Error::other)
     }
 
-    async fn g(&self, _x: Kind7) -> ::wit_bindgen_wrpc::anyhow::Result<Kind4> {
+    async fn g(&self, _x: Kind7) -> ::std::io::Result<Kind4> {
         todo!()
     }
 
-    async fn h(&self, x: TStream) -> ::wit_bindgen_wrpc::anyhow::Result<CustomResult> {
+    async fn h(&self, x: TStream) -> ::std::io::Result<CustomResult> {
         let x = blah::TStream {
             tree: x.tree,
             stream: None,
         };
         let clt = self.0.connect().await?;
-        blah::h(clt, &x).await
+        blah::h(clt, &x).await.map_err(std::io::Error::other)
     }
 
-    async fn alias_type(&self, x: R2) -> ::wit_bindgen_wrpc::anyhow::Result<R1> {
+    async fn alias_type(&self, x: R2) -> ::std::io::Result<R1> {
         Ok(x)
     }
 }

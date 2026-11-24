@@ -12,31 +12,31 @@ use crate::server::exports::test::xcrate::b_exports;
 pub struct Component(pub crate::Client);
 
 impl b_exports::Handler for Component {
-    async fn b(&self) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    async fn b(&self) -> ::std::io::Result<()> {
         let mut clt = self.0.connect().await?;
-        a_imports::f(&mut clt).await?;
-        b_imports::b(&mut clt).await?;
+        a_imports::f(&mut clt).await.map_err(std::io::Error::other)?;
+        b_imports::b(&mut clt).await.map_err(std::io::Error::other)?;
 
-        let x = a_imports::X::new(&mut clt).await?;
-        a_imports::X::foo(&mut clt, &x.as_borrow()).await?;
+        let x = a_imports::X::new(&mut clt).await.map_err(std::io::Error::other)?;
+        a_imports::X::foo(&mut clt, &x.as_borrow()).await.map_err(std::io::Error::other)?;
         drop(x);
 
-        let x = b_imports::X::new(&mut clt).await?;
-        b_imports::X::foo(&mut clt, &x.as_borrow()).await?;
+        let x = b_imports::X::new(&mut clt).await.map_err(std::io::Error::other)?;
+        b_imports::X::foo(&mut clt, &x.as_borrow()).await.map_err(std::io::Error::other)?;
         drop(x);
         Ok(())
     }
 }
 
 impl b_exports::HandlerX for Component {
-    async fn new(&self) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<b_exports::X>> {
+    async fn new(&self) -> ::std::io::Result<ResourceOwn<b_exports::X>> {
         Ok(ResourceOwn::from(Bytes::default()))
     }
 
     async fn foo(
         &self,
         _self_: ResourceBorrow<b_exports::X>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    ) -> ::std::io::Result<()> {
         Ok(())
     }
 }

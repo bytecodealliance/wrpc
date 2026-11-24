@@ -26,9 +26,9 @@ mod other {
 pub struct Component(pub crate::Client);
 
 impl Handler for Component {
-    async fn bar(&self, a: A) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    async fn bar(&self, a: A) -> ::std::io::Result<()> {
         assert!(TypeId::of::<A>() != TypeId::of::<other::my::inline::foo::A>());
         let clt = self.0.connect().await?;
-        other::my::inline::foo::bar(clt, &other::my::inline::foo::A { b: a.b }).await
+        other::my::inline::foo::bar(clt, &other::my::inline::foo::A { b: a.b }).await.map_err(std::io::Error::other)
     }
 }

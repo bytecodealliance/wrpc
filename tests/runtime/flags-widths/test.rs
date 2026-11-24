@@ -8,7 +8,7 @@ impl crate::server::exports::test::flags_widths::to_test::Handler for Component 
         &self,
         a: Flag17,
         b: u8,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<(Flag17, u8)> {
+    ) -> ::std::io::Result<(Flag17, u8)> {
         Ok((a, b))
     }
 
@@ -16,7 +16,7 @@ impl crate::server::exports::test::flags_widths::to_test::Handler for Component 
         &self,
         a: Flag40,
         b: u8,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<(Flag40, u8)> {
+    ) -> ::std::io::Result<(Flag40, u8)> {
         Ok((a, b))
     }
 }

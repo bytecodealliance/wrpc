@@ -22,9 +22,9 @@ impl HandlerThing for Component {
     async fn new(
         &self,
         v: u32,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<Thing>> {
+    ) -> ::std::io::Result<ResourceOwn<Thing>> {
         let mut things = THINGS.lock().unwrap();
-        let idx = u32::try_from(things.len())?;
+        let idx = u32::try_from(things.len()).map_err(std::io::Error::other)?;
         things.push(v + 1);
         Ok(ResourceOwn::from(Bytes::copy_from_slice(
             &idx.to_le_bytes(),
@@ -34,7 +34,7 @@ impl HandlerThing for Component {
     async fn foo(
         &self,
         self_: ResourceBorrow<Thing>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<u32> {
+    ) -> ::std::io::Result<u32> {
         Ok(THINGS.lock().unwrap()[index(self_.as_ref())] + 2)
     }
 
@@ -42,7 +42,7 @@ impl HandlerThing for Component {
         &self,
         self_: ResourceBorrow<Thing>,
         v: u32,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    ) -> ::std::io::Result<()> {
         THINGS.lock().unwrap()[index(self_.as_ref())] = v + 3;
         Ok(())
     }
@@ -51,7 +51,7 @@ impl HandlerThing for Component {
         &self,
         a: ResourceOwn<Thing>,
         b: ResourceOwn<Thing>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<Thing>> {
+    ) -> ::std::io::Result<ResourceOwn<Thing>> {
         let v = {
             let things = THINGS.lock().unwrap();
             things[index(a.as_ref())] + 2 + things[index(b.as_ref())] + 2 + 4

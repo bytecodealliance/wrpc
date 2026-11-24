@@ -4,7 +4,7 @@ use crate::server::exports::my::test::i::Handler;
 pub struct Component(pub crate::Client);
 
 impl Handler for Component {
-    async fn return_string(&self) -> ::wit_bindgen_wrpc::anyhow::Result<String> {
+    async fn return_string(&self) -> ::std::io::Result<String> {
         Ok("hello".into())
     }
 }

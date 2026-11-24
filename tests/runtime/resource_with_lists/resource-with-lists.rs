@@ -15,21 +15,21 @@ impl HandlerThing for Component {
     async fn new(
         &self,
         l: Bytes,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<ResourceOwn<ThingExport>> {
+    ) -> ::std::io::Result<ResourceOwn<ThingExport>> {
         let mut result = l.to_vec();
         result.extend_from_slice(" Thing".as_bytes());
         let clt = self.0.connect().await?;
-        let result = Thing::new(clt, &result.into()).await?;
+        let result = Thing::new(clt, &result.into()).await.map_err(std::io::Error::other)?;
         Ok(ResourceOwn::from(Bytes::from(result)))
     }
 
     async fn foo(
         &self,
         self_: ResourceBorrow<ThingExport>,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<Bytes> {
+    ) -> ::std::io::Result<Bytes> {
         let val = ResourceBorrow::from(Bytes::from(self_));
         let clt = self.0.connect().await?;
-        let list = Thing::foo(clt, &val).await?;
+        let list = Thing::foo(clt, &val).await.map_err(std::io::Error::other)?;
         let mut list = list.to_vec();
         list.extend_from_slice(" Thing.foo".as_bytes());
         Ok(list.into())
@@ -39,19 +39,19 @@ impl HandlerThing for Component {
         &self,
         self_: ResourceBorrow<ThingExport>,
         l: Bytes,
-    ) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+    ) -> ::std::io::Result<()> {
         let val = ResourceBorrow::from(Bytes::from(self_));
         let mut result = l.to_vec();
         result.extend_from_slice(" Thing.bar".as_bytes());
         let clt = self.0.connect().await?;
-        Thing::bar(clt, &val, &result.into()).await
+        Thing::bar(clt, &val, &result.into()).await.map_err(std::io::Error::other)
     }
 
-    async fn baz(&self, l: Bytes) -> ::wit_bindgen_wrpc::anyhow::Result<Bytes> {
+    async fn baz(&self, l: Bytes) -> ::std::io::Result<Bytes> {
         let mut result = l.to_vec();
         result.extend_from_slice(" Thing.baz".as_bytes());
         let clt = self.0.connect().await?;
-        let list2 = Thing::baz(clt, &result.into()).await?;
+        let list2 = Thing::baz(clt, &result.into()).await.map_err(std::io::Error::other)?;
         let mut list2 = list2.to_vec();
         list2.extend_from_slice(" Thing.baz again".as_bytes());
         Ok(list2.into())
