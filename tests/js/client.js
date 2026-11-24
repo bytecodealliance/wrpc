@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { connect } from "./transport.js";
+import { connect, connectFramed, invokeFramed } from "./transport.js";
 
 const [addr, bindings] = process.argv.slice(2);
 const echo = await import(pathToFileURL(join(bindings, "echo-client/wrpc-test/js/echo.js")).href);
@@ -125,4 +125,45 @@ test("async", { timeout: 5000 }, async () => {
   assert.equal(str, "later");
   assert.equal(nested, 42);
   await finished;
+});
+
+test("async over the codec tree", { skip: addr.startsWith("http:"), timeout: 5000 }, async () => {
+  const io = await connectFramed(addr);
+  for (let i = 0; i < 2; i++) {
+    async function* lists() {
+      yield [["a"], []];
+      yield delay([["b", "c"]]);
+    }
+    const [[out], done] = await invokeFramed(
+      io,
+      "wrpc-test:js/echo",
+      "echo-async",
+      [echo.Asyncs],
+      [
+        {
+          bytes: [new Uint8Array([1]), new Uint8Array([2, i])],
+          lists: lists(),
+          str: delay("later"),
+          nested: () => delay(() => delay(i)),
+        },
+      ],
+      [echo.Asyncs],
+    );
+    const [bytes, ls, str, nested] = await Promise.all([
+      collect(out.bytes),
+      collect(out.lists),
+      out.str,
+      out.nested,
+      done,
+    ]);
+    assert.deepEqual(
+      bytes.flatMap((chunk) => [...chunk]),
+      [1, 2, i],
+    );
+    assert.deepEqual(ls.flat(), [["a"], [], ["b", "c"]]);
+    assert.equal(str, "later");
+    assert.equal(nested, i);
+  }
+  await io.tx.writer.close();
+  assert.equal((await io.rx.reader.read()).done, true);
 });

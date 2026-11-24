@@ -603,7 +603,7 @@ const isObject = (v) => (typeof v === "object" && v !== null) || typeof v === "f
  * The values `v` iterates, or `undefined` if `v` is not an iterable object.
  * @param {unknown} v @returns {unknown[] | undefined}
  */
-function iterableToValues(v) {
+export function iterableToValues(v) {
   if (!isObject(v)) return undefined;
   const iter = /** @type {any} */ (v)[Symbol.iterator];
   if (iter === undefined || iter === null) return undefined;

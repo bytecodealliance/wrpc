@@ -9,10 +9,8 @@
 // (sub-)stream; incoming frames are demultiplexed back to the reader
 // registered for their path.
 
+import { PROTOCOL } from "./frame.js";
 import { AsyncReader, Chan, UNEXPECTED_EOF, Writer, atomic, readVarU32 } from "./io.js";
-
-/** The wRPC framing protocol version byte. */
-export const PROTOCOL = 0x01;
 
 /**
  * The number of inbound data chunks buffered per sub-stream. Once a
