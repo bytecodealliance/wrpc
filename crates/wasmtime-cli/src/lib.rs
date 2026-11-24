@@ -58,10 +58,6 @@ pub struct Ctx {
     pub resources: HashMap<Uuid, ResourceAny>,
 }
 
-fn error_invalid_data(msg: String) -> wasmtime::Error {
-    std::io::Error::new(std::io::ErrorKind::InvalidData, msg).into()
-}
-
 fn lift_resource(
     cx: &Ctx,
     used: &mut HashMap<Uuid, bool>,
@@ -71,20 +67,18 @@ fn lift_resource(
     let (Type::Own(expected) | Type::Borrow(expected)) = ty else {
         wasmtime::bail!("value type mismatch")
     };
-    let id = Uuid::from_slice_le(&id).map_err(|err| error_invalid_data(err.to_string()))?;
+    let id = Uuid::from_slice_le(&id)?;
     let Some(resource) = cx.resources.get(&id).copied() else {
-        return Err(error_invalid_data(format!("resource `{id}` not found")));
+        wasmtime::bail!("resource `{id}` not found")
     };
     if resource.ty() != *expected {
-        return Err(error_invalid_data(format!("resource `{id}` type mismatch")));
+        wasmtime::bail!("resource `{id}` type mismatch")
     }
     let own = matches!(ty, Type::Own(..));
     if let Some(prev) = used.insert(id, own)
         && (own || prev)
     {
-        return Err(error_invalid_data(format!(
-            "owned resource `{id}` used more than once"
-        )));
+        wasmtime::bail!("owned resource `{id}` used more than once")
     }
     Ok(resource)
 }
