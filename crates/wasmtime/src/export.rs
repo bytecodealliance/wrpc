@@ -1,7 +1,9 @@
+use core::error::Error;
+use core::fmt;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{Context as _, bail};
 use tracing::{debug, warn};
 use wasmparser::names::split_canonical_version;
 use wasmtime::component::{Component, ComponentExportIndex, Type, types};
@@ -43,6 +45,40 @@ pub struct Export {
     pub results: Arc<[Type]>,
 }
 
+/// Error of collecting the function exports of a component
+#[derive(Debug)]
+pub enum ExportsError {
+    /// An export listed by the component type has no export index
+    NotFound(Box<str>),
+    /// Two exports map to the same instance name, such as `a:b/c@1.0.0` and `a:b/c@1.1.0`
+    Conflict {
+        /// Instance name both exports map to
+        instance: Box<str>,
+        /// Name of the export collected first
+        first: Box<str>,
+        /// Name of the export collected second
+        second: Box<str>,
+    },
+}
+
+impl fmt::Display for ExportsError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotFound(name) => write!(f, "export `{name}` not found"),
+            Self::Conflict {
+                instance,
+                first,
+                second,
+            } => write!(
+                f,
+                "exports `{first}` and `{second}` both map to instance `{instance}`"
+            ),
+        }
+    }
+}
+
+impl Error for ExportsError {}
+
 /// Function exports of a component by the instance and function names invocations of them carry
 #[derive(Clone, Debug)]
 pub struct Exports(HashMap<Box<str>, HashMap<Box<str>, Export>>);
@@ -54,17 +90,17 @@ impl Exports {
     ///
     /// Returns an error if an export cannot be looked up or if two exports map to the same
     /// instance name
-    pub fn new(component: &Component) -> anyhow::Result<Self> {
+    pub fn new(component: &Component) -> Result<Self, ExportsError> {
         let engine = component.engine();
         let mut exports = HashMap::<Box<str>, HashMap<Box<str>, Export>>::default();
         let mut insert = |instance: &str,
                           instance_idx: Option<&ComponentExportIndex>,
                           name: &str,
                           ty: types::ComponentFunc|
-         -> anyhow::Result<()> {
+         -> Result<(), ExportsError> {
             let idx = component
                 .get_export_index(instance_idx, name)
-                .with_context(|| format!("export `{name}` not found"))?;
+                .ok_or_else(|| ExportsError::NotFound(name.into()))?;
             let params: Arc<[_]> = ty.params().map(|(.., ty)| ty).collect();
             debug!(instance, name, "collected function export");
             exports.entry(instance.into()).or_default().insert(
@@ -85,10 +121,14 @@ impl Exports {
                 types::ComponentItem::ComponentInstance(ty) => {
                     let idx = component
                         .get_export_index(None, name)
-                        .with_context(|| format!("export `{name}` not found"))?;
+                        .ok_or_else(|| ExportsError::NotFound(name.into()))?;
                     let instance = instance_name(name);
                     if let Some(prev) = instances.insert(instance.clone(), name) {
-                        bail!("exports `{prev}` and `{name}` both map to instance `{instance}`");
+                        return Err(ExportsError::Conflict {
+                            instance: instance.into(),
+                            first: prev.into(),
+                            second: name.into(),
+                        });
                     }
                     for (func, types::ComponentExtern { ty, .. }) in ty.exports(engine) {
                         match ty {
