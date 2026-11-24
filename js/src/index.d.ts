@@ -49,7 +49,8 @@ export type Chunk = Value[] | TypedArray;
 
 /**
  * The JavaScript representation of a decoded component-model value. Decoded
- * `stream` values are {@link Chan}s of chunks, which can be cancelled.
+ * `stream` values are {@link Chan}s of chunks, or `ReadableStream`s of chunks
+ * if decoded by a {@link Decoder}, which can be cancelled.
  */
 export type Value =
   | boolean
@@ -63,6 +64,7 @@ export type Value =
   | { kind: string; value?: Value }
   | Promise<Value>
   | Chan<Chunk>
+  | ReadableStream<Chunk>
   | undefined;
 
 /**
@@ -244,10 +246,147 @@ export function decodeSteps(
   path?: number[],
 ): Generator<number, Value, void>;
 
-// ----- mux.js ---------------------------------------------------------------
+// ----- frame.js -------------------------------------------------------------
 
 /** The wRPC framing protocol version byte. */
 export const PROTOCOL: number;
+
+/** An invocation header. */
+export interface Header {
+  instance: string;
+  name: string;
+}
+
+/** Writes invocation headers and frames to a byte stream. */
+export class FrameWriter {
+  constructor(writable: WritableStream<Uint8Array>);
+  /** The writer of the byte stream, through which its owner closes or aborts it. */
+  readonly writer: WritableStreamDefaultWriter<Uint8Array>;
+  header(header: Header): Promise<void>;
+  /** Write `data` as frames on `path`, writing nothing if it is empty. */
+  write(path: readonly number[], data: Uint8Array): Promise<void>;
+  /** Write the frame closing `path`. */
+  close(path: readonly number[]): Promise<void>;
+}
+
+/** Reads invocation headers and frames from a byte stream. */
+export class FrameReader {
+  /** Paths longer than `maxDepth` elements, 64 by default, are rejected. */
+  constructor(readable: ReadableStream<Uint8Array>, options?: { maxDepth?: number });
+  /** The reader of the byte stream, through which its owner cancels it. */
+  readonly reader: ReadableStreamDefaultReader<Uint8Array>;
+  /** The path of the data last returned by {@link next}. */
+  readonly path: readonly number[];
+  /**
+   * The next chunk of the data of a frame on {@link path}, empty for the frame
+   * closing it, or `null` once the stream ends between frames. Chunks are
+   * views of the chunks read, not copies.
+   */
+  next(): Promise<Uint8Array | null>;
+  /**
+   * The next invocation header, or `null` once the stream ends before one.
+   * Names longer than `maxInstanceLength` and `maxNameLength` bytes, 1 KiB by
+   * default, are rejected.
+   */
+  header(options?: { maxInstanceLength?: number; maxNameLength?: number }): Promise<Header | null>;
+}
+
+/** Frames written to and read from a byte stream pair. */
+export class Framed {
+  constructor(
+    writable: WritableStream<Uint8Array>,
+    readable: ReadableStream<Uint8Array>,
+    options?: { maxDepth?: number },
+  );
+  readonly tx: FrameWriter;
+  readonly rx: FrameReader;
+}
+
+/** Accepts the invocations sent over a byte stream pair one after another. */
+export class Listener {
+  constructor(
+    writable: WritableStream<Uint8Array>,
+    readable: ReadableStream<Uint8Array>,
+    options?: { maxDepth?: number; maxInstanceLength?: number; maxNameLength?: number },
+  );
+  /** The frames of the byte stream pair, through which its owner closes or tears it down. */
+  readonly io: Framed;
+  /**
+   * The header of the next invocation, once the previous one was served, along
+   * with the frames to serve it over, or `null` once the stream ends before one.
+   * Once serving an invocation failed, the byte streams must be torn down.
+   */
+  accept(): Promise<[Header, Framed] | null>;
+}
+
+// ----- codec.js -------------------------------------------------------------
+
+/** An encoder of values, which transmits the pending values nested in the last encoded value. */
+export interface Encoder<T = InputValue> {
+  /** Encode `value` into `w`. */
+  encode(w: Writer, value: T): void;
+  /**
+   * Write the frames of the pending values nested in the last encoded value,
+   * whose paths are nested in `path`, resolving once all of them are closed.
+   */
+  transmit(path: readonly number[], tx: FrameWriter): Promise<void>;
+  /** Whether nothing in the last encoded value is pending. */
+  readonly complete: boolean;
+}
+
+/** A decoder of values, which receives the pending values nested in the last decoded value. */
+export interface Decoder<T = Value> {
+  /**
+   * Decode a value from `r` as a resumable decoder: when `r` runs out, it
+   * yields the number of bytes it needs from `r.pos` on, and continues once
+   * `r` holds them.
+   */
+  decode(r: Reader): Generator<number, T, void>;
+  /**
+   * Receive `data`, the data of a frame on the elements of `path` from `at` on,
+   * relative to the last decoded value, which closes that path if empty,
+   * resolving once `data` is taken.
+   */
+  receive(path: readonly number[], at: number, data: Uint8Array): Promise<void> | void;
+  /** Whether nothing in the last decoded value is pending. */
+  readonly complete: boolean;
+}
+
+/** The encoder of the values of `ty`. */
+export function encoder(ty: Type): Encoder;
+/** The decoder of the values of `ty`. */
+export function decoder(ty: Type): Decoder;
+
+/**
+ * Send `value`, the parameters when invoking and the results when serving, on
+ * the root path using `enc`, then the pending values nested in it. `value` is
+ * encoded before anything is written. Resolves once all paths are closed.
+ */
+export function transmit<T>(enc: Encoder<T>, tx: FrameWriter, value: T): Promise<void>;
+
+/**
+ * Receive a value, the results when invoking and the parameters when serving,
+ * from the root path using `dec`, returning it and the promise receiving the
+ * pending values nested in it, which resolves once all paths are closed.
+ * Receiving fails on a frame on a path, which is not pending, on data after
+ * the end of a value, on `rx` ending before all paths are closed, on an error
+ * of `rx` and, with {@link UnreadError}, on data for a pending value whose
+ * consumer was cancelled. A consumer, which is not ready to take more data,
+ * such as one of a stream whose chunks are not read, stalls receiving. Once
+ * receiving failed, the pending values stay pending. `rx` must not be read
+ * again before the receipt resolved.
+ */
+export function receive<T>(dec: Decoder<T>, rx: FrameReader): Promise<[T, Promise<void>]>;
+
+/** The error of receiving data for a pending value whose consumer was cancelled. */
+export class UnreadError extends Error {}
+
+/** The error for a frame received on `path`, which is not pending. */
+export function errorUnknownPath(path: readonly number[]): Error;
+/** The error for data received after the end of a value. */
+export function errorDataAfterEnd(): Error;
+
+// ----- mux.js ---------------------------------------------------------------
 
 /** The error a discarded sub-stream's reader fails with. */
 export const DISCARDED: Error;

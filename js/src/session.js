@@ -9,8 +9,9 @@
 // such value; the helpers below walk those descriptors, spawning a reader or
 // writer task per sub-stream.
 
+import { PROTOCOL } from "./frame.js";
 import { AsyncReader, Writer, atomic, readVarU32 } from "./io.js";
-import { DISCARDED, Mux, PROTOCOL, unexpectedError } from "./mux.js";
+import { DISCARDED, Mux, unexpectedError } from "./mux.js";
 import {
   asyncDepth,
   decodeSteps,
