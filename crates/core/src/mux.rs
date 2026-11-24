@@ -20,7 +20,9 @@ use crate::{
 /// fails on a frame on a path, which is not pending, on data after the end of a value, on `rx`
 /// ending before all paths are closed, on an error of `rx` and, with [`ReceiveError::Unread`], on
 /// data for an asynchronous value whose consumer was dropped. A decoder, which cannot take data,
-/// such as one of a stream whose chunks are not consumed, stalls ingress.
+/// such as one of a stream whose chunks are not consumed, stalls ingress, so the asynchronous
+/// values must be consumed concurrently with each other and with the [Receipt], see the
+/// [crate docs](crate).
 pub async fn receive<D, F, I>(
     mut dec: D,
     mut rx: F,
@@ -79,7 +81,8 @@ where
 
 /// Future receiving the asynchronous values nested in a value
 ///
-/// Resolves once all paths are closed.
+/// Resolves once all paths are closed, stalls while the consumer of a received frame does not
+/// take it.
 #[must_use]
 pub struct Receipt<D, F, I> {
     rx: F,

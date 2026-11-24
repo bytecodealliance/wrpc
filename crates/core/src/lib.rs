@@ -27,6 +27,14 @@
 //! parameters and results, which encoders [Transmit] and decoders [Receive]. [`Listener`]
 //! accepts the invocations sent over a byte stream pair one after another.
 //!
+//! Received asynchronous values are not buffered: until the consumer of a `future` or `stream`
+//! takes the data received for it, nothing else of its invocation is received. Consume all of
+//! them concurrently with each other and with the future receiving them, such as the [Receipt]
+//! or the [Invocation], for example, with `join!` or by spawning a task draining each. If the peer
+//! interleaves them, a consumer reading one `stream` to its end before polling another one stalls
+//! the invocation indefinitely and without an error, unless the application ends it, for example,
+//! with a timeout around the invocation; I/O timeouts do not fire, since nothing is read.
+//!
 //! Over TCP, enable `TCP_NODELAY`, since invocations consist of small writes, each awaited by
 //! the peer.
 

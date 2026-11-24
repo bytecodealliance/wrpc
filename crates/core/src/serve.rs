@@ -63,6 +63,9 @@ impl From<ReceiveError> for ServeError {
 }
 
 /// Server serving invocations with [`Send`] futures, such as [`Framed`], see [`Codec::serve`]
+///
+/// The handler must consume the asynchronous parameters concurrently with each other, see the
+/// [crate docs](crate).
 pub trait Serve {
     /// Output of serving an invocation, such as the response of a request-response transport
     type Output;
@@ -140,7 +143,8 @@ where
     ///
     /// Receives the parameters, calls `f` with them and transmits the results it returns. The
     /// asynchronous parameters are received while `f` runs and the results are transmitted, it
-    /// resolves once all I/O is done. Nothing is transmitted if `f` fails.
+    /// resolves once all I/O is done. Nothing is transmitted if `f` fails. `f` must consume the
+    /// asynchronous parameters concurrently with each other, see the [crate docs](crate).
     ///
     /// Unlike [`Serve`], this does not require [`Send`] values and futures.
     pub async fn serve<F, W, I, O, T>(
