@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	github.com/google/uuid v1.6.0
 	github.com/lmittmann/tint v1.1.3
-	wrpc.io/go v0.4.0-rc.1
+	wrpc.io/go v0.4.0-rc.2
 )
 
 require (
@@ -15,4 +15,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace wrpc.io/go v0.4.0-rc.1 => ../../go
+replace wrpc.io/go v0.4.0-rc.2 => ../../go
