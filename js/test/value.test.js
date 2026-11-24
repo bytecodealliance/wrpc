@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 
 import * as t from "../src/types.js";
-import { AsyncReader, Chan, Reader, Writer } from "../src/io.js";
+import { AsyncReader, Reader, Writer } from "../src/io.js";
 import { decoder, encoder, pack, unpack } from "../src/codec.js";
 
 /**
@@ -435,66 +435,4 @@ test("values decode resumably across chunk boundaries", async () => {
     const ar = new AsyncReader(async () => chunks.shift() ?? null);
     assert.deepEqual(await ar.decode((r) => decoder(ty).decode(r)), v);
   }
-});
-
-test("a bounded channel makes senders wait for room", async () => {
-  const chan = new Chan(1);
-  assert.equal(await chan.send(1), true);
-  let sent = false;
-  const sending = chan.send(2).then((ok) => (sent = ok));
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(sent, false);
-  assert.deepEqual(await chan.next(), { value: 1, done: false });
-  assert.equal(await sending, true);
-  chan.close();
-  assert.equal(await chan.send(3), false);
-  assert.deepEqual(await chan.next(), { value: 2, done: false });
-  assert.deepEqual(await chan.next(), { value: undefined, done: true });
-});
-
-test("a channel is cancelled by leaving a loop over it early, not once ended", async () => {
-  for (const [
-    consume,
-    cancels,
-  ] of /** @type {[(chan: Chan<number>) => Promise<void>, boolean][]} */ ([
-    [
-      async (chan) => {
-        for await (const v of chan) {
-          assert.equal(v, 1);
-          break;
-        }
-      },
-      true,
-    ],
-    [
-      async (chan) => {
-        chan.close();
-        for await (const v of chan) assert.equal(v, 1);
-        chan.cancel();
-      },
-      false,
-    ],
-    [
-      async (chan) => {
-        await chan.next();
-        const end = chan.next();
-        chan.close();
-        await end;
-        chan.cancel();
-      },
-      false,
-    ],
-  ])) {
-    const chan = new Chan();
-    let cancelled = false;
-    chan.onCancel(() => (cancelled = true));
-    chan.push(1);
-    await consume(chan);
-    assert.equal(cancelled, cancels);
-    assert.equal(await chan.send(2), false);
-  }
-  const failed = new Chan();
-  failed.close(new Error("boom"));
-  failed.cancel(new Error("discarded"));
-  await assert.rejects(failed.next(), /boom/);
 });

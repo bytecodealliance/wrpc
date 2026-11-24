@@ -9,7 +9,7 @@
 export * as t from "./types.js";
 export * as types from "./types.js";
 
-export { Reader, Writer, AsyncReader, Chan, atomic } from "./io.js";
+export { Reader, Writer, atomic } from "./io.js";
 export { PROTOCOL, FrameReader, FrameWriter, Framed, Listener } from "./frame.js";
 export {
   UnreadError,

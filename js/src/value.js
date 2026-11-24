@@ -1,6 +1,7 @@
-// The component-model value codec, in the wRPC wire format. A value is encoded
-// or decoded against a `Type` from `types.js`. This mirrors the canonical Rust
-// codec in `wrpc-core`'s `value.rs`.
+// The codecs of the component-model values without nested values, in the
+// wRPC wire format, and the conversions of JavaScript values, which the codec
+// tree of `codec.js` builds on. This mirrors the canonical Rust codec in
+// `wrpc-core`'s `value.rs`.
 //
 // JavaScript representation of values (following the ToJSValue and
 // ToComponentValue conversions of the component model's JS-API draft, see
@@ -30,24 +31,11 @@
 //   flags               -> null-prototype object of booleans keyed by camel case name
 //   own<R> / borrow<R>  -> Uint8Array (the opaque handle bytes)
 
-import {
-  Chan,
-  UNEXPECTED_EOF,
-  atomic,
-  isUnexpectedEof,
-  readVarInt,
-  readVarU32,
-  textEncoder,
-  textDecoder,
-} from "./io.js";
+import { atomic, isUnexpectedEof, readVarInt, readVarU32, textEncoder, textDecoder } from "./io.js";
 
 /** @typedef {import("./index.d.ts").Type} Type */
-/** @typedef {import("./index.d.ts").Value} Value */
 /** @typedef {import("./io.js").Reader} Reader */
 /** @typedef {import("./io.js").Writer} Writer */
-
-/** The number of received chunks a pending `stream` buffers. */
-const STREAM_CAPACITY = 128;
 
 /** @typedef {import("./index.d.ts").TypedArray} TypedArray */
 /**
@@ -125,18 +113,6 @@ const typedArrayName = /** @type {(this: unknown) => string | undefined} */ (
 export const isTypedArray = (v, Typed) => typedArrayName.call(v) === Typed.name;
 
 /**
- * Extend a relative index `path` by structural index `i`, but only while a
- * `sink` is being collected (otherwise paths are irrelevant and left
- * `undefined`). `option`/`result`/`variant` keep the parent's path; `list`,
- * `tuple` and `record` push the element/field index and `future` pushes `0`,
- * matching the wRPC indexing rules.
- * @param {unknown} sink
- * @param {number[] | undefined} path
- * @param {number} i
- */
-const childPath = (sink, path, i) => (sink ? [...(path ?? []), i] : undefined);
-
-/**
  * Read a status byte, rejecting any but `0` and `1` like the Rust codec.
  * @param {string} what @returns {(r: Reader) => boolean} whether it is `1`
  */
@@ -149,52 +125,20 @@ export const optionStatus = status("option status");
 export const resultStatus = status("result status");
 const boolStatus = status("bool value");
 
-/** @param {string} kind @param {string} [op] */
-const asyncRequired = (kind, op = "decode") =>
-  `\`${kind}\` values require the async session API (\`invoke\`/\`accept\`), ` +
-  `not the synchronous \`${op}\``;
-
-const unitStream = "a `stream` without an element type requires an `Encoder`/`Decoder`";
-
 /** Scratch space to convert floats to and from their little-endian bytes. */
 const floatView = new DataView(new ArrayBuffer(8));
 const floatBytes = new Uint8Array(floatView.buffer);
 const f32Bytes = floatBytes.subarray(0, 4);
 
-/** The kinds of the types whose values contain other values. */
-const COMPOSITE = new Set([
-  "list",
-  "map",
-  "tuple",
-  "record",
-  "option",
-  "result",
-  "variant",
-  "future",
-  "stream",
-]);
-
 /**
- * Decode a single stream/list chunk of `n` elements of type `elem` from `r`.
- * Chunks of numeric types are returned as the matching typed array, all
- * others as an array.
- * @param {Reader} r
- * @param {Type} elem
- * @param {number} n
- * @param {import("./index.d.ts").DecodeDeferred[]} [sink]
- * @param {number[]} [path]
+ * Decode `n` elements of the type `elem` without nested values from `r`,
+ * as the typed array of a numeric `elem`, or an array.
+ * @param {Reader} r @param {Type} elem @param {number} n
  * @returns {Generator<number, any, void>}
  */
-export function* readChunk(r, elem, n, sink, path) {
+export function* readChunk(r, elem, n) {
   if (elem.kind === "u8") return yield* atomic(r, (r) => r.take(n).slice());
   const out = [];
-  if (COMPOSITE.has(elem.kind)) {
-    for (let i = 0; i < n; i++) {
-      out.push(yield* decodeSteps(r, elem, sink, childPath(sink, path, i)));
-    }
-    return out;
-  }
-  // Resume from the last whole element rather than one generator step per element.
   const typed = typedArray(elem);
   for (;;) {
     let pos = r.pos;
@@ -210,110 +154,7 @@ export function* readChunk(r, elem, n, sink, path) {
 }
 
 /**
- * Encode a value against a type into `w`.
- *
- * `stream` and `future` values cannot be written synchronously: their data is
- * multiplexed over the invocation's framed stream after the synchronous header.
- * When `sink` is supplied (by the async session machinery) the pending marker
- * is written and a descriptor `{ path, kind, ty, value }` is appended to it,
- * recording the relative `path` at which the deferred data must be transmitted.
- * Without a `sink`, encountering one throws.
- *
- * @param {Writer} w
- * @param {Type} ty
- * @param {any} v
- * @param {{ path: number[], kind: "stream" | "future", ty: Type | null, value: any }[]} [sink]
- * @param {number[]} [path] relative index path to `v` (only tracked with `sink`)
- */
-export function encodeValue(w, ty, v, sink, path) {
-  switch (ty.kind) {
-    case "list": {
-      const elem = ty.elem;
-      const elems = toList(v, elem);
-      const length = ty.length;
-      if (length === undefined) w.varU(elems.length);
-      else if (elems.length !== length)
-        throw new RangeError(
-          `expected ${length} elements for a fixed-length list, got ${elems.length}`,
-        );
-      if (elem.kind === "u8") {
-        w.bytes(/** @type {Uint8Array} */ (elems));
-        return;
-      }
-      for (let i = 0; i < elems.length; i++)
-        encodeValue(w, elem, elems[i], sink, childPath(sink, path, i));
-      return;
-    }
-    case "map": {
-      const entries = mapEntries(v);
-      if (!entries) throw new TypeError("expected a `Map` for a `map`");
-      w.varU(entries.length);
-      const entry = mapEntry(ty);
-      for (let i = 0; i < entries.length; i++)
-        encodeValue(w, entry, entries[i], sink, childPath(sink, path, i));
-      return;
-    }
-    case "tuple": {
-      const elems = iterableToValues(v);
-      if (!elems) throw new TypeError(`expected an iterable for a \`tuple\``);
-      ty.elems.forEach((et, i) => encodeValue(w, et, elems[i], sink, childPath(sink, path, i)));
-      return;
-    }
-    case "record": {
-      if (!isObject(v)) throw new TypeError("expected an object for a `record`");
-      ty.fields.forEach(({ key, ty: fty }, i) =>
-        encodeValue(w, fty, v[key], sink, childPath(sink, path, i)),
-      );
-      return;
-    }
-    case "option": {
-      if (ty.some.kind === "option") {
-        const i = caseIndex(v, OPTION_CASES, "a nested `option`");
-        w.u8(i);
-        if (i) encodeValue(w, ty.some, v.value, sink, path);
-      } else if (v === null || v === undefined) {
-        w.u8(0);
-      } else {
-        w.u8(1);
-        encodeValue(w, ty.some, v, sink, path);
-      }
-      return;
-    }
-    case "result": {
-      const i = caseIndex(v, RESULT_CASES, "a `result`");
-      w.u8(i);
-      const pty = i ? ty.err : ty.ok;
-      if (pty) encodeValue(w, pty, v.value, sink, path);
-      return;
-    }
-    case "variant": {
-      const i = caseIndex(
-        v,
-        ty.cases.map((c) => c.name),
-        "a `variant`",
-      );
-      w.varU(i);
-      const pty = ty.cases[i].ty;
-      if (pty) encodeValue(w, pty, v.value, sink, path);
-      return;
-    }
-    case "future":
-    case "stream": {
-      // Mark the value pending; its data flows over the framed sub-stream.
-      if (ty.kind === "stream" && !ty.elem) throw new Error(unitStream);
-      w.u8(0x00);
-      if (!sink) throw new Error(asyncRequired(ty.kind, "encode"));
-      const elem = ty.kind === "future" ? ty.some : ty.elem;
-      sink.push({ path: path ?? [], kind: ty.kind, ty: elem, value: v });
-      return;
-    }
-    default:
-      encodeScalar(w, ty, v);
-  }
-}
-
-/**
- * Encode a value of a type, which is not {@link COMPOSITE}, into `w`.
+ * Encode a value of a type without nested values into `w`.
  * @param {Writer} w
  * @param {Type} ty
  * @param {any} v
@@ -396,120 +237,7 @@ export function encodeScalar(w, ty, v) {
 }
 
 /**
- * Decode a value of type `ty` from `r`.
- *
- * `stream` and `future` values carry their data asynchronously over the
- * framed sub-streams. When `sink` is supplied (by the async session
- * machinery), a placeholder is returned — a `Promise` for a `future`, an async
- * iterable of chunks for a `stream` — and a descriptor recording the relative
- * `path` and the placeholder's resolver/queue is appended to `sink`. Without a
- * `sink`, encountering one throws. A `stream` sent inline as a single ready
- * chunk is decoded either way, and recorded in `sink` as `inline` if its
- * elements carry pending values.
- *
- * @param {Reader} r
- * @param {Type} ty
- * @param {import("./index.d.ts").DecodeDeferred[]} [sink]
- * @param {number[]} [path] relative index path to this value (only with `sink`)
- * @returns {any}
- */
-export function decodeValue(r, ty, sink, path) {
-  const step = decodeSteps(r, ty, sink, path).next();
-  if (!step.done) throw new RangeError(UNEXPECTED_EOF);
-  return step.value;
-}
-
-/**
- * {@link decodeValue} as a resumable decoder: when `r` runs out, it yields the
- * number of bytes it needs from `r.pos` on, and continues once `r` holds them.
- * @param {Reader} r
- * @param {Type} ty
- * @param {import("./index.d.ts").DecodeDeferred[]} [sink]
- * @param {number[]} [path]
- * @returns {Generator<number, any, void>}
- */
-export function* decodeSteps(r, ty, sink, path) {
-  switch (ty.kind) {
-    case "list":
-      return yield* readChunk(r, ty.elem, ty.length ?? (yield* atomic(r, readVarU32)), sink, path);
-    case "map": {
-      const n = yield* atomic(r, readVarU32);
-      const m = new Map(yield* readChunk(r, mapEntry(ty), n, sink, path));
-      if (m.size !== n) throw new RangeError("duplicate map key");
-      return m;
-    }
-    case "tuple": {
-      const out = [];
-      for (let i = 0; i < ty.elems.length; i++) {
-        out.push(yield* decodeSteps(r, ty.elems[i], sink, childPath(sink, path, i)));
-      }
-      return out;
-    }
-    case "record": {
-      /** @type {Record<string, any>} */
-      const out = Object.create(null);
-      for (let i = 0; i < ty.fields.length; i++) {
-        const { key, ty: fty } = ty.fields[i];
-        out[key] = yield* decodeSteps(r, fty, sink, childPath(sink, path, i));
-      }
-      return out;
-    }
-    case "option": {
-      const nested = ty.some.kind === "option";
-      if (!(yield* atomic(r, optionStatus))) return nested ? tagged("none") : undefined;
-      const value = yield* decodeSteps(r, ty.some, sink, path);
-      return nested ? tagged("some", value) : value;
-    }
-    case "result": {
-      const err = yield* atomic(r, resultStatus);
-      const kind = RESULT_CASES[err ? 1 : 0];
-      const vty = err ? ty.err : ty.ok;
-      return vty ? tagged(kind, yield* decodeSteps(r, vty, sink, path)) : tagged(kind);
-    }
-    case "variant": {
-      const i = yield* atomic(r, readVarU32);
-      const c = ty.cases[i];
-      if (!c) throw new RangeError(`unknown variant discriminant ${i}`);
-      return c.ty ? tagged(c.name, yield* decodeSteps(r, c.ty, sink, path)) : tagged(c.name);
-    }
-    case "future": {
-      if (yield* atomic(r, optionStatus)) {
-        return Promise.resolve(
-          ty.some ? yield* decodeSteps(r, ty.some, sink, childPath(sink, path, 0)) : undefined,
-        );
-      }
-      if (!sink) throw new Error(asyncRequired(ty.kind));
-      /** @type {(value: any) => void} */
-      let resolve = () => {};
-      const promise = new Promise((res) => (resolve = res));
-      sink.push({ path: path ?? [], kind: "future", ty: ty.some, resolve });
-      return promise;
-    }
-    case "stream": {
-      if (!ty.elem) throw new Error(unitStream);
-      if (yield* atomic(r, optionStatus)) {
-        // A stream sent inline as a single ready chunk.
-        const n = yield* atomic(r, readVarU32);
-        const before = sink?.length ?? 0;
-        const chunk = yield* readChunk(r, ty.elem, n, sink, path);
-        const q = new Chan();
-        if (n > 0) q.push(chunk);
-        q.close();
-        if (sink && sink.length > before) sink.push({ path: path ?? [], kind: "inline", queue: q });
-        return q;
-      }
-      if (!sink) throw new Error(asyncRequired(ty.kind));
-      const queue = new Chan(STREAM_CAPACITY);
-      sink.push({ path: path ?? [], kind: "stream", ty: ty.elem, queue });
-      return queue;
-    }
-    default:
-      return yield* atomic(r, (r) => decodeScalar(r, ty));
-  }
-}
-
-/**
- * Decode a value of a type that is not {@link COMPOSITE} from `r`.
+ * Decode a value of a type without nested values from `r`.
  * @param {Reader} r
  * @param {Type} ty
  * @returns {any}
@@ -576,48 +304,6 @@ export function decodeScalar(r, ty) {
   }
 }
 
-/**
- * The length of the longest path, relative to a value of `ty`, of a pending
- * `stream`/`future` value it can carry, or `-1` if it can carry none.
- * @param {Type} ty @returns {number}
- */
-export function asyncDepth(ty) {
-  /** @param {Type | null | undefined} t */
-  const nested = (t) => (t ? asyncDepth(t) : -1);
-  /** @param {(Type | null | undefined)[]} ts */
-  const indexed = (ts) => Math.max(-1, ...ts.map((t) => (nested(t) < 0 ? -1 : nested(t) + 1)));
-  switch (ty.kind) {
-    case "future":
-      return Math.max(0, indexed([ty.some]));
-    case "stream":
-      return Math.max(0, indexed([ty.elem]));
-    case "list":
-      return indexed([ty.elem]);
-    case "map":
-      return indexed([mapEntry(ty)]);
-    case "option":
-      return nested(ty.some);
-    case "result":
-      return Math.max(nested(ty.ok), nested(ty.err));
-    case "tuple":
-      return indexed(ty.elems);
-    case "record":
-      return indexed(ty.fields.map((f) => f.ty));
-    case "variant":
-      return Math.max(-1, ...ty.cases.map((c) => nested(c.ty)));
-    default:
-      return -1;
-  }
-}
-
-/**
- * Whether values of `ty` can carry pending `stream`/`future` values.
- * @param {Type} ty @returns {boolean}
- */
-export function hasAsync(ty) {
-  return asyncDepth(ty) >= 0;
-}
-
 /** @param {unknown} v @returns {v is Record<string, any>} */
 export const isObject = (v) => (typeof v === "object" && v !== null) || typeof v === "function";
 
@@ -666,11 +352,6 @@ export function toList(v, elem) {
 
 const u8 = /** @type {Type} */ ({ kind: "u8" });
 
-/**
- * The `tuple<key, value>` entry type of the `map<key, value>` type `ty`.
- * @param {Extract<Type, { kind: "map" }>} ty @returns {Type}
- */
-const mapEntry = (ty) => ({ kind: "tuple", elems: [ty.key, ty.value] });
 export const OPTION_CASES = ["none", "some"];
 export const RESULT_CASES = ["ok", "error"];
 

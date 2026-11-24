@@ -96,22 +96,6 @@ export type InputValue =
 /** The thunk form of a `future` value to send, called once it is transmitted. */
 export type FutureThunk<T> = () => T | Promise<T>;
 
-/**
- * A descriptor recorded by {@link decodeValue} for a pending `stream`/`future`
- * value, naming the relative sub-stream `path` and the placeholder to feed, or
- * for a `stream` sent `inline` as a single ready chunk whose elements carry
- * pending values.
- */
-export type DecodeDeferred =
-  | {
-      path: number[];
-      kind: "future";
-      ty: Type | null;
-      resolve: (value: Value) => void;
-    }
-  | { path: number[]; kind: "stream"; ty: Type; queue: Chan<Chunk> }
-  | { path: number[]; kind: "inline"; queue: Chan<Chunk> };
-
 // ----- types.js -------------------------------------------------------------
 
 export namespace types {
@@ -183,49 +167,6 @@ export class Reader {
  * needs from there, then retry it once they are buffered.
  */
 export function atomic<T>(r: Reader, f: (r: Reader) => T): Generator<number, T, void>;
-
-/**
- * An async FIFO queue. Leaving a `for await` loop over it early cancels it.
- */
-export class Chan<T> implements AsyncIterable<T> {
-  constructor(capacity?: number);
-  readonly capacity: number;
-  readonly closed: boolean;
-  readonly cancelled: boolean;
-  /** The error the channel was failed with, if any. */
-  readonly error: unknown;
-  /**
-   * Call `f` with the buffered values dropped once the consumer cancels the
-   * channel, or now, with none, if it already has. Hooks are dropped once the
-   * consumer has received the end of the channel.
-   */
-  onCancel(f: (dropped: T[]) => void): void;
-  push(value: T): void;
-  /** Push `value` once fewer than `capacity` values are buffered; `false` if closed instead. */
-  send(value: T): Promise<boolean>;
-  close(err?: unknown): void;
-  /** Stop consuming: drop the buffered values, close (failed with `err`, if given and not already failed), and call the `onCancel` hooks with the values dropped. */
-  cancel(err?: unknown): void;
-  next(): Promise<{ value: T | undefined; done: boolean }>;
-  [Symbol.asyncIterator](): AsyncIterator<T>;
-}
-
-/** A pull-based async byte reader that buffers across chunk boundaries. */
-export class AsyncReader {
-  constructor(pull: () => Promise<Uint8Array | null | undefined>);
-  remaining(): Uint8Array;
-  consume(n: number): void;
-  fill(n: number): Promise<boolean>;
-  /**
-   * Run the resumable decoder `decode` over the buffered bytes: each time it
-   * yields the number of bytes it needs next, pull more input.
-   */
-  decode<T>(decode: (r: Reader) => Generator<number, T, void>): Promise<T>;
-  u8(): Promise<number>;
-  take(n: number): Promise<Uint8Array>;
-  varU(bits?: number): Promise<bigint>;
-  name(max?: number): Promise<string>;
-}
 
 // ----- frame.js -------------------------------------------------------------
 
