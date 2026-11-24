@@ -10,7 +10,6 @@ repository.workspace = true
 
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
-bytes = { workspace = true }
 clap = { workspace = true, features = [
     "color",
     "derive",
