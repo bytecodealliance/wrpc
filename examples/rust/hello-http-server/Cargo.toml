@@ -27,4 +27,4 @@ tracing-subscriber = { workspace = true, features = [
     "env-filter",
     "fmt",
 ] }
-wrpc = { workspace = true, features = ["http"] }
+wrpc = { workspace = true, features = ["http2"] }

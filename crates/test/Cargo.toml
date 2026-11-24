@@ -17,6 +17,7 @@ http = [
     "dep:hyper",
     "dep:hyper-util",
     "dep:wrpc-http",
+    "wrpc-http/http2",
 ]
 net = ["dep:tempfile"]
 quic = ["dep:quinn"]

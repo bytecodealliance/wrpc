@@ -9,10 +9,14 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = ["http2"]
+http2 = ["dep:h2"]
+
 [dependencies]
 bytes = { workspace = true }
 futures = { workspace = true, features = ["std"] }
-h2 = { workspace = true }
+h2 = { workspace = true, optional = true }
 http = { workspace = true }
 http-body = { workspace = true }
 http-body-util = { workspace = true }
