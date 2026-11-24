@@ -1,6 +1,6 @@
 use wasmtime::Engine;
 use wasmtime::component::Component;
-use wrpc_wasmtime::Exports;
+use wrpc_wasmtime::{Exports, ExportsError};
 
 #[test]
 fn instance_names() -> anyhow::Result<()> {
@@ -48,6 +48,17 @@ fn instance_name_collision() -> anyhow::Result<()> {
         )"#,
     )?;
     let err = Exports::new(&component).unwrap_err();
+    let ExportsError::Conflict {
+        instance,
+        first,
+        second,
+    } = &err
+    else {
+        panic!("unexpected error: {err}");
+    };
+    assert_eq!(&**instance, "ns:pkg/a@1");
+    assert_eq!(&**first, "ns:pkg/a@1.0.1");
+    assert_eq!(&**second, "ns:pkg/a@1.2.0");
     assert_eq!(
         err.to_string(),
         "exports `ns:pkg/a@1.0.1` and `ns:pkg/a@1.2.0` both map to instance `ns:pkg/a@1`"

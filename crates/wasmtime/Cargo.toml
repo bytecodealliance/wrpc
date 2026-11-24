@@ -14,7 +14,6 @@ default = ["async"]
 async = ["wasmtime/component-model-async"]
 
 [dependencies]
-anyhow = { workspace = true, features = ["std"] }
 bytes = { workspace = true }
 futures = { workspace = true, features = ["alloc"] }
 tokio = { workspace = true, features = ["macros"] }
@@ -22,13 +21,14 @@ tokio-util = { workspace = true, features = ["codec"] }
 tracing = { workspace = true, features = ["attributes"] }
 wasm-tokio = { workspace = true }
 wasmparser = { workspace = true, features = ["component-model", "validate"] }
-wasmtime = { workspace = true, features = ["anyhow", "component-model", "runtime", "std"] }
+wasmtime = { workspace = true, features = ["component-model", "runtime", "std"] }
 wrpc-core = { workspace = true }
 
 [dev-dependencies]
+anyhow = { workspace = true, features = ["std"] }
 test-log = { workspace = true, features = ["trace"] }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread"] }
-wasmtime = { workspace = true, features = ["cranelift", "wat"] }
+wasmtime = { workspace = true, features = ["anyhow", "cranelift", "wat"] }
 wrpc-test = { workspace = true }
 
 [[test]]

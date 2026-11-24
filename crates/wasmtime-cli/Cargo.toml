@@ -40,6 +40,7 @@ wasi-preview1-component-adapter-provider = { workspace = true }
 wasmparser = { workspace = true }
 wasmtime = { workspace = true, features = [
     "addr2line",
+    "anyhow",
     "async",
     "cache",
     "component-model",
