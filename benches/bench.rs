@@ -7,17 +7,10 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
 use anyhow::{Context as _, anyhow, ensure};
-use bytes::Bytes;
 use criterion::measurement::WallTime;
 use criterion::{BenchmarkGroup, Criterion};
 use futures::TryFutureExt as _;
-use http::request::Parts;
-use http_body_util::BodyExt;
-use http_body_util::combinators::UnsyncBoxBody;
-use hyper::body::Incoming;
-use hyper::client::conn::http2::SendRequest;
-use hyper_util::client::legacy::ResponseFuture;
-use hyper_util::client::legacy::connect::HttpConnector;
+use http::Uri;
 use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::tokio::WithHyperIo;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -25,13 +18,11 @@ use tokio::net::{TcpStream, UnixListener};
 use tokio::runtime::{Handle, Runtime};
 use tokio::task::JoinHandle;
 use tokio::try_join;
-use tokio_util::codec::{Decoder, Encoder};
+use tower::util;
 use wasmtime::component::{Component, Linker, ResourceTable};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
-use wrpc_core::{
-    Codec, Encode, Framed, Header, Invoke, InvokeError, Listener, Receive, Serve, Transmit,
-};
-use wrpc_http::{Body, OutgoingRequest};
+use wrpc_core::{Encode, Framed, Header, Invoke, Listener, Serve};
+use wrpc_http::Client;
 
 mod ping_bindings_wrpc {
     wit_bindgen_wrpc::generate!({
@@ -341,74 +332,6 @@ impl Tasks {
     }
 }
 
-/// Client invoking functions with HTTP/1 requests sent by a pooling client
-struct Http1<'a> {
-    clt:
-        &'a hyper_util::client::legacy::Client<HttpConnector, UnsyncBoxBody<Bytes, std::io::Error>>,
-    parts: Parts,
-}
-
-impl<'a, E: Transmit + Send + 'static> Invoke<E> for Http1<'a> {
-    type Invocation<D: Receive> = wrpc_http::Invocation<ResponseFuture, Incoming, D>;
-
-    fn invoke<D, T>(
-        self,
-        codec: Codec<E, D>,
-        instance: &str,
-        func: &str,
-        params: T,
-    ) -> impl Future<Output = Result<(D::Item, Self::Invocation<D>), InvokeError>> + use<'a, E, D, T>
-    where
-        E: Encoder<T, Error = std::io::Error>,
-        D: Decoder<Error = std::io::Error> + Receive,
-    {
-        let Self { clt, parts } = self;
-        OutgoingRequest {
-            parts,
-            send: |req: http::Request<Body<E>>| clt.request(req.map(BodyExt::boxed_unsync)),
-        }
-        .invoke(codec, instance, func, params)
-    }
-}
-
-/// Client invoking functions with HTTP/2 requests sent on a connection
-struct Http2<'a> {
-    sender: &'a mut SendRequest<UnsyncBoxBody<Bytes, std::io::Error>>,
-    parts: Parts,
-}
-
-impl<'a, E: Transmit + Send + 'static> Invoke<E> for Http2<'a> {
-    type Invocation<D: Receive> = wrpc_http::Invocation<
-        Pin<Box<dyn Future<Output = hyper::Result<http::Response<Incoming>>> + Send + 'a>>,
-        Incoming,
-        D,
-    >;
-
-    fn invoke<D, T>(
-        self,
-        codec: Codec<E, D>,
-        instance: &str,
-        func: &str,
-        params: T,
-    ) -> impl Future<Output = Result<(D::Item, Self::Invocation<D>), InvokeError>> + use<'a, E, D, T>
-    where
-        E: Encoder<T, Error = std::io::Error>,
-        D: Decoder<Error = std::io::Error> + Receive,
-    {
-        let Self { sender, parts } = self;
-        OutgoingRequest {
-            parts,
-            send: |req: http::Request<Body<E>>| {
-                Box::pin(async move {
-                    sender.ready().await?;
-                    sender.send_request(req.map(BodyExt::boxed_unsync)).await
-                }) as Pin<Box<dyn Future<Output = _> + Send>>
-            },
-        }
-        .invoke(codec, instance, func, params)
-    }
-}
-
 fn bench_invoke(
     g: &mut BenchmarkGroup<WallTime>,
     rt: &Runtime,
@@ -582,10 +505,9 @@ fn bench_http1(
     handler: impl Handler,
 ) -> anyhow::Result<()> {
     let rt = Runtime::new().context("failed to build Tokio runtime")?;
-    let (parts, clt, lis) =
-        rt.block_on(wrpc_test::with_http_pooling(async |parts, clt, lis| {
-            Ok((parts, clt, lis))
-        }))?;
+    let (uri, clt, lis) = rt.block_on(wrpc_test::with_http_pooling(async |uri, clt, lis| {
+        Ok((uri, clt, lis))
+    }))?;
     let tasks = Tasks::new(&rt);
     tasks.spawn({
         let tasks = tasks.clone();
@@ -606,11 +528,7 @@ fn bench_http1(
         }
     });
     bench_calls(g, &rt, &tasks, "http1", async || {
-        func.call(Http1 {
-            clt: &clt,
-            parts: parts.clone(),
-        })
-        .await
+        func.call(Client::new(uri.clone(), &clt)).await
     })
 }
 
@@ -653,14 +571,11 @@ fn bench_http2(
         .await
         .context("failed to serve HTTP/2 connection")
     });
-    let (parts, ()) = http::Request::new(()).into_parts();
-    bench_calls(g, &rt, &tasks, "http2", async || {
-        func.call(Http2 {
-            sender: &mut sender,
-            parts: parts.clone(),
-        })
-        .await
-    })
+    let mut clt = Client::new(
+        Uri::default(),
+        util::service_fn(move |req| sender.send_request(req)),
+    );
+    bench_calls(g, &rt, &tasks, "http2", async || func.call(&mut clt).await)
 }
 
 fn bench_transports(

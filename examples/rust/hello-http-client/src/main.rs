@@ -2,9 +2,11 @@ use std::net::SocketAddr;
 
 use anyhow::{Context as _, ensure};
 use clap::{Parser, ValueEnum};
-use http::{Request, Response};
-use reqwest::Client;
-use wrpc::http::OutgoingRequest;
+use http::Uri;
+use hyper_util::client::legacy;
+use hyper_util::rt::TokioExecutor;
+use tower::ServiceExt as _;
+use wrpc::http::{Body, Client};
 
 mod bindings {
     wrpc::generate!({
@@ -40,25 +42,19 @@ async fn main() -> anyhow::Result<()> {
 
     let Args { http, addr } = Args::parse();
 
-    let clt = match http {
-        Version::Http1 => Client::builder().http1_only(),
-        Version::Http2 => Client::builder().http2_prior_knowledge(),
-    };
-    let clt = clt.build().context("failed to build HTTP client")?;
-
-    let (mut parts, ()) = Request::new(()).into_parts();
-    parts.uri = format!("http://{addr}/").parse()?;
-    let hello = bindings::wrpc_examples::hello::handler::hello(OutgoingRequest {
-        parts,
-        send: |req: Request<wrpc::http::Body<_>>| async move {
-            let req = reqwest::Request::try_from(req.map(reqwest::Body::wrap))?;
-            let res = clt.execute(req).await?;
-            ensure!(res.status().is_success(), "status `{}`", res.status());
-            anyhow::Ok(Response::from(res))
-        },
-    })
-    .await
-    .context("failed to invoke `wrpc-examples:hello/handler.hello`")?;
+    let clt = legacy::Client::builder(TokioExecutor::default())
+        .http2_only(matches!(http, Version::Http2))
+        .build_http::<Body>()
+        .map_result(|res| -> anyhow::Result<_> {
+            let res = res?;
+            let status = res.status();
+            ensure!(status.is_success(), "status `{status}`");
+            Ok(res)
+        });
+    let uri = Uri::try_from(format!("http://{addr}/"))?;
+    let hello = bindings::wrpc_examples::hello::handler::hello(Client::new(uri, clt))
+        .await
+        .context("failed to invoke `wrpc-examples:hello/handler.hello`")?;
     eprintln!("{hello}");
     Ok(())
 }
