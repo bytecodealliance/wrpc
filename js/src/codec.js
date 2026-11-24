@@ -5,12 +5,19 @@
 
 import { Reader, UNEXPECTED_EOF, Writer, atomic, readVarU32 } from "./io.js";
 import {
-  decodeSteps,
-  encodeValue,
-  hasAsync,
+  OPTION_CASES,
+  RESULT_CASES,
+  caseIndex,
+  decodeScalar,
+  encodeScalar,
+  isObject,
   isTypedArray,
   iterableToValues,
+  mapEntries,
+  optionStatus,
   readChunk,
+  resultStatus,
+  tagged,
   toList,
   typedArray,
 } from "./value.js";
@@ -30,7 +37,8 @@ import {
  *   receive(path: readonly number[], at: number, data: Uint8Array): Promise<void> | void,
  *   readonly complete: boolean,
  * }} Decoder
- * @typedef {{ encoder(): Encoder, decoder(): Decoder, sync?: Type }} Codec
+ * @typedef {{ encoder(): Encoder, decoder(): Decoder, leaf?: Type }} Codec
+ * @typedef {ArrayLike<any> | number} Chunk
  */
 
 const EMPTY = new Uint8Array(0);
@@ -54,11 +62,7 @@ export const errorDataAfterEnd = () => new RangeError("received data after value
 const errorEof = (msg) => new RangeError(`${UNEXPECTED_EOF}: ${msg}`);
 
 /** @param {Reader} r */
-const isPending = (r) => {
-  const b = r.u8();
-  if (b > 1) throw new RangeError(`invalid status byte \`${b}\``);
-  return b === 0;
-};
+const isPending = (r) => !optionStatus(r);
 
 /** A resumable decoder fed pushed data, buffering only the bytes of an incomplete step. */
 class Feed {
@@ -134,43 +138,50 @@ async function transmitNested(nested, path, tx) {
   );
 }
 
-/** @param {Type} ty @returns {Codec} */
-function sync(ty) {
+/** @param {readonly number[]} path @returns {never} */
+const unknownPath = (path) => {
+  throw errorUnknownPath(path);
+};
+
+/** @param {Error} err @returns {never} */
+function fail(err) {
+  throw err;
+}
+
+/**
+ * The codec of the values of a type without nested values.
+ * @param {Type} ty @returns {Codec}
+ */
+function leaf(ty) {
   /** @type {Encoder} */
   const enc = {
-    encode: (w, v) => encodeValue(w, ty, v),
+    encode: (w, v) => encodeScalar(w, ty, v),
     transmit: async () => {},
     complete: true,
   };
   /** @type {Decoder} */
   const dec = {
-    decode: (r) => decodeSteps(r, ty),
-    receive: (path) => {
-      throw errorUnknownPath(path);
-    },
+    decode: (r) => atomic(r, (r) => decodeScalar(r, ty)),
+    receive: unknownPath,
     complete: true,
   };
-  return { encoder: () => enc, decoder: () => dec, sync: ty };
+  return { encoder: () => enc, decoder: () => dec, leaf: ty };
 }
 
 /**
- * @param {Codec[]} codecs @param {(v: any) => any[]} split @param {(vs: any[]) => any} join
+ * The codec of values, which keep the pending values nested in them indexed.
+ * @param {(w: Writer, v: any) => Map<number, Encoder>} encode
+ * @param {(r: Reader) => Generator<number, [any, Map<number, Decoder>], void>} decode
  * @returns {Codec}
  */
-function product(codecs, split, join) {
+function indexed(encode, decode) {
   return {
     encoder() {
       /** @type {Map<number, Encoder>} */
       let nested = new Map();
       return {
         encode(w, v) {
-          nested = new Map();
-          const vs = split(v);
-          codecs.forEach((c, i) => {
-            const enc = c.encoder();
-            enc.encode(w, vs[i]);
-            if (!enc.complete) nested.set(i, enc);
-          });
+          nested = encode(w, v);
         },
         transmit: (path, tx) => transmitNested(nested, path, tx),
         get complete() {
@@ -183,14 +194,9 @@ function product(codecs, split, join) {
       let nested = new Map();
       return {
         *decode(r) {
-          nested = new Map();
-          const vs = [];
-          for (let i = 0; i < codecs.length; i++) {
-            const dec = codecs[i].decoder();
-            vs.push(yield* dec.decode(r));
-            if (!dec.complete) nested.set(i, dec);
-          }
-          return join(vs);
+          const [v, decs] = yield* decode(r);
+          nested = decs;
+          return v;
         },
         receive: (path, at, data) => route(nested, path, at, data),
         get complete() {
@@ -201,35 +207,292 @@ function product(codecs, split, join) {
   };
 }
 
+/**
+ * The codec of values of a case, whose payload's pending values are not indexed.
+ * @param {(w: Writer, v: any) => [Codec | null, any]} encode writes the case
+ * @param {(r: Reader) => Generator<number, [Codec | null, (v?: any) => any], void>} decode
+ *   reads the case
+ * @returns {Codec}
+ */
+function cases(encode, decode) {
+  return {
+    encoder() {
+      /** @type {Encoder | undefined} */
+      let payload;
+      return {
+        encode(w, v) {
+          const [c, pv] = encode(w, v);
+          payload = c?.encoder();
+          payload?.encode(w, pv);
+        },
+        transmit: async (path, tx) => payload?.transmit(path, tx),
+        get complete() {
+          return !payload || payload.complete;
+        },
+      };
+    },
+    decoder() {
+      /** @type {Decoder | undefined} */
+      let payload;
+      return {
+        *decode(r) {
+          const [c, make] = yield* decode(r);
+          payload = c?.decoder();
+          return payload ? make(yield* payload.decode(r)) : make();
+        },
+        receive(path, at, data) {
+          if (!payload) throw errorUnknownPath(path);
+          return payload.receive(path, at, data);
+        },
+        get complete() {
+          return !payload || payload.complete;
+        },
+      };
+    },
+  };
+}
+
+/**
+ * Encodes the values `vs` using `codecs` into `w`, returning the encoders of the pending values
+ * nested in them.
+ * @param {Writer} w @param {Codec[]} codecs @param {ArrayLike<any>} vs
+ */
+function encodeAll(w, codecs, vs) {
+  /** @type {Map<number, Encoder>} */
+  const nested = new Map();
+  codecs.forEach((c, i) => {
+    const enc = c.encoder();
+    enc.encode(w, vs[i]);
+    if (!enc.complete) nested.set(i, enc);
+  });
+  return nested;
+}
+
+/**
+ * Decodes values using `codecs` from `r`, returning them and the decoders of the pending values
+ * nested in them.
+ * @param {Reader} r @param {Codec[]} codecs
+ * @returns {Generator<number, [any[], Map<number, Decoder>], void>}
+ */
+function* decodeAll(r, codecs) {
+  /** @type {Map<number, Decoder>} */
+  const nested = new Map();
+  const vs = [];
+  for (let i = 0; i < codecs.length; i++) {
+    const dec = codecs[i].decoder();
+    vs.push(yield* dec.decode(r));
+    if (!dec.complete) nested.set(i, dec);
+  }
+  return [vs, nested];
+}
+
 /** @param {Codec[]} codecs */
 const tuple = (codecs) =>
-  product(
-    codecs,
-    (v) => iterableToValues(v) ?? fail(new TypeError("expected an iterable for a `tuple`")),
-    (vs) => vs,
+  indexed(
+    (w, v) =>
+      encodeAll(
+        w,
+        codecs,
+        iterableToValues(v) ?? fail(new TypeError("expected an iterable for a `tuple`")),
+      ),
+    (r) => decodeAll(r, codecs),
   );
 
 /** @param {Extract<Type, { kind: "record" }>} ty */
-const record = (ty) =>
-  product(
-    ty.fields.map((f) => codec(f.ty)),
-    (v) => {
-      if ((typeof v !== "object" || v === null) && typeof v !== "function") {
-        throw new TypeError("expected an object for a `record`");
-      }
-      return ty.fields.map((f) => v[f.key]);
+function record(ty) {
+  const codecs = ty.fields.map((f) => codec(f.ty));
+  return indexed(
+    (w, v) => {
+      if (!isObject(v)) throw new TypeError("expected an object for a `record`");
+      return encodeAll(
+        w,
+        codecs,
+        ty.fields.map((f) => v[f.key]),
+      );
     },
-    (vs) => {
+    function* (r) {
+      const [vs, nested] = yield* decodeAll(r, codecs);
       /** @type {Record<string, any>} */
       const out = Object.create(null);
       ty.fields.forEach((f, i) => (out[f.key] = vs[i]));
-      return out;
+      return [out, nested];
     },
   );
+}
 
-/** @param {Error} err @returns {never} */
-function fail(err) {
-  throw err;
+/**
+ * The elements of `list<elem>` values and `stream<elem>` chunks, or the
+ * numbers of elements of the chunks of a `stream` without an element type.
+ * @param {Codec | null} elem
+ */
+function items(elem) {
+  const ty = elem?.leaf;
+  const typed = ty && typedArray(ty);
+  return {
+    /** @param {any} v @returns {Chunk} */
+    from(v) {
+      if (!elem) {
+        if (!Number.isInteger(v) || v < 0 || v > 0xffffffff) {
+          throw new TypeError("expected a number of elements for a `stream` chunk");
+        }
+        return v;
+      }
+      return ty
+        ? toList(v, ty)
+        : (iterableToValues(v) ?? fail(new TypeError("expected an iterable for a `list`")));
+    },
+    /** @param {Chunk} v */
+    count: (v) => (typeof v === "number" ? v : v.length),
+    /**
+     * Encodes the elements of `v`, returning the encoders of the pending values nested in them.
+     * @param {Writer} w @param {Chunk} v @returns {Map<number, Encoder>}
+     */
+    encode(w, v) {
+      /** @type {Map<number, Encoder>} */
+      const nested = new Map();
+      if (typeof v === "number" || !elem) return nested;
+      if (ty?.kind === "u8") {
+        w.bytes(/** @type {Uint8Array} */ (v));
+        return nested;
+      }
+      for (let i = 0; i < v.length; i++) {
+        const enc = elem.encoder();
+        enc.encode(w, v[i]);
+        if (!enc.complete) nested.set(i, enc);
+      }
+      return nested;
+    },
+    /**
+     * Decodes `n` elements, returning them and the decoders of the pending values nested in them.
+     * @param {Reader} r @param {number} n
+     * @returns {Generator<number, [Chunk, Map<number, Decoder>], void>}
+     */
+    *decode(r, n) {
+      /** @type {Map<number, Decoder>} */
+      const nested = new Map();
+      if (!elem) return [n, nested];
+      if (ty) return [yield* readChunk(r, ty, n), nested];
+      const vs = [];
+      for (let i = 0; i < n; i++) {
+        const dec = elem.decoder();
+        vs.push(yield* dec.decode(r));
+        if (!dec.complete) nested.set(i, dec);
+      }
+      return [vs, nested];
+    },
+    /** @param {Chunk[]} parts @returns {Chunk} */
+    join(parts) {
+      if (parts.length === 1) return parts[0];
+      if (!elem) return /** @type {number[]} */ (parts).reduce((a, b) => a + b);
+      if (!typed) return /** @type {any[][]} */ (parts).flat();
+      const typedParts = /** @type {TypedArray[]} */ (parts);
+      const out = new typed(typedParts.reduce((n, part) => n + part.length, 0));
+      let off = 0;
+      for (const part of typedParts) {
+        out.set(/** @type {any} */ (part), off);
+        off += part.length;
+      }
+      return out;
+    },
+  };
+}
+
+/** @param {Codec} elem @param {number | undefined} length */
+function list(elem, length) {
+  const its = items(elem);
+  return indexed(
+    (w, v) => {
+      const vs = its.from(v);
+      const n = its.count(vs);
+      if (length === undefined) w.varU(n);
+      else if (n !== length) {
+        throw new RangeError(`expected ${length} elements for a fixed-length list, got ${n}`);
+      }
+      return its.encode(w, vs);
+    },
+    function* (r) {
+      return yield* its.decode(r, length ?? (yield* atomic(r, readVarU32)));
+    },
+  );
+}
+
+/** @param {Codec} key @param {Codec} value */
+function map(key, value) {
+  const its = items(tuple([key, value]));
+  return indexed(
+    (w, v) => {
+      const entries = mapEntries(v) ?? fail(new TypeError("expected a `Map` for a `map`"));
+      w.varU(entries.length);
+      return its.encode(w, entries);
+    },
+    function* (r) {
+      const n = yield* atomic(r, readVarU32);
+      const [entries, nested] = yield* its.decode(r, n);
+      const m = new Map(/** @type {[any, any][]} */ (entries));
+      if (m.size !== n) throw new RangeError("duplicate map key");
+      return [m, nested];
+    },
+  );
+}
+
+/** @param {Extract<Type, { kind: "option" }>} ty */
+function option(ty) {
+  const some = codec(ty.some);
+  const nested = ty.some.kind === "option";
+  return cases(
+    (w, v) => {
+      if (nested) {
+        const i = caseIndex(v, OPTION_CASES, "a nested `option`");
+        w.u8(i);
+        return i ? [some, v.value] : [null, undefined];
+      }
+      if (v === null || v === undefined) {
+        w.u8(0);
+        return [null, undefined];
+      }
+      w.u8(1);
+      return [some, v];
+    },
+    function* (r) {
+      if (!(yield* atomic(r, optionStatus))) {
+        return [null, () => (nested ? tagged("none") : undefined)];
+      }
+      return [some, (v) => (nested ? tagged("some", v) : v)];
+    },
+  );
+}
+
+/** @param {Codec | null} ok @param {Codec | null} err */
+function result(ok, err) {
+  return cases(
+    (w, v) => {
+      const i = caseIndex(v, RESULT_CASES, "a `result`");
+      w.u8(i);
+      return [i ? err : ok, v.value];
+    },
+    function* (r) {
+      const i = (yield* atomic(r, resultStatus)) ? 1 : 0;
+      return [i ? err : ok, (...v) => tagged(RESULT_CASES[i], ...v)];
+    },
+  );
+}
+
+/** @param {Extract<Type, { kind: "variant" }>} ty */
+function variant(ty) {
+  const names = ty.cases.map((c) => c.name);
+  const codecs = ty.cases.map((c) => c.ty && codec(c.ty));
+  return cases(
+    (w, v) => {
+      const i = caseIndex(v, names, "a `variant`");
+      w.varU(i);
+      return [codecs[i], v.value];
+    },
+    function* (r) {
+      const i = yield* atomic(r, readVarU32);
+      if (i >= names.length) throw new RangeError(`unknown variant discriminant ${i}`);
+      return [codecs[i], (...v) => tagged(names[i], ...v)];
+    },
+  );
 }
 
 /** @param {Codec | null} payload @returns {Codec} */
@@ -316,69 +579,6 @@ function future(payload) {
 }
 
 /**
- * The encoding of `list<elem>` and of `stream<elem>` chunks.
- * @param {Codec} elem
- */
-function items(elem) {
-  const ty = elem.sync;
-  const typed = ty && typedArray(ty);
-  return {
-    /**
-     * Encodes `v`, returning the encoders of the pending values nested in its elements.
-     * @param {Writer} w @param {ArrayLike<any>} v @returns {Map<number, Encoder>}
-     */
-    encode(w, v) {
-      /** @type {Map<number, Encoder>} */
-      const nested = new Map();
-      if (ty) {
-        encodeValue(w, { kind: "list", elem: ty }, v);
-        return nested;
-      }
-      w.varU(v.length);
-      for (let i = 0; i < v.length; i++) {
-        const enc = elem.encoder();
-        enc.encode(w, v[i]);
-        if (!enc.complete) nested.set(i, enc);
-      }
-      return nested;
-    },
-    /**
-     * Decodes `n` elements, returning them and the decoders of the pending values nested in them.
-     * @param {Reader} r @param {number} n
-     * @returns {Generator<number, [any[] | TypedArray, Map<number, Decoder>], void>}
-     */
-    *decode(r, n) {
-      /** @type {Map<number, Decoder>} */
-      const nested = new Map();
-      if (ty) return [yield* readChunk(r, ty, n), nested];
-      const vs = [];
-      for (let i = 0; i < n; i++) {
-        const dec = elem.decoder();
-        vs.push(yield* dec.decode(r));
-        if (!dec.complete) nested.set(i, dec);
-      }
-      return [vs, nested];
-    },
-    /** @param {(any[] | TypedArray)[]} parts */
-    join(parts) {
-      if (parts.length === 1) return parts[0];
-      if (!typed) return parts.flat();
-      const out = new typed(parts.reduce((n, part) => n + part.length, 0));
-      let off = 0;
-      for (const part of parts) {
-        out.set(/** @type {any} */ (part), off);
-        off += part.length;
-      }
-      return out;
-    },
-    /** @param {any} v */
-    toList: (v) => (ty ? toList(v, ty) : (iterableToValues(v) ?? fail(listError()))),
-  };
-}
-
-const listError = () => new TypeError("expected an iterable for a `list`");
-
-/**
  * The chunks of the `stream<elem>` source `src`: any iterable or async
  * iterable of chunks, or a single typed array of a numeric `elem`.
  * @param {any} src @param {Type | undefined} elem
@@ -396,7 +596,7 @@ function chunks(src, elem) {
   return src;
 }
 
-/** @param {Codec} elem @returns {Codec} */
+/** @param {Codec | null} elem @returns {Codec} */
 function stream(elem) {
   const list = items(elem);
   return {
@@ -406,7 +606,7 @@ function stream(elem) {
       let pending = false;
       return {
         encode(w, v) {
-          src = chunks(v, elem.sync);
+          src = chunks(v, elem?.leaf);
           w.u8(0);
           pending = true;
         },
@@ -433,9 +633,11 @@ function stream(elem) {
             let offset = 0;
             for await (const chunk of src) {
               if (stopped) return;
-              const v = list.toList(chunk);
-              if (!v.length) continue;
+              const v = list.from(chunk);
+              const n = list.count(v);
+              if (!n) continue;
               const w = new Writer();
+              w.varU(n);
               const encs = list.encode(w, v);
               const written = tx.write(path, w.finish());
               for (const [i, enc] of encs) {
@@ -445,7 +647,7 @@ function stream(elem) {
                 }, failed);
                 nested.add(p);
               }
-              offset += v.length;
+              offset += n;
               await written;
             }
             await tx.close(path);
@@ -471,10 +673,10 @@ function stream(elem) {
       let offset = 0;
       /** @type {Feed | undefined} */
       let feed;
-      /** @param {[any[] | TypedArray, Map<number, Decoder>]} chunk */
+      /** @param {[Chunk, Map<number, Decoder>]} chunk */
       const take = ([vs, decs]) => {
         for (const [i, dec] of decs) nested.set(offset + i, dec);
-        offset += vs.length;
+        offset += list.count(vs);
         return vs;
       };
       /** @param {Reader} r */
@@ -491,7 +693,7 @@ function stream(elem) {
             const vs = yield* chunk(r);
             return new ReadableStream({
               start(c) {
-                if (vs.length) c.enqueue(vs);
+                if (list.count(vs)) c.enqueue(vs);
                 c.close();
               },
             });
@@ -525,12 +727,12 @@ function stream(elem) {
             wake = undefined;
           }
           if (cancelled) throw new UnreadError();
-          /** @type {(any[] | TypedArray)[]} */
+          /** @type {Chunk[]} */
           const parts = [];
           for (let rest = data; rest.length;) {
             feed ??= new Feed(chunk);
             if (!feed.push(rest)) break;
-            if (feed.value.length) parts.push(feed.value);
+            if (list.count(feed.value)) parts.push(feed.value);
             rest = feed.rest();
             feed = undefined;
           }
@@ -545,23 +747,87 @@ function stream(elem) {
 }
 
 /**
+ * Whether the values of `ty` have an empty encoding.
+ * @param {Type} ty @returns {boolean}
+ */
+function empty(ty) {
+  switch (ty.kind) {
+    case "tuple":
+      return ty.elems.every(empty);
+    case "record":
+      return ty.fields.every((f) => empty(f.ty));
+    case "list":
+      return ty.length === 0 || (ty.length !== undefined && empty(ty.elem));
+    default:
+      return false;
+  }
+}
+
+/**
+ * The codec of the elements of type `ty` of a `list` or `stream`, which must
+ * not have an empty encoding, since their numbers would not be bounded by the
+ * data received.
+ * @param {Type} ty
+ */
+function element(ty) {
+  if (empty(ty)) {
+    throw new TypeError("list and stream elements must not have an empty encoding");
+  }
+  return codec(ty);
+}
+
+/**
  * The codec of the values of `ty`.
  * @param {Type} ty @returns {Codec}
  */
 function codec(ty) {
-  if (!hasAsync(ty)) return sync(ty);
   switch (ty.kind) {
+    case "list":
+      return list(element(ty.elem), ty.length);
+    case "map":
+      return map(codec(ty.key), codec(ty.value));
     case "tuple":
       return tuple(ty.elems.map(codec));
     case "record":
       return record(ty);
+    case "option":
+      return option(ty);
+    case "result":
+      return result(ty.ok && codec(ty.ok), ty.err && codec(ty.err));
+    case "variant":
+      return variant(ty);
     case "future":
       return future(ty.some && codec(ty.some));
     case "stream":
-      return stream(codec(ty.elem));
+      return stream(ty.elem && element(ty.elem));
     default:
-      throw new TypeError(`pending values nested in \`${ty.kind}\` are not supported`);
+      return leaf(ty);
   }
+}
+
+/**
+ * Encodes `value` using `enc` into `w`, failing if any value nested in it is
+ * pending, as `future` and `stream` values always are.
+ * @param {Encoder} enc @param {any} value @param {Writer} w
+ */
+export function pack(enc, value, w) {
+  enc.encode(w, value);
+  if (!enc.complete) throw new TypeError("asynchronous value is pending");
+}
+
+/**
+ * Decodes a value using `dec` from all of `r`, failing if any value nested in
+ * it is pending.
+ * @param {Decoder} dec @param {Reader} r
+ */
+export function unpack(dec, r) {
+  const step = dec.decode(r).next();
+  if (!step.done) throw errorEof("buffer is incomplete");
+  if (!dec.complete) {
+    throw new RangeError("buffer contains pending asynchronous values, which cannot be unpacked");
+  }
+  if (!r.done) throw new RangeError("buffer contains trailing bytes");
+  return step.value;
 }
 
 /** The encoder of the values of `ty`. @param {Type} ty */

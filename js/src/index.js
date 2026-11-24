@@ -21,8 +21,10 @@ export {
   encoder,
   errorDataAfterEnd,
   errorUnknownPath,
+  pack,
   receive,
   transmit,
+  unpack,
 } from "./codec.js";
 export { MEDIA_TYPE, fromFetch, fromRequest } from "./http.js";
 export { invoke, accept, serve } from "./session.js";
