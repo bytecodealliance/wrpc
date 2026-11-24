@@ -16,7 +16,7 @@ async fn go_bindgen() -> anyhow::Result<()> {
     use tokio::fs;
     use tokio::time::{sleep, timeout};
     use tracing::info;
-    use wrpc_core::{Framed, invoke_blocking};
+    use wrpc_core::{Framed, invoke};
 
     if let Err(err) = fs::remove_dir_all("tests/go/bindings").await {
         match err.kind() {
@@ -75,7 +75,7 @@ async fn go_bindgen() -> anyhow::Result<()> {
         let (tx, rx) = wrpc_test::tcp_streams(&addr).await?;
         let mut clt = Framed::new(tx, rx);
         common::assert_sync(&mut clt).await?;
-        let res = invoke_blocking::<(&str,), (u32,)>(clt, "foo", "f", ("panic",)).await;
+        let res = invoke::<(&str,), (u32,), _>(clt, "foo", "f", ("panic",)).await;
         let Err(err) = res else {
             bail!("a panicking handler must fail the invocation");
         };

@@ -43,7 +43,7 @@ pub use frame::{
     FrameDecoder, FrameEncoder, FrameHeaderDecoder, FrameHeaderEncoder, FrameHeaderRef, FrameRef,
 };
 pub use header::{Header, HeaderDecoder, HeaderEncoder, HeaderRef, PROTOCOL};
-pub use invoke::{Invocation, Invoke, invoke, invoke_blocking};
+pub use invoke::{Invocation, Invoke, invoke};
 pub use listener::Listener;
 pub use mux::{Receipt, Transmission, receive, transmit};
 pub use pack::{pack, unpack};

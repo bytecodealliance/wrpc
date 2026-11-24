@@ -513,7 +513,6 @@ where
             .as_ref()
             .map(|ty| format!("{}, ", self.decoded_ty(ty)))
             .unwrap_or_default();
-        let futures = self.r#gen.futures_path();
         let wrpc_core = self.r#gen.wrpc_core_path();
         let params = {
             let s = params.join(", ");
@@ -525,40 +524,33 @@ where
         };
         let params = format!("{}({params})", args_tuple.unwrap_or_default());
         let name = rpc_func_name(func);
-        let io = result.is_some() && (async_params || async_results);
-        let call = if io {
-            format!(
-                r#"{futures}::FutureExt::flatten({futures}::future::lazy(move |_| {wrpc_core}::invoke::<{args_ty}, ({results_ty}), _>(clt__, "{instance}", "{name}", {params})))"#
-            )
-        } else {
-            format!(
-                r#"{wrpc_core}::invoke_blocking::<{args_ty}, ({results_ty})>(clt__, "{instance}", "{name}", {params})"#
-            )
+        let call = format!(
+            r#"{wrpc_core}::invoke::<{args_ty}, ({results_ty}), _>(clt__, "{instance}", "{name}", {params})"#
+        );
+        let pat = match &result {
+            Some(..) => format!(
+                "((wrpc__,), io__){}",
+                decoded.map_or_else(String::default, |ty| format!(": (({ty},), _)"))
+            ),
+            None => "((), io__)".to_string(),
         };
-        let (pat, ret) = match result {
-            Some(result) if io => (
-                format!(
-                    "((wrpc__,), io__){}",
-                    decoded.map_or_else(String::default, |ty| format!(": (({ty},), _)"))
-                ),
-                format!("({result}, io__)"),
+        let (io, ret) = match result {
+            Some(result) if async_params || async_results => {
+                (String::default(), format!("({result}, io__)"))
+            }
+            result => (
+                format!(r#"{anyhow}::Context::context(io__.await, "failed to invoke `{fqn}`")?;"#),
+                result.unwrap_or_else(|| "()".to_string()),
             ),
-            Some(result) => (
-                format!(
-                    "(wrpc__,){}",
-                    decoded.map_or_else(String::default, |ty| format!(": ({ty},)"))
-                ),
-                result,
-            ),
-            None => ("wrpc__".to_string(), "wrpc__".to_string()),
         };
         uwriteln!(
             self.src,
             r#"
-                {futures}::FutureExt::map({call}, |wrpc__| -> {anyhow}::Result<_> {{
-                    let {pat} = {anyhow}::Context::context(wrpc__, "failed to invoke `{fqn}`")?;
+                async move {{
+                    let {pat} = {anyhow}::Context::context({call}.await, "failed to invoke `{fqn}`")?;
+                    {io}
                     Ok({ret})
-                }})
+                }}
             }}"#,
         );
 

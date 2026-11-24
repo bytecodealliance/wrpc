@@ -27,8 +27,7 @@ use tokio_util::io::StreamReader;
 use tracing::instrument;
 use wrpc_core::{
     Decode, Encode, FrameDecoder, FrameEncoder, FrameRef, Framed, Header, HeaderDecoder,
-    HeaderEncoder, HeaderRef, Listener, ServeError, invoke, invoke_blocking, receive, serve,
-    transmit,
+    HeaderEncoder, HeaderRef, Listener, ServeError, invoke, receive, serve, transmit,
 };
 use wrpc_test::next_invocation;
 
@@ -596,14 +595,10 @@ where
         async {
             for _ in 0..2 {
                 let (tx, rx) = connect().await?;
-                let res = invoke_blocking::<(&str,), (String,)>(
-                    Framed::new(tx, rx),
-                    "test",
-                    "reset",
-                    ("arg",),
-                )
-                .await;
-                res.expect_err("`test.reset` should have failed");
+                let res =
+                    invoke::<(&str,), (String,), _>(Framed::new(tx, rx), "test", "reset", ("arg",))
+                        .await;
+                ensure!(res.is_err(), "`test.reset` should have failed");
             }
 
             let mut buf = BytesMut::default();
@@ -614,9 +609,9 @@ where
             let (tx, rx) = connect().await?;
             let mut clt = Framed::new(tx, rx);
             for params in [sync_values(), unpacked] {
-                let res =
-                    invoke_blocking::<SyncValues, SyncValues>(&mut clt, "test", "sync", params)
-                        .await?;
+                let (res, io) =
+                    invoke::<SyncValues, SyncValues, _>(&mut clt, "test", "sync", params).await?;
+                io.await?;
                 assert_eq!(res, sync_values());
             }
 
@@ -752,13 +747,14 @@ async fn rust_quic_stopped_mid_params() -> anyhow::Result<()> {
         let (res, srv) = join!(
             async {
                 let (tx, rx) = clt.open_bi().await.expect("failed to open stream");
-                invoke_blocking::<(BoxStream<'static, Bytes>,), (u32,)>(
+                let (.., io) = invoke::<(BoxStream<'static, Bytes>,), (u32,), _>(
                     Framed::new(tx, rx),
                     "foo",
                     "bar",
                     (param,),
                 )
-                .await
+                .await?;
+                io.await
             },
             async {
                 let (mut stx, mut srx) =
@@ -834,13 +830,14 @@ async fn rust_webtransport_stopped_mid_params() -> anyhow::Result<()> {
         let (res, srv) = join!(
             async {
                 let (tx, rx) = clt.open_bi().await.expect("failed to open stream");
-                invoke_blocking::<(BoxStream<'static, Bytes>,), (u32,)>(
+                let (.., io) = invoke::<(BoxStream<'static, Bytes>,), (u32,), _>(
                     Framed::new(tx, rx),
                     "foo",
                     "bar",
                     (param,),
                 )
-                .await
+                .await?;
+                io.await
             },
             async {
                 let (mut stx, mut srx) =
@@ -989,7 +986,7 @@ async fn rust_http_dynamic() -> anyhow::Result<()> {
         async move {
             let (parts, ()) = http::Request::new(()).into_parts();
             sender.ready().await?;
-            let res = invoke_blocking::<SyncValues, SyncValues>(
+            let (res, io) = invoke::<SyncValues, SyncValues, _>(
                 OutgoingRequest {
                     parts: parts.clone(),
                     send: |req: http::Request<Body<_>>| {
@@ -1001,6 +998,7 @@ async fn rust_http_dynamic() -> anyhow::Result<()> {
                 sync_values(),
             )
             .await?;
+            io.await?;
             assert_eq!(res, sync_values());
 
             let (res, io) = invoke::<AsyncValues, AsyncValues, _>(
@@ -1018,7 +1016,7 @@ async fn rust_http_dynamic() -> anyhow::Result<()> {
             assert_async_values(res, io).await?;
 
             sender.ready().await?;
-            let res = invoke_blocking::<(String,), (String,)>(
+            let res = invoke::<(String,), (String,), _>(
                 OutgoingRequest {
                     parts,
                     send: |req: http::Request<Body<_>>| {
@@ -1046,14 +1044,11 @@ async fn assert_oneshot(
 ) -> anyhow::Result<()> {
     join!(
         async {
-            let (a,) = invoke_blocking::<(u32,), (String,)>(
-                Framed::new(clt_tx, clt_rx),
-                "foo",
-                "bar",
-                (42,),
-            )
-            .await
-            .expect("failed to invoke `foo.bar`");
+            let ((a,), io) =
+                invoke::<(u32,), (String,), _>(Framed::new(clt_tx, clt_rx), "foo", "bar", (42,))
+                    .await
+                    .expect("failed to invoke `foo.bar`");
+            io.await.expect("failed to invoke `foo.bar`");
             assert_eq!(a, "test");
         },
         async {
@@ -1212,7 +1207,8 @@ async fn rust_reuse_streams() -> anyhow::Result<()> {
         async {
             let mut clt = Framed::new(clt_tx, clt_rx);
             for n in [1u32, 2] {
-                let (m,) = invoke_blocking::<(u32,), (u32,)>(&mut clt, "foo", "bar", (n,)).await?;
+                let ((m,), io) = invoke::<(u32,), (u32,), _>(&mut clt, "foo", "bar", (n,)).await?;
+                io.await?;
                 ensure!(m == n + 1);
             }
             for n in [3u32, 4] {
@@ -1258,10 +1254,11 @@ async fn rust_oneshot_raw() -> anyhow::Result<()> {
     join!(
         async {
             let (rx, tx) = split(&mut clt);
-            let (a,) =
-                invoke_blocking::<(u32,), (String,)>(Framed::new(tx, rx), "foo", "bar", (42,))
+            let ((a,), io) =
+                invoke::<(u32,), (String,), _>(Framed::new(tx, rx), "foo", "bar", (42,))
                     .await
                     .expect("failed to invoke `foo.bar`");
+            io.await.expect("failed to invoke `foo.bar`");
             assert_eq!(a, "test");
         },
         async {
@@ -1410,14 +1407,14 @@ async fn rust_oneshot_raw_strings_invalid_utf8_result() -> anyhow::Result<()> {
         let (rx, tx) = split(srv);
         join!(
             async {
-                invoke_blocking::<(), (String,)>(
+                let res = invoke::<(), (String,), _>(
                     Framed::new(clt_tx, clt_rx),
                     "wrpc-test:raw-strings/strings",
                     func,
                     (),
                 )
-                .await
-                .expect_err("invalid UTF-8 must not be transmitted");
+                .await;
+                assert!(res.is_err(), "invalid UTF-8 must not be transmitted");
             },
             async {
                 let mut lis = Listener::new(tx, rx);
@@ -1492,13 +1489,14 @@ async fn rust_oneshot_borrowed() -> anyhow::Result<()> {
     };
     fut.await?;
     drop(lis);
-    let (greeting,) = invoke_blocking::<(&str,), (String,)>(
+    let ((greeting,), io) = invoke::<(&str,), (String,), _>(
         Framed::new(sink(), res.as_slice()),
         "",
         "greet",
         ("world",),
     )
     .await?;
+    io.await?;
     assert_eq!(greeting, "Hello, world");
     Ok(())
 }
