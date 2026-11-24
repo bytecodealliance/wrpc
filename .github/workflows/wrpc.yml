@@ -198,6 +198,15 @@ jobs:
         if: ${{ matrix.check == 'nextest' }}
       - run: nix build -L .#checks.x86_64-linux.${{ matrix.check }}
 
+  wasm32:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/install-nix
+        with:
+          cachixAuthToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+      - run: nix develop -L --ignore-environment -c cargo check -p wasm32-check --target wasm32-unknown-unknown
+
   crates:
     if: ${{ !startsWith(github.ref, 'refs/tags/go/') }}
     strategy:
@@ -249,7 +258,9 @@ jobs:
           - crate: wit-bindgen-test
 
     name: publish ${{ matrix.crate }} to crates.io
-    needs: cargo
+    needs:
+      - cargo
+      - wasm32
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -409,6 +420,7 @@ jobs:
       - oci
       - test-linux
       - test-windows
+      - wasm32
     runs-on: ubuntu-24.04
     permissions:
       contents: write

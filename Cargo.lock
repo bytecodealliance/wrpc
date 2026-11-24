@@ -3703,6 +3703,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "wasm32-check"
+version = "0.0.0"
+dependencies = [
+ "http-body",
+ "wasmtime",
+ "wrpc",
+]
+
+[[package]]
 name = "wasmparser"
 version = "0.254.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
