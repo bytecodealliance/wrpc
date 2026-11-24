@@ -1169,6 +1169,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-http-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "http",
+ "reqwest",
+ "tokio",
+ "tracing-subscriber",
+ "wrpc",
+]
+
+[[package]]
+name = "hello-http-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "wrpc",
+]
+
+[[package]]
 name = "hello-http-tcp-proxy"
 version = "0.1.0"
 dependencies = [
@@ -1367,6 +1393,21 @@ dependencies = [
  "smallvec",
  "tokio",
  "want",
+]
+
+[[package]]
+name = "hyper-rustls"
+version = "0.27.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dfa8e654703247911e29c23fbeaa261834bd9bb74efba2f9acddc37bfb127f53"
+dependencies = [
+ "http",
+ "hyper",
+ "hyper-util",
+ "rustls",
+ "tokio",
+ "tokio-rustls",
+ "tower-service",
 ]
 
 [[package]]
@@ -2347,10 +2388,12 @@ dependencies = [
  "base64 0.23.1",
  "bytes",
  "futures-core",
+ "h2",
  "http",
  "http-body",
  "http-body-util",
  "hyper",
+ "hyper-rustls",
  "hyper-util",
  "js-sys",
  "log",

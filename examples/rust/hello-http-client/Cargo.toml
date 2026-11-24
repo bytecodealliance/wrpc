@@ -1,0 +1,30 @@
+[package]
+name = "hello-http-client"
+version = "0.1.0"
+
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow = { workspace = true, features = ["std"] }
+clap = { workspace = true, features = [
+    "color",
+    "derive",
+    "error-context",
+    "help",
+    "std",
+    "suggestions",
+    "usage",
+] }
+http = { workspace = true }
+reqwest = { workspace = true, features = ["http2"] }
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread"] }
+tracing-subscriber = { workspace = true, features = [
+    "ansi",
+    "env-filter",
+    "fmt",
+] }
+wrpc = { workspace = true, features = ["http"] }
