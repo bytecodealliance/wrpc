@@ -1,7 +1,8 @@
 //! Value decoding
 
 use core::borrow::Borrow;
-use core::fmt::Display;
+use core::error::Error;
+use core::fmt;
 use core::iter::{self, zip};
 use core::mem;
 use core::task::{Context, Poll};
@@ -17,11 +18,91 @@ use wasm_tokio::{
     CoreNameDecoder, DEFAULT_MAX_INITIAL_CAPACITY, Leb128DecoderI16, Leb128DecoderI32,
     Leb128DecoderI64, Leb128DecoderU16, Leb128DecoderU32, Leb128DecoderU64, Utf8Codec,
 };
-use wasm_wave::wasm::{WasmType, WasmTypeKind, WasmValue};
+use wasm_wave::wasm::{WasmType, WasmTypeKind, WasmValue, WasmValueError};
+use wasm_wave::writer::WriterError;
 use wrpc_core::{Receive, ReceiveError};
 
 /// Default `max_len` of [`ValueDecoder`] and [`TupleDecoder`]
 pub const DEFAULT_MAX_LEN: u32 = 1 << 24;
+
+/// Error of decoding a value
+#[derive(Debug)]
+pub enum DecodeError {
+    /// A primitive value, string, length or discriminant is invalid
+    Primitive(std::io::Error),
+    /// A list or map length exceeds the limit of the decoder
+    TooLong {
+        /// Length of the list or map
+        len: u32,
+        /// Maximum length
+        max: u32,
+    },
+    /// A variant, enum, option or result discriminant does not name a case
+    UnknownDiscriminant(usize),
+    /// Bits beyond the last flag are set
+    InvalidFlags,
+    /// A map contains duplicate keys
+    DuplicateKey,
+    /// A map key could not be formatted for comparison
+    Key(WriterError),
+    /// The decoded parts do not form a value of the type
+    Value(WasmValueError),
+    /// The type is missing a nested type
+    InvalidType,
+    /// Values of the type are not supported
+    UnsupportedType(WasmTypeKind),
+    /// The data ended inside a value
+    Truncated,
+}
+
+impl fmt::Display for DecodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Primitive(..) => f.write_str("failed to decode primitive value"),
+            Self::TooLong { len, max } => {
+                write!(f, "length of `{len}` exceeds maximum of `{max}`")
+            }
+            Self::UnknownDiscriminant(i) => write!(f, "unknown discriminant `{i}`"),
+            Self::InvalidFlags => f.write_str("unknown flags bits are set"),
+            Self::DuplicateKey => f.write_str("map contains duplicate keys"),
+            Self::Key(..) => f.write_str("failed to format map key"),
+            Self::Value(..) => f.write_str("failed to construct value"),
+            Self::InvalidType => f.write_str("type is missing a nested type"),
+            Self::UnsupportedType(kind) => write!(f, "unsupported value type `{kind}`"),
+            Self::Truncated => f.write_str("value is incomplete"),
+        }
+    }
+}
+
+impl Error for DecodeError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Primitive(err) => Some(err),
+            Self::Key(err) => Some(err),
+            Self::Value(err) => Some(err),
+            Self::TooLong { .. }
+            | Self::UnknownDiscriminant(..)
+            | Self::InvalidFlags
+            | Self::DuplicateKey
+            | Self::InvalidType
+            | Self::UnsupportedType(..)
+            | Self::Truncated => None,
+        }
+    }
+}
+
+impl From<DecodeError> for std::io::Error {
+    fn from(err: DecodeError) -> Self {
+        let kind = match &err {
+            DecodeError::Primitive(err) => err.kind(),
+            DecodeError::Truncated => std::io::ErrorKind::UnexpectedEof,
+            DecodeError::InvalidType => std::io::ErrorKind::InvalidInput,
+            DecodeError::UnsupportedType(..) => std::io::ErrorKind::Unsupported,
+            _ => std::io::ErrorKind::InvalidData,
+        };
+        Self::new(kind, err)
+    }
+}
 
 /// Progress of decoding a partially received value
 enum Partial<V> {
@@ -40,6 +121,8 @@ enum Partial<V> {
 /// [Decoder] of values of type `ty`
 ///
 /// Resources, futures and streams are not supported.
+///
+/// Its [`std::io::Error`]s wrap a [`DecodeError`], recoverable with `std::io::Error::downcast`.
 pub struct ValueDecoder<V: WasmValue> {
     ty: V::Type,
     max_len: u32,
@@ -101,6 +184,8 @@ impl<V: WasmValue> Receive for ValueDecoder<V> {
 }
 
 /// [Decoder] of tuples of values of types `tys`, e.g. function results
+///
+/// Its [`std::io::Error`]s wrap a [`DecodeError`], recoverable with `std::io::Error::downcast`.
 pub struct TupleDecoder<V: WasmValue> {
     tys: Arc<[V::Type]>,
     max_len: u32,
@@ -167,16 +252,9 @@ impl<V: WasmValue> Receive for TupleDecoder<V> {
     }
 }
 
-fn error_invalid_data(msg: impl Display) -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::InvalidData, msg.to_string())
-}
-
 fn decode_eof<T>(v: Option<T>, partial: bool, src: &BytesMut) -> std::io::Result<Option<T>> {
     if v.is_none() && (partial || !src.is_empty()) {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::UnexpectedEof,
-            "value incomplete",
-        ));
+        return Err(DecodeError::Truncated.into());
     }
     Ok(v)
 }
@@ -185,40 +263,45 @@ fn decode_leaf<D: Decoder<Error = std::io::Error>, V>(
     mut dec: D,
     src: &mut BytesMut,
     f: impl FnOnce(D::Item) -> V,
-) -> std::io::Result<Option<V>> {
-    let v = dec.decode(src)?;
+) -> Result<Option<V>, DecodeError> {
+    let v = dec.decode(src).map_err(DecodeError::Primitive)?;
     Ok(v.map(f))
 }
 
-fn decode_discriminant(src: &mut BytesMut) -> std::io::Result<Option<usize>> {
-    let Some(v) = Leb128DecoderU32.decode(src)? else {
+fn decode_discriminant(src: &mut BytesMut) -> Result<Option<usize>, DecodeError> {
+    let Some(v) = Leb128DecoderU32
+        .decode(src)
+        .map_err(DecodeError::Primitive)?
+    else {
         return Ok(None);
     };
     Ok(Some(usize::try_from(v).unwrap_or(usize::MAX)))
 }
 
-fn decode_status(src: &mut BytesMut) -> std::io::Result<Option<usize>> {
+fn decode_status(src: &mut BytesMut) -> Result<Option<usize>, DecodeError> {
     let Some(&status) = src.first() else {
         src.reserve(1);
         return Ok(None);
     };
     if status > 1 {
-        return Err(error_invalid_data(format!(
-            "invalid status byte `{status}`"
-        )));
+        return Err(DecodeError::UnknownDiscriminant(status.into()));
     }
     src.advance(1);
     Ok(Some(status.into()))
 }
 
-fn decode_len(src: &mut BytesMut, max_len: u32) -> std::io::Result<Option<usize>> {
-    let Some(n) = Leb128DecoderU32.decode(src)? else {
+fn decode_len(src: &mut BytesMut, max_len: u32) -> Result<Option<usize>, DecodeError> {
+    let Some(n) = Leb128DecoderU32
+        .decode(src)
+        .map_err(DecodeError::Primitive)?
+    else {
         return Ok(None);
     };
     if n > max_len {
-        return Err(error_invalid_data(format!(
-            "length `{n}` exceeds the maximum of `{max_len}`"
-        )));
+        return Err(DecodeError::TooLong {
+            len: n,
+            max: max_len,
+        });
     }
     Ok(Some(usize::try_from(n).unwrap_or(usize::MAX)))
 }
@@ -227,9 +310,9 @@ fn decode_seq<T: WasmValue>(
     src: &mut BytesMut,
     state: &mut Option<Box<Partial<T>>>,
     max_len: u32,
-    len: impl FnOnce(&mut BytesMut) -> std::io::Result<Option<usize>>,
+    len: impl FnOnce(&mut BytesMut) -> Result<Option<usize>, DecodeError>,
     tys: impl IntoIterator<Item: Borrow<T::Type>>,
-) -> std::io::Result<Option<Vec<T>>> {
+) -> Result<Option<Vec<T>>, DecodeError> {
     let (n, mut vs, mut elem) = match state.take().map(|state| *state) {
         Some(Partial::Seq { n, vs, elem }) => (n, vs, elem),
         _ => {
@@ -256,9 +339,9 @@ fn decode_case<T: WasmValue>(
     src: &mut BytesMut,
     state: &mut Option<Box<Partial<T>>>,
     max_len: u32,
-    discriminant: impl FnOnce(&mut BytesMut) -> std::io::Result<Option<usize>>,
-    payload: impl FnOnce(usize) -> std::io::Result<Option<T::Type>>,
-) -> std::io::Result<Option<(usize, Option<T>)>> {
+    discriminant: impl FnOnce(&mut BytesMut) -> Result<Option<usize>, DecodeError>,
+    payload: impl FnOnce(usize) -> Result<Option<T::Type>, DecodeError>,
+) -> Result<Option<(usize, Option<T>)>, DecodeError> {
     let (i, mut state_payload) = match state.take().map(|state| *state) {
         Some(Partial::Case {
             discriminant,
@@ -289,7 +372,7 @@ fn decode_ty<T: WasmValue>(
     src: &mut BytesMut,
     state: &mut Option<Box<Partial<T>>>,
     max_len: u32,
-) -> std::io::Result<Option<T>> {
+) -> Result<Option<T>, DecodeError> {
     match ty.kind() {
         WasmTypeKind::Bool => decode_leaf(BoolCodec, src, T::make_bool),
         WasmTypeKind::S8 => decode_leaf(S8Codec, src, T::make_s8),
@@ -308,26 +391,22 @@ fn decode_ty<T: WasmValue>(
                 Some(Partial::String(dec)) => dec,
                 _ => CoreNameDecoder::with_max_len(max_len),
             };
-            let Some(s) = dec.decode(src)? else {
+            let Some(s) = dec.decode(src).map_err(DecodeError::Primitive)? else {
                 *state = Some(Box::new(Partial::String(dec)));
                 return Ok(None);
             };
             Ok(Some(T::make_string(Cow::Owned(s))))
         }
         WasmTypeKind::List => {
-            let elem = ty
-                .list_element_type()
-                .ok_or_else(|| error_invalid_data("list type missing element type"))?;
+            let elem = ty.list_element_type().ok_or(DecodeError::InvalidType)?;
             let len = |src: &mut BytesMut| decode_len(src, max_len);
             let Some(vs) = decode_seq(src, state, max_len, len, iter::repeat(&elem))? else {
                 return Ok(None);
             };
-            T::make_list(ty, vs).map(Some).map_err(error_invalid_data)
+            T::make_list(ty, vs).map(Some).map_err(DecodeError::Value)
         }
         WasmTypeKind::Map => {
-            let (k, v) = ty
-                .map_key_value_types()
-                .ok_or_else(|| error_invalid_data("map type missing key/value types"))?;
+            let (k, v) = ty.map_key_value_types().ok_or(DecodeError::InvalidType)?;
             let len = |src: &mut BytesMut| {
                 let n = decode_len(src, max_len)?;
                 Ok(n.map(|n| n.saturating_mul(2)))
@@ -340,14 +419,14 @@ fn decode_ty<T: WasmValue>(
             let entries: Vec<_> = iter::from_fn(|| vs.next().zip(vs.next())).collect();
             let mut keys = HashSet::with_capacity(entries.len());
             for (k, ..) in &entries {
-                let k = wasm_wave::to_string(k).map_err(error_invalid_data)?;
+                let k = wasm_wave::to_string(k).map_err(DecodeError::Key)?;
                 if !keys.insert(k) {
-                    return Err(error_invalid_data("map contains duplicate keys"));
+                    return Err(DecodeError::DuplicateKey);
                 }
             }
             T::make_map(ty, entries)
                 .map(Some)
-                .map_err(error_invalid_data)
+                .map_err(DecodeError::Value)
         }
         WasmTypeKind::Record => {
             let (names, tys): (Vec<_>, Vec<_>) = ty.record_fields().unzip();
@@ -357,20 +436,20 @@ fn decode_ty<T: WasmValue>(
             let fields = zip(names.iter().map(AsRef::as_ref), vs);
             T::make_record(ty, fields)
                 .map(Some)
-                .map_err(error_invalid_data)
+                .map_err(DecodeError::Value)
         }
         WasmTypeKind::Tuple => {
             let tys: Vec<_> = ty.tuple_element_types().collect();
             let Some(vs) = decode_seq(src, state, max_len, |_| Ok(Some(tys.len())), &tys)? else {
                 return Ok(None);
             };
-            T::make_tuple(ty, vs).map(Some).map_err(error_invalid_data)
+            T::make_tuple(ty, vs).map(Some).map_err(DecodeError::Value)
         }
         WasmTypeKind::Variant => {
             let case = |i| {
-                ty.variant_cases().nth(i).ok_or_else(|| {
-                    error_invalid_data(format!("unknown variant discriminant `{i}`"))
-                })
+                ty.variant_cases()
+                    .nth(i)
+                    .ok_or(DecodeError::UnknownDiscriminant(i))
             };
             let Some((i, v)) = decode_case(src, state, max_len, decode_discriminant, |i| {
                 let (.., ty) = case(i)?;
@@ -382,7 +461,7 @@ fn decode_ty<T: WasmValue>(
             let (name, ..) = case(i)?;
             T::make_variant(ty, &name, v)
                 .map(Some)
-                .map_err(error_invalid_data)
+                .map_err(DecodeError::Value)
         }
         WasmTypeKind::Enum => {
             let Some(i) = decode_discriminant(src)? else {
@@ -391,30 +470,26 @@ fn decode_ty<T: WasmValue>(
             let name = ty
                 .enum_cases()
                 .nth(i)
-                .ok_or_else(|| error_invalid_data(format!("unknown enum discriminant `{i}`")))?;
+                .ok_or(DecodeError::UnknownDiscriminant(i))?;
             T::make_enum(ty, &name)
                 .map(Some)
-                .map_err(error_invalid_data)
+                .map_err(DecodeError::Value)
         }
         WasmTypeKind::Option => {
             let Some((.., v)) = decode_case(src, state, max_len, decode_status, |i| {
                 if i == 0 {
                     return Ok(None);
                 }
-                let ty = ty
-                    .option_some_type()
-                    .ok_or_else(|| error_invalid_data("option type missing some type"))?;
+                let ty = ty.option_some_type().ok_or(DecodeError::InvalidType)?;
                 Ok(Some(ty))
             })?
             else {
                 return Ok(None);
             };
-            T::make_option(ty, v).map(Some).map_err(error_invalid_data)
+            T::make_option(ty, v).map(Some).map_err(DecodeError::Value)
         }
         WasmTypeKind::Result => {
-            let (ok, err) = ty
-                .result_types()
-                .ok_or_else(|| error_invalid_data("result type missing ok/err types"))?;
+            let (ok, err) = ty.result_types().ok_or(DecodeError::InvalidType)?;
             let Some((i, v)) = decode_case(src, state, max_len, decode_status, |i| {
                 Ok(if i == 0 { ok } else { err })
             })?
@@ -422,7 +497,7 @@ fn decode_ty<T: WasmValue>(
                 return Ok(None);
             };
             let v = if i == 0 { Ok(v) } else { Err(v) };
-            T::make_result(ty, v).map(Some).map_err(error_invalid_data)
+            T::make_result(ty, v).map(Some).map_err(DecodeError::Value)
         }
         WasmTypeKind::Flags => {
             let names: Vec<_> = ty.flags_names().collect();
@@ -433,7 +508,7 @@ fn decode_ty<T: WasmValue>(
             }
             let buf = src.split_to(n);
             if (names.len()..n * 8).any(|i| buf[i / 8] & (1 << (i % 8)) != 0) {
-                return Err(error_invalid_data("invalid flags bits"));
+                return Err(DecodeError::InvalidFlags);
             }
             let flags = names
                 .iter()
@@ -442,11 +517,8 @@ fn decode_ty<T: WasmValue>(
                 .map(|(.., name)| name.as_ref());
             T::make_flags(ty, flags)
                 .map(Some)
-                .map_err(error_invalid_data)
+                .map_err(DecodeError::Value)
         }
-        kind => Err(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            format!("unsupported value type `{kind}`"),
-        )),
+        kind => Err(DecodeError::UnsupportedType(kind)),
     }
 }

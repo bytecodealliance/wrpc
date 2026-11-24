@@ -1,6 +1,5 @@
 use core::fmt::Debug;
 
-use std::io::ErrorKind;
 use std::sync::Arc;
 
 use anyhow::Context as _;
@@ -9,9 +8,9 @@ use tokio::io::{duplex, split};
 use tokio::try_join;
 use tokio_util::codec::{Decoder as _, Encoder, FramedRead, FramedWrite};
 use wasm_wave::value::{Type, Value};
-use wasm_wave::wasm::WasmValue as _;
+use wasm_wave::wasm::{WasmTypeKind, WasmValue as _};
 use wrpc_core::{Codec, Encode, FrameDecoder, FrameEncoder, Listener};
-use wrpc_wave::{TupleDecoder, TupleEncoder, ValueDecoder, ValueEncoder};
+use wrpc_wave::{DecodeError, EncodeError, TupleDecoder, TupleEncoder, ValueDecoder, ValueEncoder};
 
 #[test]
 fn roundtrip() -> anyhow::Result<()> {
@@ -128,29 +127,42 @@ fn errors() -> anyhow::Result<()> {
     let map = Type::map(Type::STRING, Type::U32).context("invalid map")?;
     let fixed = Type::fixed_length_list(Type::U8, 2);
     let flags = Type::flags(["a", "b", "c"]).context("invalid flags")?;
-    for (ty, src, kind) in [
-        (Type::BOOL, &b"\x02"[..], ErrorKind::InvalidData),
-        (Type::STRING, b"\x01\xff", ErrorKind::InvalidData),
-        (Type::option(Type::U32), b"\x02", ErrorKind::InvalidData),
-        (enum_ty, b"\x02", ErrorKind::InvalidData),
-        (flags, b"\x08", ErrorKind::InvalidData),
+    for (ty, src, expected) in [
         (
-            map.clone(),
-            b"\x02\x01a\x01\x01a\x02",
-            ErrorKind::InvalidData,
+            Type::BOOL,
+            &b"\x02"[..],
+            (|err| matches!(err, DecodeError::Primitive(..))) as fn(&DecodeError) -> bool,
         ),
-        (
-            Type::list(Type::STRING),
-            b"\x01\x03ab",
-            ErrorKind::UnexpectedEof,
-        ),
-        (Type::U32, b"\x80", ErrorKind::UnexpectedEof),
-        (fixed, b"\0\0", ErrorKind::Unsupported),
+        (Type::STRING, b"\x01\xff", |err| {
+            matches!(err, DecodeError::Primitive(..))
+        }),
+        (Type::option(Type::U32), b"\x02", |err| {
+            matches!(err, DecodeError::UnknownDiscriminant(2))
+        }),
+        (enum_ty, b"\x02", |err| {
+            matches!(err, DecodeError::UnknownDiscriminant(2))
+        }),
+        (flags, b"\x08", |err| {
+            matches!(err, DecodeError::InvalidFlags)
+        }),
+        (map.clone(), b"\x02\x01a\x01\x01a\x02", |err| {
+            matches!(err, DecodeError::DuplicateKey)
+        }),
+        (Type::list(Type::STRING), b"\x01\x03ab", |err| {
+            matches!(err, DecodeError::Truncated)
+        }),
+        (Type::U32, b"\x80", |err| {
+            matches!(err, DecodeError::Truncated)
+        }),
+        (fixed, b"\0\0", |err| {
+            matches!(err, DecodeError::UnsupportedType(..))
+        }),
     ] {
         let err = ValueDecoder::<Value>::new(ty.clone())
             .decode_eof(&mut BytesMut::from(src))
             .expect_err("decoding should fail");
-        assert_eq!(err.kind(), kind, "{ty}");
+        let err = err.downcast::<DecodeError>().expect("typed error");
+        assert!(expected(&err), "{ty}: {err:?}");
     }
 
     let tys: Arc<[Type]> = Arc::from([Type::list(Type::U8), Type::STRING]);
@@ -159,17 +171,31 @@ fn errors() -> anyhow::Result<()> {
         .decode(&mut BytesMut::from(&b"\x02\x01\x02\x02ab"[..]))?;
     let list = Value::make_list(&tys[0], [Value::make_u8(1), Value::make_u8(2)])?;
     assert_eq!(v, Some(vec![list, Value::make_string("ab".into())]));
-    let err = ValueDecoder::<Value>::new(map)
+    let err = ValueDecoder::<Value>::new(map.clone())
         .with_max_len(2)
         .decode(&mut BytesMut::from(&b"\x03"[..]))
         .expect_err("decoding should fail");
-    assert_eq!(err.kind(), ErrorKind::InvalidData);
-    for src in [&b"\x03"[..], b"\x00\x03foo"] {
+    let err = err.downcast::<DecodeError>().expect("typed error");
+    assert!(
+        matches!(err, DecodeError::TooLong { len: 3, max: 2 }),
+        "{err:?}"
+    );
+    for (src, expected) in [
+        (
+            &b"\x03"[..],
+            (|err| matches!(err, DecodeError::TooLong { len: 3, max: 2 }))
+                as fn(&DecodeError) -> bool,
+        ),
+        (b"\x00\x03foo", |err| {
+            matches!(err, DecodeError::Primitive(..))
+        }),
+    ] {
         let err = TupleDecoder::<Value>::new(Arc::clone(&tys))
             .with_max_len(2)
             .decode(&mut BytesMut::from(src))
             .expect_err("decoding should fail");
-        assert_eq!(err.kind(), ErrorKind::InvalidData);
+        let err = err.downcast::<DecodeError>().expect("typed error");
+        assert!(expected(&err), "{err:?}");
     }
 
     let mut src = BytesMut::from(&b"\x2a\x63"[..]);
@@ -181,18 +207,51 @@ fn errors() -> anyhow::Result<()> {
     let err = ValueEncoder::new(Type::STRING)
         .encode(&Value::make_u32(42), &mut buf)
         .expect_err("encoding should fail");
-    assert_eq!(err.kind(), ErrorKind::InvalidInput);
+    let err = err.downcast::<EncodeError>().expect("typed error");
+    assert!(
+        matches!(
+            err,
+            EncodeError::TypeMismatch {
+                expected: WasmTypeKind::String,
+                got: WasmTypeKind::U32
+            }
+        ),
+        "{err:?}"
+    );
     let ab = Type::record([("a", Type::U32), ("b", Type::U32)]).context("invalid record")?;
     let ba = Type::record([("b", Type::U32), ("a", Type::U32)]).context("invalid record")?;
     let v = Value::make_record(&ab, [("a", Value::make_u32(1)), ("b", Value::make_u32(2))])?;
     let err = ValueEncoder::new(ba)
         .encode(&v, &mut buf)
         .expect_err("encoding should fail");
-    assert_eq!(err.kind(), ErrorKind::InvalidInput);
+    let err = err.downcast::<EncodeError>().expect("typed error");
+    assert!(matches!(err, EncodeError::FieldMismatch { .. }), "{err:?}");
+    let dup = Value::make_map(
+        &map,
+        [
+            (Value::make_string("a".into()), Value::make_u32(1)),
+            (Value::make_string("a".into()), Value::make_u32(2)),
+        ],
+    )?;
+    let err = ValueEncoder::new(map)
+        .encode(&dup, &mut buf)
+        .expect_err("encoding should fail");
+    let err = err.downcast::<EncodeError>().expect("typed error");
+    assert!(matches!(err, EncodeError::DuplicateKey), "{err:?}");
     let err = TupleEncoder::new(Arc::from([Type::U32]))
         .encode(&[] as &[Value], &mut buf)
         .expect_err("encoding should fail");
-    assert_eq!(err.kind(), ErrorKind::InvalidInput);
+    let err = err.downcast::<EncodeError>().expect("typed error");
+    assert!(
+        matches!(
+            err,
+            EncodeError::LengthMismatch {
+                expected: 1,
+                got: 0
+            }
+        ),
+        "{err:?}"
+    );
     Ok(())
 }
 
