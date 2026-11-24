@@ -180,22 +180,16 @@ fn errors() -> anyhow::Result<()> {
         matches!(err, DecodeError::TooLong { len: 3, max: 2 }),
         "{err:?}"
     );
-    for (src, expected) in [
-        (
-            &b"\x03"[..],
-            (|err| matches!(err, DecodeError::TooLong { len: 3, max: 2 }))
-                as fn(&DecodeError) -> bool,
-        ),
-        (b"\x00\x03foo", |err| {
-            matches!(err, DecodeError::Primitive(..))
-        }),
-    ] {
+    for src in [&b"\x03"[..], b"\x00\x03foo"] {
         let err = TupleDecoder::<Value>::new(Arc::clone(&tys))
             .with_max_len(2)
             .decode(&mut BytesMut::from(src))
             .expect_err("decoding should fail");
         let err = err.downcast::<DecodeError>().expect("typed error");
-        assert!(expected(&err), "{err:?}");
+        assert!(
+            matches!(err, DecodeError::TooLong { len: 3, max: 2 }),
+            "{err:?}"
+        );
     }
 
     let mut src = BytesMut::from(&b"\x2a\x63"[..]);

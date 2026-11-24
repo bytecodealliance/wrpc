@@ -15,8 +15,8 @@ use bytes::{Buf as _, BytesMut};
 use tokio_util::codec::Decoder;
 use wasm_tokio::cm::{BoolCodec, F32Codec, F64Codec, S8Codec, U8Codec};
 use wasm_tokio::{
-    CoreNameDecoder, DEFAULT_MAX_INITIAL_CAPACITY, Leb128DecoderI16, Leb128DecoderI32,
-    Leb128DecoderI64, Leb128DecoderU16, Leb128DecoderU32, Leb128DecoderU64, Utf8Codec,
+    DEFAULT_MAX_INITIAL_CAPACITY, Leb128DecoderI16, Leb128DecoderI32, Leb128DecoderI64,
+    Leb128DecoderU16, Leb128DecoderU32, Leb128DecoderU64, Utf8Codec,
 };
 use wasm_wave::wasm::{WasmType, WasmTypeKind, WasmValue, WasmValueError};
 use wasm_wave::writer::WriterError;
@@ -30,9 +30,9 @@ pub const DEFAULT_MAX_LEN: u32 = 1 << 24;
 pub enum DecodeError {
     /// A primitive value, string, length or discriminant is invalid
     Primitive(std::io::Error),
-    /// A list or map length exceeds the limit of the decoder
+    /// A string, list or map length exceeds the limit of the decoder
     TooLong {
-        /// Length of the list or map
+        /// Length of the string, list or map
         len: u32,
         /// Maximum length
         max: u32,
@@ -106,7 +106,7 @@ impl From<DecodeError> for std::io::Error {
 
 /// Progress of decoding a partially received value
 enum Partial<V> {
-    String(CoreNameDecoder),
+    String(usize),
     Seq {
         n: usize,
         vs: Vec<V>,
@@ -387,15 +387,28 @@ fn decode_ty<T: WasmValue>(
         WasmTypeKind::F64 => decode_leaf(F64Codec, src, T::make_f64),
         WasmTypeKind::Char => decode_leaf(Utf8Codec, src, T::make_char),
         WasmTypeKind::String => {
-            let mut dec = match state.take().map(|state| *state) {
-                Some(Partial::String(dec)) => dec,
-                _ => CoreNameDecoder::with_max_len(max_len),
+            let n = match state.take().map(|state| *state) {
+                Some(Partial::String(n)) => n,
+                _ => {
+                    let Some(n) = decode_len(src, max_len)? else {
+                        return Ok(None);
+                    };
+                    n
+                }
             };
-            let Some(s) = dec.decode(src).map_err(DecodeError::Primitive)? else {
-                *state = Some(Box::new(Partial::String(dec)));
+            if src.len() < n {
+                src.reserve(
+                    n.saturating_sub(src.len())
+                        .min(DEFAULT_MAX_INITIAL_CAPACITY),
+                );
+                *state = Some(Box::new(Partial::String(n)));
                 return Ok(None);
-            };
-            Ok(Some(T::make_string(Cow::Owned(s))))
+            }
+            let buf = src.split_to(n);
+            let s = str::from_utf8(&buf).map_err(|err| {
+                DecodeError::Primitive(std::io::Error::new(std::io::ErrorKind::InvalidData, err))
+            })?;
+            Ok(Some(T::make_string(Cow::Borrowed(s))))
         }
         WasmTypeKind::List => {
             let elem = ty.list_element_type().ok_or(DecodeError::InvalidType)?;
