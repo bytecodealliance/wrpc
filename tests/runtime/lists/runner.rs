@@ -4,7 +4,7 @@ use crate::client::test::lists::to_test::*;
 
 pub async fn run(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let mut clt = wrpc.connect().await?;
     empty_list_param(&mut clt, &Bytes::new()).await?;
     empty_string_param(&mut clt, "").await?;

@@ -7,7 +7,7 @@ use crate::client::my::test::i::{ping, pong};
 
 pub async fn run(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let (tx, rx) = oneshot::channel();
     let mut wrpc_clt = wrpc.connect().await?;
     let f1 = ping(
@@ -30,7 +30,7 @@ pub async fn run(
         .await?;
         assert_eq!(m3, "helloworld");
         io.await?;
-        ::wit_bindgen_wrpc::anyhow::Ok(())
+        ::anyhow::Ok(())
     };
     let f2 = async { tx.send(m2).unwrap() };
     let (res, ()) = join!(f1, f2);

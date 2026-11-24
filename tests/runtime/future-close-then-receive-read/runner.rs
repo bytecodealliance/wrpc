@@ -7,7 +7,7 @@ use crate::client::a::b::the_test::{get, set};
 
 pub async fn run(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let (tx, rx) = oneshot::channel::<()>();
     let mut wrpc_clt = wrpc.connect().await?;
     let (res, ()) = join!(

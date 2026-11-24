@@ -2,7 +2,7 @@ use crate::client::test::variants::to_test::*;
 
 pub async fn run(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let mut clt = wrpc.connect().await?;
     assert_eq!(roundtrip_option(&mut clt, Some(1.0)).await?, Some(1));
     assert_eq!(roundtrip_option(&mut clt, None).await?, None);

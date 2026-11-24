@@ -8,7 +8,7 @@ use crate::client::test::maps::to_test::*;
 
 pub async fn run(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     test_named_roundtrip(wrpc).await?;
     test_bytes_roundtrip(wrpc).await?;
     test_empty_roundtrip(wrpc).await?;
@@ -27,7 +27,7 @@ pub async fn run(
 
 async fn test_named_roundtrip(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let mut input = NamesById::new();
     input.insert(1, "one".to_string());
     input.insert(1, "uno".to_string());
@@ -42,7 +42,7 @@ async fn test_named_roundtrip(
 
 async fn test_bytes_roundtrip(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let mut bytes_input = BytesByName::new();
     bytes_input.insert("hello".to_string(), Bytes::from_static(b"world"));
     bytes_input.insert("bin".to_string(), Bytes::from_static(&[0, 1, 2]));
@@ -61,7 +61,7 @@ async fn test_bytes_roundtrip(
 
 async fn test_empty_roundtrip(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let empty = NamesById::new();
     let clt = wrpc.connect().await?;
     let result = empty_roundtrip(clt, &empty).await?;
@@ -71,7 +71,7 @@ async fn test_empty_roundtrip(
 
 async fn test_option_roundtrip(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let mut input = BTreeMap::new();
     input.insert("some".to_string(), Some(42));
     input.insert("none".to_string(), None);
@@ -85,7 +85,7 @@ async fn test_option_roundtrip(
 
 async fn test_record_roundtrip(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let mut values = NamesById::new();
     values.insert(10, "ten".to_string());
     values.insert(20, "twenty".to_string());
@@ -104,7 +104,7 @@ async fn test_record_roundtrip(
 
 async fn test_inline_roundtrip(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let mut input = BTreeMap::new();
     input.insert(1, "one".to_string());
     input.insert(2, "two".to_string());
@@ -118,7 +118,7 @@ async fn test_inline_roundtrip(
 
 async fn test_large_map(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let mut input = NamesById::new();
     for i in 0..100 {
         input.insert(i, format!("value-{i}"));
@@ -137,7 +137,7 @@ async fn test_large_map(
 
 async fn test_multi_param_roundtrip(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let mut names = NamesById::new();
     names.insert(1, "one".to_string());
     names.insert(2, "two".to_string());
@@ -158,7 +158,7 @@ async fn test_multi_param_roundtrip(
 
 async fn test_nested_roundtrip(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let mut inner_a = BTreeMap::new();
     inner_a.insert(1, "one".to_string());
     inner_a.insert(2, "two".to_string());
@@ -180,7 +180,7 @@ async fn test_nested_roundtrip(
 
 async fn test_variant_roundtrip(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let mut map = NamesById::new();
     map.insert(1, "one".to_string());
     let clt = wrpc.connect().await?;
@@ -203,7 +203,7 @@ async fn test_variant_roundtrip(
 
 async fn test_result_roundtrip(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let mut map = NamesById::new();
     map.insert(5, "five".to_string());
     let clt = wrpc.connect().await?;
@@ -224,7 +224,7 @@ async fn test_result_roundtrip(
 
 async fn test_tuple_roundtrip(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let mut map = NamesById::new();
     map.insert(7, "seven".to_string());
     let clt = wrpc.connect().await?;
@@ -237,7 +237,7 @@ async fn test_tuple_roundtrip(
 
 async fn test_single_entry_roundtrip(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let mut input = NamesById::new();
     input.insert(99, "ninety-nine".to_string());
     let clt = wrpc.connect().await?;

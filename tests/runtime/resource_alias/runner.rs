@@ -3,7 +3,7 @@ use crate::client::test::resource_alias::e2::{a as a2, Foo as Foo2};
 
 pub async fn run(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let mut clt = wrpc.connect().await?;
     let x = X::new(&mut clt, 42).await?;
     a1(&mut clt, &Foo1 { x }).await?;

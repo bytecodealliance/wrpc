@@ -2,7 +2,7 @@ use crate::client::test::strings::to_test::*;
 
 pub async fn run(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let mut clt = wrpc.connect().await?;
     take_basic(&mut clt, "latin utf16").await?;
     assert_eq!(return_unicode(&mut clt).await?, "🚀🚀🚀 𠈄𓀀");

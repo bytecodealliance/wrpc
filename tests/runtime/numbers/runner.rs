@@ -2,7 +2,7 @@ use crate::client::test::numbers::numbers::*;
 
 pub async fn run(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let mut clt = wrpc.connect().await?;
     assert_eq!(roundtrip_u8(&mut clt, 1).await?, 1);
     assert_eq!(roundtrip_u8(&mut clt, u8::MIN).await?, u8::MIN);

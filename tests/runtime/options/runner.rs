@@ -2,7 +2,7 @@ use crate::client::test::options::to_test::*;
 
 pub async fn run(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let mut clt = wrpc.connect().await?;
     option_none_param(&mut clt, None).await?;
     option_some_param(&mut clt, Some("foo")).await?;

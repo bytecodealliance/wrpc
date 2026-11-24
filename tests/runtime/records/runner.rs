@@ -2,7 +2,7 @@ use crate::client::test::records::to_test::*;
 
 pub async fn run(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let mut clt = wrpc.connect().await?;
     assert_eq!(multiple_results(&mut clt).await?, (4, 5));
 

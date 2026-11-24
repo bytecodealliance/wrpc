@@ -4,7 +4,7 @@ use crate::client::cat::*;
 
 pub async fn run(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let mut clt = wrpc.connect().await?;
     foo(&mut clt, &Bytes::from_static(b"hello")).await?;
 

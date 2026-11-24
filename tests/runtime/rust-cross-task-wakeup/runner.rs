@@ -7,12 +7,12 @@ use crate::client::my::test::i::*;
 
 pub async fn run(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let clt = wrpc.connect().await?;
     try_join!(
         async {
             pending_import(clt).await?;
-            ::wit_bindgen_wrpc::anyhow::Ok(())
+            ::anyhow::Ok(())
         },
         async {
             // Ensure that the above future has hit its pending state by

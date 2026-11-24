@@ -2,7 +2,7 @@ use crate::client::test::resource_borrow_in_record::to_test::{test, Foo, Thing};
 
 pub async fn run(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let mut clt = wrpc.connect().await?;
     let thing1 = Thing::new(&mut clt, "Bonjour").await?;
     let thing2 = Thing::new(&mut clt, "mon cher").await?;
