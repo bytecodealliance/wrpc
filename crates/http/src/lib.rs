@@ -31,6 +31,7 @@
 //! ```
 
 use core::future::poll_fn;
+use core::iter;
 use core::mem;
 use core::pin::{Pin, pin};
 use core::task::{Context, Poll, ready};
@@ -507,8 +508,17 @@ impl<D: Receive, I: AsyncRead + Unpin> Future for Ingress<D, I> {
 }
 
 fn into_io_error(err: impl Into<Box<dyn core::error::Error + Send + Sync>>) -> std::io::Error {
-    match err.into().downcast::<std::io::Error>() {
-        Ok(err) => *err,
-        Err(err) => std::io::Error::other(err),
-    }
+    let err = match err.into().downcast::<std::io::Error>() {
+        Ok(err) => return *err,
+        Err(err) => err,
+    };
+    let kind = iter::successors(Some(&*err as &dyn core::error::Error), |err| err.source())
+        .find_map(|err| err.downcast_ref::<h2::Error>())
+        .filter(|err| err.is_remote())
+        .map_or(std::io::ErrorKind::Other, |err| match err.reason() {
+            Some(h2::Reason::REFUSED_STREAM) => std::io::ErrorKind::ConnectionRefused,
+            Some(h2::Reason::NO_ERROR) if err.is_go_away() => std::io::ErrorKind::ConnectionRefused,
+            _ => std::io::ErrorKind::ConnectionReset,
+        });
+    std::io::Error::new(kind, err)
 }

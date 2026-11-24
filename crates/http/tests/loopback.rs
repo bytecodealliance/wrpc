@@ -172,7 +172,7 @@ async fn peer_cancel() -> anyhow::Result<()> {
 
     let (done_tx, mut done_rx) = mpsc::unbounded();
     let (started_tx, mut started_rx) = mpsc::unbounded();
-    let (mut sender, ..) = connect(move |header, req| {
+    let (mut sender, mut results) = connect(move |header, req| {
         let done = Done(done_tx.clone());
         let started_tx = started_tx.clone();
         async move {
@@ -211,6 +211,11 @@ async fn peer_cancel() -> anyhow::Result<()> {
         _ = started_rx.next() => {}
     }
     done_rx.next().await.context("invocation was not served")?;
+    let res = results.next().await.context("missing invocation")?;
+    let Err(ServeError::Request(ReceiveError::Frame(FrameDecodeError::Io(err)))) = res else {
+        bail!("unexpected result `{res:?}`");
+    };
+    assert_eq!(err.kind(), ErrorKind::ConnectionReset);
     sender.ready().await?;
     wrpc_test::assert_http_invocation(parts, |req| sender.send_request(req)).await
 }
