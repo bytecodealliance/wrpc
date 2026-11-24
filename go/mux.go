@@ -65,7 +65,8 @@ func (ts Transmitters) Transmit(ctx context.Context, w *FrameWriter, path []uint
 	return nil
 }
 
-func receivers(rxs ...Receiver) Receiver {
+// NewReceivers returns the Receivers routing path `[i, ..]` to `rxs[i]`, skipping nil ones, or nil if all are nil
+func NewReceivers(rxs ...Receiver) Receiver {
 	rs := Receivers{}
 	for i, rx := range rxs {
 		if rx != nil {
@@ -78,7 +79,8 @@ func receivers(rxs ...Receiver) Receiver {
 	return rs
 }
 
-func transmitters(txs ...Transmitter) Transmitter {
+// NewTransmitters returns the Transmitters transmitting `txs[i]` on path `[.., i]`, skipping nil ones, or nil if all are nil
+func NewTransmitters(txs ...Transmitter) Transmitter {
 	ts := Transmitters{}
 	for i, tx := range txs {
 		if tx != nil {

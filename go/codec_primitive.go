@@ -277,12 +277,12 @@ func (BorrowCodec[T]) Decode(r ByteReader) (Borrow[T], Receiver, error) {
 	return v, nil, err
 }
 
-// FlagsCodec is the Codec of `flags` values with N flags, 1 to 32, as a bit set where bit `i` is flag `i`
+// FlagsCodec is the Codec of `flags` values with N flags, up to 64, as a bit set where bit `i` is flag `i`
 type FlagsCodec struct {
 	N uint8
 }
 
-func (c FlagsCodec) Encode(v uint32, dst []byte) ([]byte, Transmitter, error) {
+func (c FlagsCodec) Encode(v uint64, dst []byte) ([]byte, Transmitter, error) {
 	if v>>c.N != 0 {
 		return nil, nil, errors.New("bit not associated with any flag is set")
 	}
@@ -292,8 +292,8 @@ func (c FlagsCodec) Encode(v uint32, dst []byte) ([]byte, Transmitter, error) {
 	return dst, nil, nil
 }
 
-func (c FlagsCodec) Decode(r ByteReader) (uint32, Receiver, error) {
-	var v uint32
+func (c FlagsCodec) Decode(r ByteReader) (uint64, Receiver, error) {
+	var v uint64
 	for i := uint8(0); i < c.N; i += 8 {
 		b, err := r.ReadByte()
 		if err != nil {
@@ -302,7 +302,7 @@ func (c FlagsCodec) Decode(r ByteReader) (uint32, Receiver, error) {
 			}
 			return 0, nil, err
 		}
-		v |= uint32(b) << i
+		v |= uint64(b) << i
 	}
 	if v>>c.N != 0 {
 		return 0, nil, errors.New("bit not associated with any flag is set")

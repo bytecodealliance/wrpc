@@ -23,29 +23,29 @@ type testRecordCodec struct{}
 
 var testRecordStreamCodec = wrpc.StreamCodec[<-chan string]{Elem: wrpc.FutureCodec[string]{Elem: wrpc.StringCodec{}}}
 
-func (testRecordCodec) Encode(v *testRecord, dst []byte) ([]byte, wrpc.Transmitter, error) {
+func (testRecordCodec) Encode(v testRecord, dst []byte) ([]byte, wrpc.Transmitter, error) {
 	dst, _, err := wrpc.U32Codec{}.Encode(v.A, dst)
 	if err != nil {
 		return nil, nil, err
 	}
 	dst, tx, err := testRecordStreamCodec.Encode(v.S, dst)
-	if err != nil || tx == nil {
-		return dst, nil, err
-	}
-	return dst, wrpc.Transmitters{1: tx}, nil
-}
-
-func (testRecordCodec) Decode(r wrpc.ByteReader) (*testRecord, wrpc.Receiver, error) {
-	v := &testRecord{}
-	var err error
-	if v.A, _, err = (wrpc.U32Codec{}).Decode(r); err != nil {
+	if err != nil {
 		return nil, nil, err
 	}
-	var rx wrpc.Receiver
-	if v.S, rx, err = testRecordStreamCodec.Decode(r); err != nil || rx == nil {
+	return dst, wrpc.NewTransmitters(nil, tx), nil
+}
+
+func (testRecordCodec) Decode(r wrpc.ByteReader) (testRecord, wrpc.Receiver, error) {
+	var v testRecord
+	var err error
+	if v.A, _, err = (wrpc.U32Codec{}).Decode(r); err != nil {
 		return v, nil, err
 	}
-	return v, wrpc.Receivers{1: rx}, nil
+	var rx wrpc.Receiver
+	if v.S, rx, err = testRecordStreamCodec.Decode(r); err != nil {
+		return v, nil, err
+	}
+	return v, wrpc.NewReceivers(nil, rx), nil
 }
 
 type testVariant struct {
@@ -197,9 +197,9 @@ func testRoundTrip[T any](t *testing.T, c wrpc.Codec[T], v func(release <-chan s
 
 func TestCodecRoundTrip(t *testing.T) {
 	t.Run("primitives", func(t *testing.T) {
-		type prims = wrpc.Tuple16[bool, uint8, uint16, uint32, uint64, int8, int16, int32, int64, float32, float64, rune, string, []byte, wrpc.Own[struct{}], uint32]
+		type prims = wrpc.Tuple16[bool, uint8, uint16, uint32, uint64, int8, int16, int32, int64, float32, float64, rune, string, []byte, wrpc.Own[struct{}], uint64]
 		v := prims{true, math.MaxUint8, math.MaxUint16, math.MaxUint32, math.MaxUint64, math.MinInt8, math.MinInt16, -1, math.MinInt64, 1.5, -2.5, '🦀', "foo", []byte("bar"), wrpc.Own[struct{}]("baz"), 0b101}
-		c := wrpc.Tuple16Codec[bool, uint8, uint16, uint32, uint64, int8, int16, int32, int64, float32, float64, rune, string, []byte, wrpc.Own[struct{}], uint32]{
+		c := wrpc.Tuple16Codec[bool, uint8, uint16, uint32, uint64, int8, int16, int32, int64, float32, float64, rune, string, []byte, wrpc.Own[struct{}], uint64]{
 			wrpc.BoolCodec{}, wrpc.U8Codec{}, wrpc.U16Codec{}, wrpc.U32Codec{}, wrpc.U64Codec{},
 			wrpc.S8Codec{}, wrpc.S16Codec{}, wrpc.S32Codec{}, wrpc.S64Codec{}, wrpc.F32Codec{}, wrpc.F64Codec{},
 			wrpc.CharCodec{}, wrpc.StringCodec{}, wrpc.BytesCodec{}, wrpc.OwnCodec[struct{}]{}, wrpc.FlagsCodec{N: 3},
@@ -207,16 +207,16 @@ func TestCodecRoundTrip(t *testing.T) {
 		testRoundTrip(t, c, func(<-chan struct{}) prims { return v }, func(v prims) any { return v }, v)
 	})
 	t.Run("option and result", func(t *testing.T) {
-		type opts = wrpc.Tuple4[*string, *wrpc.Result[struct{}, string], *<-chan string, *wrpc.Result[<-chan []byte, struct{}]]
-		c := wrpc.Tuple4Codec[*string, *wrpc.Result[struct{}, string], *<-chan string, *wrpc.Result[<-chan []byte, struct{}]]{
+		type opts = wrpc.Tuple4[*string, wrpc.Result[struct{}, string], *<-chan string, *wrpc.Result[<-chan []byte, struct{}]]
+		c := wrpc.Tuple4Codec[*string, wrpc.Result[struct{}, string], *<-chan string, *wrpc.Result[<-chan []byte, struct{}]]{
 			wrpc.OptionCodec[string]{Elem: wrpc.StringCodec{}},
 			wrpc.ResultCodec[struct{}, string]{Ok: wrpc.UnitCodec{}, Err: wrpc.StringCodec{}},
 			wrpc.OptionCodec[<-chan string]{Elem: wrpc.FutureCodec[string]{Elem: wrpc.StringCodec{}}},
-			wrpc.ResultCodec[<-chan []byte, struct{}]{Ok: wrpc.ByteStreamCodec{}, Err: wrpc.UnitCodec{}},
+			wrpc.PtrCodec[wrpc.Result[<-chan []byte, struct{}]]{Elem: wrpc.ResultCodec[<-chan []byte, struct{}]{Ok: wrpc.ByteStreamCodec{}, Err: wrpc.UnitCodec{}}},
 		}
 		testRoundTrip(t, c, func(release <-chan struct{}) opts {
 			f := pendingFuture(release, "foo")
-			return opts{nil, wrpc.Err[struct{}]("bar"), &f, wrpc.Ok[struct{}](pendingStream(release, []byte("ba"), []byte("z")))}
+			return opts{nil, *wrpc.Err[struct{}]("bar"), &f, wrpc.Ok[struct{}](pendingStream(release, []byte("ba"), []byte("z")))}
 		}, func(v opts) any {
 			return []any{v.V0, *v.V1.Err, collectStream(*v.V3.Ok, func(b byte) byte { return b }), recv(*v.V2)}
 		}, []any{(*string)(nil), "bar", []byte("baz"), "foo"})
@@ -229,7 +229,7 @@ func TestCodecRoundTrip(t *testing.T) {
 		}, []string{"foo", "bar"})
 	})
 	t.Run("record with stream of futures", func(t *testing.T) {
-		testRoundTrip(t, testRecordCodec{}, func(release <-chan struct{}) *testRecord {
+		testRoundTrip(t, wrpc.PtrCodec[testRecord]{Elem: testRecordCodec{}}, func(release <-chan struct{}) *testRecord {
 			return &testRecord{A: 42, S: pendingStream(release, []<-chan string{pendingFuture(release, "foo"), readyFuture("bar")}, []<-chan string{pendingFuture(release, "baz")})}
 		}, func(v *testRecord) any {
 			return []any{v.A, collectStream(v.S, recv[string])}
