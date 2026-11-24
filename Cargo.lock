@@ -1176,7 +1176,7 @@ dependencies = [
  "bytes",
  "clap",
  "http",
- "hyper-util",
+ "reqwest",
  "tokio",
  "tower",
  "tracing-subscriber",
@@ -1395,6 +1395,21 @@ dependencies = [
  "smallvec",
  "tokio",
  "want",
+]
+
+[[package]]
+name = "hyper-rustls"
+version = "0.27.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dfa8e654703247911e29c23fbeaa261834bd9bb74efba2f9acddc37bfb127f53"
+dependencies = [
+ "http",
+ "hyper",
+ "hyper-util",
+ "rustls",
+ "tokio",
+ "tokio-rustls",
+ "tower-service",
 ]
 
 [[package]]
@@ -2375,10 +2390,12 @@ dependencies = [
  "base64 0.23.1",
  "bytes",
  "futures-core",
+ "h2",
  "http",
  "http-body",
  "http-body-util",
  "hyper",
+ "hyper-rustls",
  "hyper-util",
  "js-sys",
  "log",
@@ -4607,6 +4624,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "sync_wrapper",
  "test-log",
  "tokio",
  "tokio-util",

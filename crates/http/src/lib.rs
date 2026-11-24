@@ -118,6 +118,7 @@ use http::{HeaderValue, Method, Uri};
 use http_body::{Frame, SizeHint};
 use http_body_util::combinators::{MapErr, UnsyncBoxBody};
 use http_body_util::{BodyDataStream, BodyExt};
+use sync_wrapper::SyncWrapper;
 use tokio::io::AsyncRead;
 use tokio_util::codec::{Decoder, Encoder, FramedRead};
 use tokio_util::io::StreamReader;
@@ -164,7 +165,7 @@ impl http_body::Body for OutgoingParams {
 
 /// Body transmitting a value and the asynchronous values nested in it using `E`
 struct Egress<E> {
-    enc: E,
+    enc: Option<SyncWrapper<E>>,
     path: Vec<usize>,
     frames: VecDeque<Bytes>,
     buffer: BytesMut,
@@ -176,7 +177,7 @@ impl<E> Unpin for Egress<E> {}
 impl<E> Egress<E> {
     fn new<T>(mut enc: E, mut buffer: BytesMut, value: T) -> std::io::Result<Self>
     where
-        E: Encoder<T, Error = std::io::Error>,
+        E: Transmit + Encoder<T, Error = std::io::Error>,
     {
         let mut data = BytesMut::default();
         enc.encode(value, &mut data)?;
@@ -198,7 +199,7 @@ impl<E> Egress<E> {
             &mut buffer,
         )?;
         Ok(Self {
-            enc,
+            enc: (!enc.is_complete()).then(|| SyncWrapper::new(enc)),
             path: Vec::default(),
             frames,
             buffer,
@@ -230,8 +231,9 @@ impl<E: Transmit> http_body::Body for Egress<E> {
         if let Some(frame) = frames.pop_front() {
             return Poll::Ready(Some(Ok(Frame::data(frame))));
         }
-        let complete = enc.is_complete()
-            || match enc.poll_transmit(cx, path, buffer) {
+        let complete = match enc {
+            None => true,
+            Some(enc) => match enc.get_mut().poll_transmit(cx, path, buffer) {
                 Poll::Ready(Ok(())) => true,
                 Poll::Ready(Err(err)) => {
                     let Some(tx) = error.take() else {
@@ -244,8 +246,10 @@ impl<E: Transmit> http_body::Body for Egress<E> {
                     })));
                 }
                 Poll::Pending => false,
-            };
+            },
+        };
         if complete {
+            *enc = None;
             *error = None;
         }
         if !buffer.is_empty() {
@@ -258,7 +262,7 @@ impl<E: Transmit> http_body::Body for Egress<E> {
     }
 
     fn is_end_stream(&self) -> bool {
-        self.frames.is_empty() && self.buffer.is_empty() && self.enc.is_complete()
+        self.frames.is_empty() && self.buffer.is_empty() && self.enc.is_none()
     }
 
     fn size_hint(&self) -> SizeHint {
@@ -268,7 +272,7 @@ impl<E: Transmit> http_body::Body for Egress<E> {
             .map(Bytes::len)
             .fold(self.buffer.len(), usize::saturating_add);
         let n = u64::try_from(n).unwrap_or(u64::MAX);
-        if self.enc.is_complete() {
+        if self.enc.is_none() {
             SizeHint::with_exact(n)
         } else {
             let mut hint = SizeHint::default();
@@ -374,7 +378,10 @@ where
             let req = http::Request::from_parts(
                 parts,
                 OutgoingParams(Egress {
-                    enc: Box::new(enc),
+                    enc: enc.map(|enc| {
+                        let enc: Box<dyn Transmit + Send> = Box::new(enc.into_inner());
+                        SyncWrapper::new(enc)
+                    }),
                     path,
                     frames,
                     buffer,

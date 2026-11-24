@@ -19,6 +19,7 @@ h2 = { workspace = true, optional = true }
 http = { workspace = true }
 http-body = { workspace = true }
 http-body-util = { workspace = true }
+sync_wrapper = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true, features = ["codec", "io"] }
 tower-service = { workspace = true }
