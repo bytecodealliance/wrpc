@@ -28,7 +28,7 @@ export type Type =
   | { kind: "enum"; names: string[] }
   | { kind: "flags"; flags: { name: string; key: string }[] }
   | { kind: "future"; some: Type | null }
-  | { kind: "stream"; elem: Type }
+  | { kind: "stream"; elem: Type | null }
   | { kind: "own" | "borrow"; name: string };
 
 /** The typed arrays that lists of the numeric types map to. */
@@ -50,7 +50,8 @@ export type Chunk = Value[] | TypedArray;
 /**
  * The JavaScript representation of a decoded component-model value. Decoded
  * `stream` values are {@link Chan}s of chunks, or `ReadableStream`s of chunks
- * if decoded by a {@link Decoder}, which can be cancelled.
+ * if decoded by a {@link Decoder}, which can be cancelled. The chunks of a
+ * `stream` without an element type are their numbers of elements.
  */
 export type Value =
   | boolean
@@ -64,7 +65,7 @@ export type Value =
   | { kind: string; value?: Value }
   | Promise<Value>
   | Chan<Chunk>
-  | ReadableStream<Chunk>
+  | ReadableStream<Chunk | number>
   | undefined;
 
 /**
@@ -127,7 +128,7 @@ export namespace types {
   export function map(key: Type, value: Type): Type;
   export function option(some: Type): Type;
   export function future(some?: Type | null): Type;
-  export function stream(elem: Type): Type;
+  export function stream(elem?: Type | null): Type;
   export function result(ok?: Type | null, err?: Type | null): Type;
   export function tuple(...elems: Type[]): Type;
   export function record(
@@ -356,6 +357,14 @@ export interface Decoder<T = Value> {
 export function encoder(ty: Type): Encoder;
 /** The decoder of the values of `ty`. */
 export function decoder(ty: Type): Decoder;
+
+/**
+ * Encode `value` using `enc` into `w`, failing if any value nested in it is
+ * pending, as `future` and `stream` values always are.
+ */
+export function pack<T>(enc: Encoder<T>, value: T, w: Writer): void;
+/** Decode a value using `dec` from all of `r`, failing if any value nested in it is pending. */
+export function unpack<T>(dec: Decoder<T>, r: Reader): T;
 
 /**
  * Send `value`, the parameters when invoking and the results when serving, on

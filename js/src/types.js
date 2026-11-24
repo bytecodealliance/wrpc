@@ -74,11 +74,13 @@ export const future = (some = null) => ({ kind: "future", some });
 /**
  * `stream<elem>`. Carries an asynchronous sequence of `elem` chunks,
  * multiplexed over the invocation's framed stream. Requires the async session
- * API (`invoke` / `accept`).
- * @param {Type} elem
+ * API (`invoke` / `accept`). Pass no type for a bare `stream` without an
+ * element type, whose chunks are numbers of elements, which only a
+ * {@link import("./index.d.ts").Decoder} supports.
+ * @param {Type | null} [elem]
  * @returns {Type}
  */
-export const stream = (elem) => ({ kind: "stream", elem });
+export const stream = (elem = null) => ({ kind: "stream", elem });
 
 /**
  * `result<ok, err>`. Pass `null` for an absent payload, e.g. `result(null, e)`
