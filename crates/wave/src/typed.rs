@@ -25,6 +25,8 @@ use crate::encode::encode_value;
 pub struct TypedValue<V: WasmValue = Value>(pub V, pub V::Type);
 
 /// [Encoder] of [`TypedValue`]
+///
+/// Its [`std::io::Error`]s wrap a [`EncodeError`](crate::EncodeError), recoverable with `std::io::Error::downcast`.
 #[derive(Debug, Default)]
 pub struct TypedValueEncoder;
 
@@ -32,7 +34,8 @@ impl<V: WasmValue> Encoder<&TypedValue<V>> for TypedValueEncoder {
     type Error = std::io::Error;
 
     fn encode(&mut self, v: &TypedValue<V>, dst: &mut BytesMut) -> std::io::Result<()> {
-        encode_value(&v.1, &v.0, dst)
+        encode_value(&v.1, &v.0, dst)?;
+        Ok(())
     }
 }
 
