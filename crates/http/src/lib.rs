@@ -5,6 +5,7 @@
 
 use core::future::poll_fn;
 use core::iter;
+use core::mem;
 use core::pin::{Pin, pin};
 use core::task::{Context, Poll, ready};
 
@@ -286,8 +287,7 @@ where
                 results,
                 Invocation {
                     sent: Some(sent),
-                    rx: Some(rx),
-                    rest: None,
+                    rx: Ingress::Receiving(rx),
                 },
             ))
         }
@@ -302,8 +302,7 @@ where
 #[must_use]
 pub struct Invocation<F, B: http_body::Body, D> {
     sent: Option<oneshot::Receiver<std::io::Result<()>>>,
-    rx: Option<Receipt<D, FramedRead<ResponseReader<F, B>, FrameDecoder>, ResponseReader<F, B>>>,
-    rest: Option<FramedRead<ResponseReader<F, B>, FrameDecoder>>,
+    rx: Ingress<D, ResponseReader<F, B>>,
 }
 
 impl<F, B, Err, D> Future for Invocation<F, B, D>
@@ -316,9 +315,9 @@ where
     type Output = std::io::Result<()>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let Self { sent, rx, rest } = self.get_mut();
+        let Self { sent, rx } = self.get_mut();
         let canceled = poll_sent(cx, sent)?;
-        let end = match poll_end(cx, rx, rest) {
+        let end = match Pin::new(rx).poll(cx) {
             Poll::Ready(Ok(())) => true,
             Poll::Ready(Err(err)) => return Poll::Ready(Err(sent_error(sent, err.into()))),
             Poll::Pending => false,
@@ -373,11 +372,10 @@ where
         let Self { rx, mut parts } = self;
         let Codec { enc, dec } = codec;
         let (params, rx) = receive(dec, rx).await?;
-        let mut rx = Some(rx);
-        let mut rest = None;
+        let mut rx = Ingress::Receiving(rx);
         let mut results = pin!(f(params));
         let results = poll_fn(|cx| {
-            if let Poll::Ready(Err(err)) = poll_end(cx, &mut rx, &mut rest) {
+            if let Poll::Ready(Err(err)) = Pin::new(&mut rx).poll(cx) {
                 return Poll::Ready(Err(err.into()));
             }
             results.as_mut().poll(cx).map_err(ServeError::Handler)
@@ -388,10 +386,7 @@ where
             .headers
             .entry(CONTENT_TYPE)
             .or_insert(HeaderValue::from_static(MEDIA_TYPE));
-        Ok(http::Response::from_parts(
-            parts,
-            ResponseBody { body, rx, rest },
-        ))
+        Ok(http::Response::from_parts(parts, ResponseBody { body, rx }))
     }
 }
 
@@ -428,8 +423,7 @@ where
 /// capacity.
 pub struct ResponseBody<E, D, T: http_body::Body> {
     body: Body<E>,
-    rx: Option<Receipt<D, FramedRead<BodyReader<T>, FrameDecoder>, BodyReader<T>>>,
-    rest: Option<FramedRead<BodyReader<T>, FrameDecoder>>,
+    rx: Ingress<D, BodyReader<T>>,
 }
 
 impl<E, D, T> http_body::Body for ResponseBody<E, D, T>
@@ -445,23 +439,23 @@ where
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
-        let Self { body, rx, rest } = self.get_mut();
-        if let Poll::Ready(Err(err)) = poll_end(cx, rx, rest) {
+        let Self { body, rx } = self.get_mut();
+        if let Poll::Ready(Err(err)) = Pin::new(&mut *rx).poll(cx) {
             return Poll::Ready(Some(Err(err.into())));
         }
         match ready!(Pin::new(body).poll_frame(cx)) {
-            None if rx.is_some() || rest.is_some() => Poll::Pending,
+            None if !matches!(rx, Ingress::Done) => Poll::Pending,
             frame => Poll::Ready(frame),
         }
     }
 
     fn is_end_stream(&self) -> bool {
-        self.rx.is_none() && self.rest.is_none() && self.body.is_end_stream()
+        matches!(self.rx, Ingress::Done) && self.body.is_end_stream()
     }
 
     fn size_hint(&self) -> SizeHint {
         let hint = self.body.size_hint();
-        if self.rx.is_none() && self.rest.is_none() {
+        if matches!(self.rx, Ingress::Done) {
             return hint;
         }
         let mut lower = SizeHint::default();
@@ -671,24 +665,33 @@ fn sent_error(
     err
 }
 
-/// Polls `rx` and then the frames following it for their end, failing on data
-fn poll_end<I: AsyncRead + Unpin, D: Receive>(
-    cx: &mut Context<'_>,
-    rx: &mut Option<Receipt<D, FramedRead<I, FrameDecoder>, I>>,
-    rest: &mut Option<FramedRead<I, FrameDecoder>>,
-) -> Poll<Result<(), ReceiveError>> {
-    if let Some(fut) = rx {
-        ready!(Pin::new(fut).poll(cx))?;
-        *rest = rx.take().map(Receipt::into_inner);
-    }
-    if let Some(frames) = rest {
-        let frame = ready!(frames.poll_next_unpin(cx)).transpose()?;
-        if frame.is_some() {
-            return Poll::Ready(Err(error_data_after_end().into()));
+/// Receipt of the rest of a body, followed by its end
+enum Ingress<D, I> {
+    Receiving(Receipt<D, FramedRead<I, FrameDecoder>, I>),
+    Trailing(FramedRead<I, FrameDecoder>),
+    Done,
+}
+
+impl<D: Receive, I: AsyncRead + Unpin> Future for Ingress<D, I> {
+    type Output = Result<(), ReceiveError>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut();
+        if let Self::Receiving(fut) = this {
+            ready!(Pin::new(fut).poll(cx))?;
+            if let Self::Receiving(fut) = mem::replace(this, Self::Done) {
+                *this = Self::Trailing(fut.into_inner());
+            }
         }
-        *rest = None;
+        if let Self::Trailing(rx) = this {
+            let frame = ready!(rx.poll_next_unpin(cx)).transpose()?;
+            if frame.is_some() {
+                return Poll::Ready(Err(error_data_after_end().into()));
+            }
+            *this = Self::Done;
+        }
+        Poll::Ready(Ok(()))
     }
-    Poll::Ready(Ok(()))
 }
 
 fn into_io_error(err: impl Into<Box<dyn core::error::Error + Send + Sync>>) -> std::io::Error {
