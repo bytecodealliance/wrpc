@@ -328,28 +328,27 @@ impl<T> Client<T> {
     }
 }
 
-impl<E, S, B> Invoke<E> for Client<S>
-where
-    E: Transmit + Send + 'static,
-    S: Service<
-            http::Request<OutgoingParams>,
-            Response = http::Response<B>,
-            Error: Into<Box<dyn core::error::Error + Send + Sync>>,
-        >,
-    B: http_body::Body<Data = Bytes, Error: Into<Box<dyn core::error::Error + Send + Sync>>>,
-{
-    type Invocation<D: Receive> = Invocation<B, D>;
-
-    fn invoke<D, T>(
+impl<S> Client<S> {
+    /// Invokes function `func` on instance `instance` with `params` using `codec`, see
+    /// [`Codec::invoke`]
+    ///
+    /// Unlike [`Invoke`], this does not require [`Send`] futures.
+    pub fn invoke<E, D, T, B>(
         self,
         codec: Codec<E, D>,
         instance: &str,
         func: &str,
         params: T,
-    ) -> impl Future<Output = Result<(D::Item, Self::Invocation<D>), InvokeError>> + use<E, S, B, D, T>
+    ) -> impl Future<Output = Result<(D::Item, Invocation<B, D>), InvokeError>> + use<E, S, B, D, T>
     where
-        E: Encoder<T, Error = std::io::Error>,
+        E: Transmit + Encoder<T, Error = std::io::Error> + Send + 'static,
         D: Decoder<Error = std::io::Error> + Receive,
+        S: Service<
+                http::Request<OutgoingParams>,
+                Response = http::Response<B>,
+                Error: Into<Box<dyn core::error::Error + Send + Sync>>,
+            >,
+        B: http_body::Body<Data = Bytes, Error: Into<Box<dyn core::error::Error + Send + Sync>>>,
     {
         let Self { parts, mut service } = self;
         let Codec { enc, dec } = codec;
@@ -420,28 +419,69 @@ where
     }
 }
 
-impl<'a, E, S, B> Invoke<E> for &'a mut Client<S>
+impl<S, B> Invoke for Client<S>
 where
-    E: Transmit + Send + 'static,
     S: Service<
             http::Request<OutgoingParams>,
             Response = http::Response<B>,
             Error: Into<Box<dyn core::error::Error + Send + Sync>>,
-        >,
-    B: http_body::Body<Data = Bytes, Error: Into<Box<dyn core::error::Error + Send + Sync>>>,
+            Future: Send,
+        > + Send,
+    B: http_body::Body<Data = Bytes, Error: Into<Box<dyn core::error::Error + Send + Sync>>> + Send,
 {
-    type Invocation<D: Receive> = Invocation<B, D>;
+    type Invocation<E, D>
+        = Invocation<B, D>
+    where
+        E: Transmit + Send + 'static,
+        D: Receive + Send + 'static;
 
-    fn invoke<D, T>(
+    fn invoke<E, D, T>(
         self,
         codec: Codec<E, D>,
         instance: &str,
         func: &str,
         params: T,
-    ) -> impl Future<Output = Result<(D::Item, Self::Invocation<D>), InvokeError>> + use<'a, E, S, B, D, T>
+    ) -> impl Future<Output = Result<(D::Item, Self::Invocation<E, D>), InvokeError>>
+    + Send
+    + use<S, B, E, D, T>
     where
-        E: Encoder<T, Error = std::io::Error>,
-        D: Decoder<Error = std::io::Error> + Receive,
+        E: Transmit + Encoder<T, Error = std::io::Error> + Send + 'static,
+        D: Decoder<Error = std::io::Error> + Receive + Send + 'static,
+        D::Item: Send,
+    {
+        self.invoke(codec, instance, func, params)
+    }
+}
+
+impl<'a, S, B> Invoke for &'a mut Client<S>
+where
+    S: Service<
+            http::Request<OutgoingParams>,
+            Response = http::Response<B>,
+            Error: Into<Box<dyn core::error::Error + Send + Sync>>,
+            Future: Send,
+        > + Send,
+    B: http_body::Body<Data = Bytes, Error: Into<Box<dyn core::error::Error + Send + Sync>>> + Send,
+{
+    type Invocation<E, D>
+        = Invocation<B, D>
+    where
+        E: Transmit + Send + 'static,
+        D: Receive + Send + 'static;
+
+    fn invoke<E, D, T>(
+        self,
+        codec: Codec<E, D>,
+        instance: &str,
+        func: &str,
+        params: T,
+    ) -> impl Future<Output = Result<(D::Item, Self::Invocation<E, D>), InvokeError>>
+    + Send
+    + use<'a, S, B, E, D, T>
+    where
+        E: Transmit + Encoder<T, Error = std::io::Error> + Send + 'static,
+        D: Decoder<Error = std::io::Error> + Receive + Send + 'static,
+        D::Item: Send,
     {
         let Client { parts, service } = self;
         Client {
