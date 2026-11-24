@@ -51,7 +51,11 @@ export type Chunk = Value[] | TypedArray;
  * The JavaScript representation of a decoded component-model value. Decoded
  * `future` values are promises and `stream` values are `ReadableStream`s of
  * chunks, which are cancelled to stop reading them. The chunks of a `stream`
- * without an element type are their numbers of elements.
+ * without an element type are their numbers of elements. Received data is not
+ * buffered: a pending `stream` holds at most one chunk not read yet, and until
+ * it is read, nothing else of its invocation is received, so the pending
+ * values of an invocation must be consumed concurrently. If receiving them
+ * fails, they stay pending.
  */
 export type Value =
   | boolean
@@ -71,7 +75,8 @@ export type Value =
  * A component-model value to send: a decoded {@link Value}, or any other
  * representation the codec accepts, such as any iterable for a `list` or
  * `tuple`, a thunk for a `future`, an iterable or async iterable of chunks for
- * a `stream`, and `null` for an `option`'s `none`. Scalars are converted like
+ * a `stream`, which is pulled only as fast as the transport takes its data,
+ * and `null` for an `option`'s `none`. Scalars are converted like
  * the component model's JS-API draft does, except that integers must be
  * `number`s (`bigint`s for `s64` and `u64`) in range.
  */
