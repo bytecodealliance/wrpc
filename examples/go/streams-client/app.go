@@ -4,7 +4,6 @@ package app
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -40,11 +39,11 @@ func throttle[T any](values []T, d time.Duration) <-chan []T {
 	return ch
 }
 
-func Run(prefix string, client wrpc.Invoker) error {
+func Run(prefix string, client *wrpc.Framed) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	numbers, bytes, errCh, err := handler.Echo(ctx, client, &handler.Req{
+	numbers, bytes, inv, err := handler.Echo(ctx, client, &handler.Req{
 		Numbers: throttle([]uint64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}, time.Second),
 		Bytes:   throttle([]byte("foo bar baz"), time.Second),
 	})
@@ -84,12 +83,8 @@ func Run(prefix string, client wrpc.Invoker) error {
 			}
 		}
 	}()
-	var errs []error
-	for err := range errCh {
-		errs = append(errs, err)
+	if err := inv.Wait(); err != nil {
 		cancel()
-	}
-	if err := errors.Join(errs...); err != nil {
 		return fmt.Errorf("failed to exchange async values: %w", err)
 	}
 	return nil

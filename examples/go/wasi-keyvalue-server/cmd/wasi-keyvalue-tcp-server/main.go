@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"log/slog"
 	"net"
@@ -13,48 +14,53 @@ import (
 
 	app "wrpc.io/examples/go/wasi-keyvalue-server"
 	server "wrpc.io/examples/go/wasi-keyvalue-server/bindings"
-	wrpctcp "wrpc.io/go/x/tcp"
+	wrpc "wrpc.io/go"
 )
 
+func serve(ctx context.Context, conn net.Conn, h *app.Handler) {
+	defer conn.Close()
+	lis := wrpc.NewListener(conn, conn)
+	for {
+		hdr, c, err := lis.Accept(ctx)
+		if err == io.EOF {
+			return
+		}
+		if err != nil {
+			slog.Error("failed to accept invocation", "err", err)
+			return
+		}
+		ok, err := server.Handle(ctx, hdr, c, h)
+		if !ok {
+			slog.Error("received an invocation of an unknown function", "instance", hdr.Instance, "name", hdr.Name)
+			return
+		}
+		if err != nil {
+			slog.Error("failed to serve invocation", "err", err)
+			return
+		}
+	}
+}
+
 func run() error {
-	l, err := net.ListenTCP("tcp", &net.TCPAddr{
-		IP:   net.IPv6loopback,
-		Port: 7761,
-	})
+	l, err := net.Listen("tcp", "[::1]:7761")
 	if err != nil {
 		return fmt.Errorf("failed to listen on TCP socket: %w", err)
 	}
 
-	ctx := context.Background()
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	srv := wrpctcp.NewServerWithContext(ctx, l)
-	stop, err := server.Serve(srv, &app.Handler{})
-	if err != nil {
-		return fmt.Errorf("failed to serve `server` world: %w", err)
-	}
-
+	h := &app.Handler{}
 	go func() {
 		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-				slog.Debug("accepting invocation")
-				accept, err := srv.Accept()
-				if err != nil {
-					if !errors.Is(err, net.ErrClosed) {
-						slog.Error("failed to accept connection", "err", err)
-					}
-					continue
+			conn, err := l.Accept()
+			if err != nil {
+				if !errors.Is(err, net.ErrClosed) {
+					slog.Error("failed to accept connection", "err", err)
 				}
-				go func() {
-					if err := accept(ctx); err != nil {
-						slog.Error("failed to accept invocation", "err", err)
-					}
-				}()
+				return
 			}
+			go serve(ctx, conn, h)
 		}
 	}()
 
@@ -62,10 +68,7 @@ func run() error {
 	signal.Notify(signalCh, syscall.SIGINT)
 	<-signalCh
 
-	if err = stop(); err != nil {
-		return fmt.Errorf("failed to stop `server` world: %w", err)
-	}
-	return nil
+	return l.Close()
 }
 
 func main() {

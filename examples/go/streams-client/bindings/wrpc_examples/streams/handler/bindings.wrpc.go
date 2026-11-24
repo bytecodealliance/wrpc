@@ -2,14 +2,8 @@
 package handler
 
 import (
-	bytes "bytes"
 	context "context"
-	binary "encoding/binary"
-	errors "errors"
 	fmt "fmt"
-	io "io"
-	slog "log/slog"
-	sync "sync"
 	wrpc "wrpc.io/go"
 )
 
@@ -20,176 +14,38 @@ type Req struct {
 
 func (v *Req) String() string { return "Req" }
 
-func (v *Req) WriteToIndex(w wrpc.ByteWriter) (func(context.Context, wrpc.IndexWriter) error, error) {
-	writes := make(map[uint32]func(context.Context, wrpc.IndexWriter) error, 2)
-	slog.Debug("writing field", "name", "numbers")
-	write0, err := wrpc.WriteStream(v.Numbers, w, func(v uint64, w wrpc.ByteWriter) (func(context.Context, wrpc.IndexWriter) error, error) {
-		return (func(context.Context, wrpc.IndexWriter) error)(nil), func(v uint64, w io.Writer) (err error) {
-			b := make([]byte, binary.MaxVarintLen64)
-			i := binary.PutUvarint(b, uint64(v))
-			slog.Debug("writing u64")
-			_, err = w.Write(b[:i])
-			return err
-		}(v, w)
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to write `numbers` field: %w", err)
-	}
-	if write0 != nil {
-		writes[0] = write0
-	}
-	slog.Debug("writing field", "name", "bytes")
-	write1, err := wrpc.WriteByteStream(v.Bytes, w)
-	if err != nil {
-		return nil, fmt.Errorf("failed to write `bytes` field: %w", err)
-	}
-	if write1 != nil {
-		writes[1] = write1
-	}
+type ReqCodec struct{}
 
-	return wrpc.JoinWrites(writes), nil
+func (ReqCodec) Encode(v Req, dst []byte) ([]byte, wrpc.Transmitter, error) {
+	var err error
+	var tx0 wrpc.Transmitter
+	if dst, tx0, err = (wrpc.StreamCodec[uint64]{Elem: wrpc.U64Codec{}}).Encode(v.Numbers, dst); err != nil {
+		return nil, nil, fmt.Errorf("failed to encode field `numbers`: %w", err)
+	}
+	var tx1 wrpc.Transmitter
+	if dst, tx1, err = (wrpc.ByteStreamCodec{}).Encode(v.Bytes, dst); err != nil {
+		return nil, nil, fmt.Errorf("failed to encode field `bytes`: %w", err)
+	}
+	return dst, wrpc.NewTransmitters(tx0, tx1), nil
 }
-func Echo(ctx__ context.Context, wrpc__ wrpc.Invoker, r *Req) (r0__ <-chan []uint64, r1__ <-chan []uint8, errs__ <-chan error, err__ error) {
-	var buf__ bytes.Buffer
-	var writeCount__ uint32
-	write0__, err__ := (r).WriteToIndex(&buf__)
+
+func (ReqCodec) Decode(r wrpc.ByteReader) (Req, wrpc.Receiver, error) {
+	var v Req
+	var err error
+	var rx0 wrpc.Receiver
+	if v.Numbers, rx0, err = (wrpc.StreamCodec[uint64]{Elem: wrpc.U64Codec{}}).Decode(r); err != nil {
+		return v, nil, fmt.Errorf("failed to decode field `numbers`: %w", err)
+	}
+	var rx1 wrpc.Receiver
+	if v.Bytes, rx1, err = (wrpc.ByteStreamCodec{}).Decode(r); err != nil {
+		return v, nil, fmt.Errorf("failed to decode field `bytes`: %w", err)
+	}
+	return v, wrpc.NewReceivers(rx0, rx1), nil
+}
+func Echo(ctx__ context.Context, c__ *wrpc.Framed, r *Req) (r0__ <-chan []uint64, r1__ <-chan []uint8, inv__ *wrpc.Invocation, err__ error) {
+	res__, inv__, err__ := wrpc.Invoke[wrpc.Tuple1[*Req], wrpc.Tuple1[wrpc.Tuple2[<-chan []uint64, <-chan []uint8]]](ctx__, c__, "wrpc-examples:streams/handler", "echo", wrpc.Tuple1Codec[*Req]{C0: wrpc.PtrCodec[Req]{Elem: ReqCodec{}}}, wrpc.Tuple1Codec[wrpc.Tuple2[<-chan []uint64, <-chan []uint8]]{C0: wrpc.Tuple2Codec[<-chan []uint64, <-chan []uint8]{C0: wrpc.StreamCodec[uint64]{Elem: wrpc.U64Codec{}}, C1: wrpc.ByteStreamCodec{}}}, wrpc.Tuple1[*Req]{V0: r})
 	if err__ != nil {
-		err__ = fmt.Errorf("failed to write `r` parameter: %w", err__)
 		return
 	}
-	if write0__ != nil {
-		writeCount__++
-	}
-	writes__ := make(map[uint32]func(context.Context, wrpc.IndexWriter) error, uint(writeCount__))
-	if write0__ != nil {
-		writes__[0] = write0__
-	}
-	var w__ wrpc.IndexWriteCloser
-	var r__ wrpc.IndexReadCloser
-	w__, r__, err__ = wrpc__.Invoke(ctx__, "wrpc-examples:streams/handler", "echo",
-		wrpc.NewSubscribePath().Index(0).Index(0), wrpc.NewSubscribePath().Index(0).Index(1),
-	)
-	if err__ != nil {
-		err__ = fmt.Errorf("failed to invoke `echo`: %w", err__)
-		return
-	}
-	defer func() {
-		if err__ != nil && ctx__.Err() == nil {
-			if err := wrpc.CloseWithError(w__, err__); err != nil {
-				slog.DebugContext(ctx__, "failed to close outgoing stream", "instance", "wrpc-examples:streams/handler", "name", "echo", "err", err)
-			}
-		}
-		if err := r__.Close(); err != nil {
-			slog.ErrorContext(ctx__, "failed to close reader", "instance", "wrpc-examples:streams/handler", "name", "echo", "err", err)
-		}
-	}()
-	_, err__ = w__.Write(buf__.Bytes())
-	if err__ != nil {
-		err__ = fmt.Errorf("failed to write parameters: %w", err__)
-		return
-	}
-	err__ = w__.ClosePath()
-	if err__ != nil {
-		err__ = fmt.Errorf("failed to close parameters: %w", err__)
-		return
-	}
-	errCh__ := make(chan error, uint(writeCount__)+2)
-	errs__ = errCh__
-	var wg__ sync.WaitGroup
-	defer func() {
-		go func() {
-			wg__.Wait()
-			close(errCh__)
-		}()
-	}()
-	if writeCount__ > 0 {
-		for index, write := range writes__ {
-			w, err := w__.Index(index)
-			if err != nil {
-				err__ = fmt.Errorf("failed to index param writer at index `%v`: %w", index, err)
-				return
-			}
-			wg__.Add(1)
-			write := write
-			go func() {
-				defer wg__.Done()
-				err := write(ctx__, w)
-				if err != nil {
-					errCh__ <- err
-				}
-				if err := wrpc.CloseWithError(w, err); err != nil {
-					slog.DebugContext(ctx__, "failed to close nested param writer", "instance", "wrpc-examples:streams/handler", "name", "echo", "err", err)
-				}
-			}()
-		}
-	}
-	if cErr__ := w__.Close(); cErr__ != nil {
-		slog.DebugContext(ctx__, "failed to close outgoing stream", "instance", "wrpc-examples:streams/handler", "name", "echo", "err", cErr__)
-	}
-	var d0__ func(context.Context) error
-	r0__, d0__, err__ = wrpc.ReadStream(r__, func(r wrpc.IndexReadCloser, path ...uint32) (uint64, func(context.Context) error, error) {
-		v, err := func(r io.ByteReader) (uint64, error) {
-			var x uint64
-			var s uint8
-			for i := 0; i < 10; i++ {
-				slog.Debug("reading u64 byte", "i", i)
-				b, err := r.ReadByte()
-				if err != nil {
-					if i > 0 && err == io.EOF {
-						err = io.ErrUnexpectedEOF
-					}
-					return x, fmt.Errorf("failed to read u64 byte: %w", err)
-				}
-				if s == 63 && b > 0x01 {
-					return x, errors.New("varint overflows a 64-bit integer")
-				}
-				if b < 0x80 {
-					return x | uint64(b)<<s, nil
-				}
-				x |= uint64(b&0x7f) << s
-				s += 7
-			}
-			return x, errors.New("varint overflows a 64-bit integer")
-		}(r)
-		return v, nil, err
-	}, []uint32{0, 0}...)
-	if err__ != nil {
-		err__ = fmt.Errorf("failed to read result 0: %w", err__)
-		return
-	}
-	var d1__ func(context.Context) error
-	r1__, d1__, err__ = wrpc.ReadByteStream(r__, []uint32{0, 1}...)
-	if err__ != nil {
-		err__ = fmt.Errorf("failed to read result 1: %w", err__)
-		return
-	}
-	if d0__ != nil {
-		wg__.Add(1)
-		go func() {
-			defer wg__.Done()
-			if err := d0__(ctx__); err != nil {
-				errCh__ <- err
-				if ctx__.Err() == nil {
-					if err := wrpc.CloseWithError(w__, err); err != nil {
-						slog.DebugContext(ctx__, "failed to close outgoing stream", "instance", "wrpc-examples:streams/handler", "name", "echo", "err", err)
-					}
-				}
-			}
-		}()
-	}
-	if d1__ != nil {
-		wg__.Add(1)
-		go func() {
-			defer wg__.Done()
-			if err := d1__(ctx__); err != nil {
-				errCh__ <- err
-				if ctx__.Err() == nil {
-					if err := wrpc.CloseWithError(w__, err); err != nil {
-						slog.DebugContext(ctx__, "failed to close outgoing stream", "instance", "wrpc-examples:streams/handler", "name", "echo", "err", err)
-					}
-				}
-			}
-		}()
-	}
-	return
+	return res__.V0.V0, res__.V0.V1, inv__, nil
 }

@@ -24,7 +24,7 @@ func init() {
 	})))
 }
 
-func Run(prefix string, client wrpc.Invoker) error {
+func Run(prefix string, client *wrpc.Framed) error {
 	open, err := store.Open(context.Background(), client, "example")
 	if err != nil {
 		return fmt.Errorf("failed to invoke `wrpc-examples:keyvalue/store.open`: %w", err)

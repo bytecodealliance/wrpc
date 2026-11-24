@@ -2,15 +2,9 @@
 package store
 
 import (
-	bytes "bytes"
 	context "context"
-	binary "encoding/binary"
 	errors "errors"
 	fmt "fmt"
-	io "io"
-	slog "log/slog"
-	math "math"
-	utf8 "unicode/utf8"
 	wrpc "wrpc.io/go"
 )
 
@@ -112,56 +106,50 @@ func NewErrorOther(payload string) *Error {
 		payload)
 }
 func (v *Error) Error() string { return v.String() }
-func (v *Error) WriteToIndex(w wrpc.ByteWriter) (func(context.Context, wrpc.IndexWriter) error, error) {
-	if err := func(v uint8, w io.Writer) error {
-		b := make([]byte, 2)
-		i := binary.PutUvarint(b, uint64(v))
-		slog.Debug("writing u8 discriminant")
-		_, err := w.Write(b[:i])
-		return err
-	}(uint8(v.discriminant), w); err != nil {
-		return nil, fmt.Errorf("failed to write discriminant: %w", err)
-	}
+
+type ErrorCodec struct{}
+
+func (ErrorCodec) Encode(v Error, dst []byte) ([]byte, wrpc.Transmitter, error) {
+	dst = wrpc.AppendUint32(dst, uint32(v.discriminant))
 	switch v.discriminant {
 	case ErrorNoSuchStore:
+		return dst, nil, nil
 	case ErrorAccessDenied:
+		return dst, nil, nil
 	case ErrorOther:
 		payload, ok := v.payload.(string)
 		if !ok {
-			return nil, errors.New("invalid payload")
+			return nil, nil, errors.New("invalid `other` payload")
 		}
-		write, err := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
-			if !utf8.ValidString(v) {
-				return errors.New("string is not valid UTF-8")
-			}
-			n := len(v)
-			if n > math.MaxUint32 {
-				return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
-			}
-			if err = func(v int, w io.Writer) error {
-				b := make([]byte, binary.MaxVarintLen32)
-				i := binary.PutUvarint(b, uint64(v))
-				slog.Debug("writing string byte length", "len", n)
-				_, err = w.Write(b[:i])
-				return err
-			}(n, w); err != nil {
-				return fmt.Errorf("failed to write string byte length of %d: %w", n, err)
-			}
-			slog.Debug("writing string bytes")
-			_, err = w.Write([]byte(v))
-			if err != nil {
-				return fmt.Errorf("failed to write string bytes: %w", err)
-			}
-			return nil
-		}(payload, w)
-		if err != nil {
-			return nil, fmt.Errorf("failed to write payload: %w", err)
-		}
-		return write, nil
+		return (wrpc.StringCodec{}).Encode(payload, dst)
 	default:
-		return nil, errors.New("invalid variant")
+		return nil, nil, errors.New("invalid variant discriminant")
 	}
-	return nil, nil
+}
+
+func (ErrorCodec) Decode(r wrpc.ByteReader) (Error, wrpc.Receiver, error) {
+	var v Error
+	n, err := wrpc.ReadUint32(r)
+	if err != nil {
+		return v, nil, err
+	}
+	switch n {
+	case 0:
+		v.SetNoSuchStore()
+		return v, nil, nil
+	case 1:
+		v.SetAccessDenied()
+		return v, nil, nil
+	case 2:
+		payload, rx, err := (wrpc.StringCodec{}).Decode(r)
+		if err != nil {
+			return v, nil, fmt.Errorf("failed to decode `other` payload: %w", err)
+		}
+		v.SetOther(payload)
+		return v, rx, nil
+	default:
+		return v, nil, fmt.Errorf("unknown discriminant value %d", n)
+	}
 }
 
 // A response to a `list-keys` operation.
@@ -175,122 +163,29 @@ type KeyResponse struct {
 
 func (v *KeyResponse) String() string { return "KeyResponse" }
 
-func (v *KeyResponse) WriteToIndex(w wrpc.ByteWriter) (func(context.Context, wrpc.IndexWriter) error, error) {
-	writes := make(map[uint32]func(context.Context, wrpc.IndexWriter) error, 2)
-	slog.Debug("writing field", "name", "keys")
-	write0, err := func(v []string, w interface {
-		io.ByteWriter
-		io.Writer
-	}) (write func(context.Context, wrpc.IndexWriter) error, err error) {
-		n := len(v)
-		if n > math.MaxUint32 {
-			return nil, fmt.Errorf("list length of %d overflows a 32-bit integer", n)
-		}
-		if err = func(v int, w io.Writer) error {
-			b := make([]byte, binary.MaxVarintLen32)
-			i := binary.PutUvarint(b, uint64(v))
-			slog.Debug("writing list length", "len", n)
-			_, err = w.Write(b[:i])
-			return err
-		}(n, w); err != nil {
-			return nil, fmt.Errorf("failed to write list length of %d: %w", n, err)
-		}
-		slog.Debug("writing list elements")
-		writes := make(map[uint32]func(context.Context, wrpc.IndexWriter) error, n)
-		for i, e := range v {
-			write, err := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
-				if !utf8.ValidString(v) {
-					return errors.New("string is not valid UTF-8")
-				}
-				n := len(v)
-				if n > math.MaxUint32 {
-					return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
-				}
-				if err = func(v int, w io.Writer) error {
-					b := make([]byte, binary.MaxVarintLen32)
-					i := binary.PutUvarint(b, uint64(v))
-					slog.Debug("writing string byte length", "len", n)
-					_, err = w.Write(b[:i])
-					return err
-				}(n, w); err != nil {
-					return fmt.Errorf("failed to write string byte length of %d: %w", n, err)
-				}
-				slog.Debug("writing string bytes")
-				_, err = w.Write([]byte(v))
-				if err != nil {
-					return fmt.Errorf("failed to write string bytes: %w", err)
-				}
-				return nil
-			}(e, w)
-			if err != nil {
-				return nil, fmt.Errorf("failed to write list element %d: %w", i, err)
-			}
-			if write != nil {
-				writes[uint32(i)] = write
-			}
-		}
-		return wrpc.JoinWrites(writes), nil
-	}(v.Keys, w)
-	if err != nil {
-		return nil, fmt.Errorf("failed to write `keys` field: %w", err)
-	}
-	if write0 != nil {
-		writes[0] = write0
-	}
-	slog.Debug("writing field", "name", "cursor")
-	write1, err := func(v *string, w interface {
-		io.ByteWriter
-		io.Writer
-	}) (func(context.Context, wrpc.IndexWriter) error, error) {
-		if v == nil {
-			slog.Debug("writing `option::none` status byte")
-			if err := w.WriteByte(0); err != nil {
-				return nil, fmt.Errorf("failed to write `option::none` byte: %w", err)
-			}
-			return nil, nil
-		}
-		slog.Debug("writing `option::some` status byte")
-		if err := w.WriteByte(1); err != nil {
-			return nil, fmt.Errorf("failed to write `option::some` status byte: %w", err)
-		}
-		slog.Debug("writing `option::some` payload")
-		write, err := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
-			if !utf8.ValidString(v) {
-				return errors.New("string is not valid UTF-8")
-			}
-			n := len(v)
-			if n > math.MaxUint32 {
-				return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
-			}
-			if err = func(v int, w io.Writer) error {
-				b := make([]byte, binary.MaxVarintLen32)
-				i := binary.PutUvarint(b, uint64(v))
-				slog.Debug("writing string byte length", "len", n)
-				_, err = w.Write(b[:i])
-				return err
-			}(n, w); err != nil {
-				return fmt.Errorf("failed to write string byte length of %d: %w", n, err)
-			}
-			slog.Debug("writing string bytes")
-			_, err = w.Write([]byte(v))
-			if err != nil {
-				return fmt.Errorf("failed to write string bytes: %w", err)
-			}
-			return nil
-		}(*v, w)
-		if err != nil {
-			return nil, fmt.Errorf("failed to write `option::some` payload: %w", err)
-		}
-		return write, nil
-	}(v.Cursor, w)
-	if err != nil {
-		return nil, fmt.Errorf("failed to write `cursor` field: %w", err)
-	}
-	if write1 != nil {
-		writes[1] = write1
-	}
+type KeyResponseCodec struct{}
 
-	return wrpc.JoinWrites(writes), nil
+func (KeyResponseCodec) Encode(v KeyResponse, dst []byte) ([]byte, wrpc.Transmitter, error) {
+	var err error
+	if dst, _, err = (wrpc.ListCodec[string]{Elem: wrpc.StringCodec{}}).Encode(v.Keys, dst); err != nil {
+		return nil, nil, fmt.Errorf("failed to encode field `keys`: %w", err)
+	}
+	if dst, _, err = (wrpc.OptionCodec[string]{Elem: wrpc.StringCodec{}}).Encode(v.Cursor, dst); err != nil {
+		return nil, nil, fmt.Errorf("failed to encode field `cursor`: %w", err)
+	}
+	return dst, nil, nil
+}
+
+func (KeyResponseCodec) Decode(r wrpc.ByteReader) (KeyResponse, wrpc.Receiver, error) {
+	var v KeyResponse
+	var err error
+	if v.Keys, _, err = (wrpc.ListCodec[string]{Elem: wrpc.StringCodec{}}).Decode(r); err != nil {
+		return v, nil, fmt.Errorf("failed to decode field `keys`: %w", err)
+	}
+	if v.Cursor, _, err = (wrpc.OptionCodec[string]{Elem: wrpc.StringCodec{}}).Decode(r); err != nil {
+		return v, nil, fmt.Errorf("failed to decode field `cursor`: %w", err)
+	}
+	return v, nil, nil
 }
 
 // A bucket is a collection of key-value pairs. Each key-value pair is stored as a entry in the
@@ -315,210 +210,15 @@ type Bucket interface{}
 // `identifier` must refer to a bucket provided by the host.
 //
 // `error::no-such-store` will be raised if the `identifier` is not recognized.
-func Open(ctx__ context.Context, wrpc__ wrpc.Invoker, identifier string) (r0__ *wrpc.Result[wrpc.Own[Bucket], Error], err__ error) {
-	var buf__ bytes.Buffer
-	write0__, err__ := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
-		if !utf8.ValidString(v) {
-			return errors.New("string is not valid UTF-8")
-		}
-		n := len(v)
-		if n > math.MaxUint32 {
-			return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
-		}
-		if err = func(v int, w io.Writer) error {
-			b := make([]byte, binary.MaxVarintLen32)
-			i := binary.PutUvarint(b, uint64(v))
-			slog.Debug("writing string byte length", "len", n)
-			_, err = w.Write(b[:i])
-			return err
-		}(n, w); err != nil {
-			return fmt.Errorf("failed to write string byte length of %d: %w", n, err)
-		}
-		slog.Debug("writing string bytes")
-		_, err = w.Write([]byte(v))
-		if err != nil {
-			return fmt.Errorf("failed to write string bytes: %w", err)
-		}
-		return nil
-	}(identifier, &buf__)
+func Open(ctx__ context.Context, c__ *wrpc.Framed, identifier string) (r0__ *wrpc.Result[wrpc.Own[Bucket], Error], err__ error) {
+	res__, inv__, err__ := wrpc.Invoke[wrpc.Tuple1[string], wrpc.Tuple1[*wrpc.Result[wrpc.Own[Bucket], Error]]](ctx__, c__, "wasi:keyvalue/store@0.2.0-draft2", "open", wrpc.Tuple1Codec[string]{C0: wrpc.StringCodec{}}, wrpc.Tuple1Codec[*wrpc.Result[wrpc.Own[Bucket], Error]]{C0: wrpc.PtrCodec[wrpc.Result[wrpc.Own[Bucket], Error]]{Elem: wrpc.ResultCodec[wrpc.Own[Bucket], Error]{Ok: wrpc.OwnCodec[Bucket]{}, Err: ErrorCodec{}}}}, wrpc.Tuple1[string]{V0: identifier})
 	if err__ != nil {
-		err__ = fmt.Errorf("failed to write `identifier` parameter: %w", err__)
 		return
 	}
-	if write0__ != nil {
-		err__ = errors.New("unexpected deferred write for synchronous `identifier` parameter")
+	if err__ = inv__.Wait(); err__ != nil {
 		return
 	}
-	var w__ wrpc.IndexWriteCloser
-	var r__ wrpc.IndexReadCloser
-	w__, r__, err__ = wrpc__.Invoke(ctx__, "wasi:keyvalue/store@0.2.0-draft2", "open")
-	if err__ != nil {
-		err__ = fmt.Errorf("failed to invoke `open`: %w", err__)
-		return
-	}
-	defer func() {
-		if err__ != nil && ctx__.Err() == nil {
-			if err := wrpc.CloseWithError(w__, err__); err != nil {
-				slog.DebugContext(ctx__, "failed to close outgoing stream", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "open", "err", err)
-			}
-		}
-		if err := r__.Close(); err != nil {
-			slog.ErrorContext(ctx__, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "open", "err", err)
-		}
-	}()
-	_, err__ = w__.Write(buf__.Bytes())
-	if err__ != nil {
-		err__ = fmt.Errorf("failed to write parameters: %w", err__)
-		return
-	}
-	err__ = w__.ClosePath()
-	if err__ != nil {
-		err__ = fmt.Errorf("failed to close parameters: %w", err__)
-		return
-	}
-	if cErr__ := w__.Close(); cErr__ != nil {
-		slog.DebugContext(ctx__, "failed to close outgoing stream", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "open", "err", cErr__)
-	}
-	r0__, err__ = func(r wrpc.IndexReadCloser, path ...uint32) (*wrpc.Result[wrpc.Own[Bucket], Error], error) {
-		slog.Debug("reading result status byte")
-		status, err := r.ReadByte()
-		if err != nil {
-			return nil, fmt.Errorf("failed to read result status byte: %w", err)
-		}
-		switch status {
-		case 0:
-			slog.Debug("reading `result::ok` payload")
-			v, err := func(r interface {
-				io.ByteReader
-				io.Reader
-			}) (wrpc.Own[Bucket], error) {
-				var x uint32
-				var s uint
-				for i := 0; i < 5; i++ {
-					slog.Debug("reading owned resource handle length byte", "i", i)
-					b, err := r.ReadByte()
-					if err != nil {
-						if i > 0 && err == io.EOF {
-							err = io.ErrUnexpectedEOF
-						}
-						return nil, fmt.Errorf("failed to read owned resource handle length byte: %w", err)
-					}
-					if b < 0x80 {
-						if i == 4 && b > 0x0f {
-							return nil, errors.New("owned resource handle length overflows a 32-bit integer")
-						}
-						x = x | uint32(b)<<s
-						slog.Debug("reading owned resource handle bytes", "len", x)
-						buf, err := wrpc.ReadBytes(r, x)
-						if err != nil {
-							return nil, fmt.Errorf("failed to read owned resource handle bytes: %w", err)
-						}
-						return wrpc.Own[Bucket](buf), nil
-					}
-					x |= uint32(b&0x7f) << s
-					s += 7
-				}
-				return nil, errors.New("owned resource handle length overflows a 32-bit integer")
-			}(r)
-			if err != nil {
-				return nil, fmt.Errorf("failed to read `result::ok` value: %w", err)
-			}
-			return &wrpc.Result[wrpc.Own[Bucket], Error]{Ok: &v}, nil
-		case 1:
-			slog.Debug("reading `result::err` payload")
-			v, err := func(r wrpc.IndexReadCloser, path ...uint32) (*Error, error) {
-				v := &Error{}
-				n, err := func(r io.ByteReader) (uint8, error) {
-					var x uint8
-					var s uint
-					for i := 0; i < 2; i++ {
-						slog.Debug("reading u8 discriminant byte", "i", i)
-						b, err := r.ReadByte()
-						if err != nil {
-							if i > 0 && err == io.EOF {
-								err = io.ErrUnexpectedEOF
-							}
-							return x, fmt.Errorf("failed to read u8 discriminant byte: %w", err)
-						}
-						if s == 7 && b > 0x01 {
-							return x, errors.New("discriminant overflows an 8-bit integer")
-						}
-						if b < 0x80 {
-							return x | uint8(b)<<s, nil
-						}
-						x |= uint8(b&0x7f) << s
-						s += 7
-					}
-					return x, errors.New("discriminant overflows an 8-bit integer")
-				}(r)
-				if err != nil {
-					return nil, fmt.Errorf("failed to read discriminant: %w", err)
-				}
-				switch ErrorDiscriminant(n) {
-				case ErrorNoSuchStore:
-					return v.SetNoSuchStore(), nil
-				case ErrorAccessDenied:
-					return v.SetAccessDenied(), nil
-				case ErrorOther:
-					payload, err := func(r interface {
-						io.ByteReader
-						io.Reader
-					}) (string, error) {
-						var x uint32
-						var s uint8
-						for i := 0; i < 5; i++ {
-							slog.Debug("reading string length byte", "i", i)
-							b, err := r.ReadByte()
-							if err != nil {
-								if i > 0 && err == io.EOF {
-									err = io.ErrUnexpectedEOF
-								}
-								return "", fmt.Errorf("failed to read string length byte: %w", err)
-							}
-							if s == 28 && b > 0x0f {
-								return "", errors.New("string length overflows a 32-bit integer")
-							}
-							if b < 0x80 {
-								x = x | uint32(b)<<s
-								if x == 0 {
-									return "", nil
-								}
-								slog.Debug("reading string bytes", "len", x)
-								buf, err := wrpc.ReadBytes(r, x)
-								if err != nil {
-									return "", fmt.Errorf("failed to read string bytes: %w", err)
-								}
-								if !utf8.Valid(buf) {
-									return string(buf), errors.New("string is not valid UTF-8")
-								}
-								return string(buf), nil
-							}
-							x |= uint32(b&0x7f) << s
-							s += 7
-						}
-						return "", errors.New("string length overflows a 32-bit integer")
-					}(r)
-					if err != nil {
-						return nil, fmt.Errorf("failed to read `other` payload: %w", err)
-					}
-					return v.SetOther(payload), nil
-				default:
-					return nil, fmt.Errorf("unknown discriminant value %d", n)
-				}
-			}(r, path...)
-			if err != nil {
-				return nil, fmt.Errorf("failed to read `result::err` value: %w", err)
-			}
-			return &wrpc.Result[wrpc.Own[Bucket], Error]{Err: v}, nil
-		default:
-			return nil, fmt.Errorf("invalid result status byte %d", status)
-		}
-	}(r__, []uint32{0}...)
-	if err__ != nil {
-		err__ = fmt.Errorf("failed to read result 0: %w", err__)
-		return
-	}
-	return
+	return res__.V0, nil
 }
 
 // Get the value associated with the specified `key`
@@ -528,244 +228,15 @@ func Open(ctx__ context.Context, wrpc__ wrpc.Invoker, identifier string) (r0__ *
 // store, it returns `Ok(none)`.
 //
 // If any other error occurs, it returns an `Err(error)`.
-func Bucket_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[Bucket], key string) (r0__ *wrpc.Result[[]uint8, Error], err__ error) {
-	var buf__ bytes.Buffer
-	write0__, err__ := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v []byte, w wrpc.ByteWriter) error {
-		_, err := wrpc.WriteByteList(v, w)
-		return err
-	}(self, &buf__)
+func Bucket_Get(ctx__ context.Context, c__ *wrpc.Framed, self wrpc.Borrow[Bucket], key string) (r0__ *wrpc.Result[[]uint8, Error], err__ error) {
+	res__, inv__, err__ := wrpc.Invoke[wrpc.Tuple2[wrpc.Borrow[Bucket], string], wrpc.Tuple1[*wrpc.Result[[]uint8, Error]]](ctx__, c__, "wasi:keyvalue/store@0.2.0-draft2", "bucket.get", wrpc.Tuple2Codec[wrpc.Borrow[Bucket], string]{C0: wrpc.BorrowCodec[Bucket]{}, C1: wrpc.StringCodec{}}, wrpc.Tuple1Codec[*wrpc.Result[[]uint8, Error]]{C0: wrpc.PtrCodec[wrpc.Result[[]uint8, Error]]{Elem: wrpc.ResultCodec[[]uint8, Error]{Ok: optionCodec0{}, Err: ErrorCodec{}}}}, wrpc.Tuple2[wrpc.Borrow[Bucket], string]{V0: self, V1: key})
 	if err__ != nil {
-		err__ = fmt.Errorf("failed to write `self` parameter: %w", err__)
 		return
 	}
-	write1__, err__ := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
-		if !utf8.ValidString(v) {
-			return errors.New("string is not valid UTF-8")
-		}
-		n := len(v)
-		if n > math.MaxUint32 {
-			return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
-		}
-		if err = func(v int, w io.Writer) error {
-			b := make([]byte, binary.MaxVarintLen32)
-			i := binary.PutUvarint(b, uint64(v))
-			slog.Debug("writing string byte length", "len", n)
-			_, err = w.Write(b[:i])
-			return err
-		}(n, w); err != nil {
-			return fmt.Errorf("failed to write string byte length of %d: %w", n, err)
-		}
-		slog.Debug("writing string bytes")
-		_, err = w.Write([]byte(v))
-		if err != nil {
-			return fmt.Errorf("failed to write string bytes: %w", err)
-		}
-		return nil
-	}(key, &buf__)
-	if err__ != nil {
-		err__ = fmt.Errorf("failed to write `key` parameter: %w", err__)
+	if err__ = inv__.Wait(); err__ != nil {
 		return
 	}
-	if write0__ != nil {
-		err__ = errors.New("unexpected deferred write for synchronous `self` parameter")
-		return
-	}
-	if write1__ != nil {
-		err__ = errors.New("unexpected deferred write for synchronous `key` parameter")
-		return
-	}
-	var w__ wrpc.IndexWriteCloser
-	var r__ wrpc.IndexReadCloser
-	w__, r__, err__ = wrpc__.Invoke(ctx__, "wasi:keyvalue/store@0.2.0-draft2", "bucket.get")
-	if err__ != nil {
-		err__ = fmt.Errorf("failed to invoke `[method]bucket.get`: %w", err__)
-		return
-	}
-	defer func() {
-		if err__ != nil && ctx__.Err() == nil {
-			if err := wrpc.CloseWithError(w__, err__); err != nil {
-				slog.DebugContext(ctx__, "failed to close outgoing stream", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "[method]bucket.get", "err", err)
-			}
-		}
-		if err := r__.Close(); err != nil {
-			slog.ErrorContext(ctx__, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "[method]bucket.get", "err", err)
-		}
-	}()
-	_, err__ = w__.Write(buf__.Bytes())
-	if err__ != nil {
-		err__ = fmt.Errorf("failed to write parameters: %w", err__)
-		return
-	}
-	err__ = w__.ClosePath()
-	if err__ != nil {
-		err__ = fmt.Errorf("failed to close parameters: %w", err__)
-		return
-	}
-	if cErr__ := w__.Close(); cErr__ != nil {
-		slog.DebugContext(ctx__, "failed to close outgoing stream", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "[method]bucket.get", "err", cErr__)
-	}
-	r0__, err__ = func(r wrpc.IndexReadCloser, path ...uint32) (*wrpc.Result[[]uint8, Error], error) {
-		slog.Debug("reading result status byte")
-		status, err := r.ReadByte()
-		if err != nil {
-			return nil, fmt.Errorf("failed to read result status byte: %w", err)
-		}
-		switch status {
-		case 0:
-			slog.Debug("reading `result::ok` payload")
-			v, err := func(r wrpc.IndexReadCloser, path ...uint32) ([]uint8, error) {
-				slog.Debug("reading option status byte")
-				status, err := r.ReadByte()
-				if err != nil {
-					return nil, fmt.Errorf("failed to read option status byte: %w", err)
-				}
-				switch status {
-				case 0:
-					return nil, nil
-				case 1:
-					slog.Debug("reading `option::some` payload")
-					v, err := func(r interface {
-						io.ByteReader
-						io.Reader
-					}) ([]byte, error) {
-						var x uint32
-						var s uint
-						for i := 0; i < 5; i++ {
-							slog.Debug("reading byte list length", "i", i)
-							b, err := r.ReadByte()
-							if err != nil {
-								if i > 0 && err == io.EOF {
-									err = io.ErrUnexpectedEOF
-								}
-								return nil, fmt.Errorf("failed to read byte list length byte: %w", err)
-							}
-							if s == 28 && b > 0x0f {
-								return nil, errors.New("byte list length overflows a 32-bit integer")
-							}
-							if b < 0x80 {
-								x = x | uint32(b)<<s
-								if x == 0 {
-									return []byte{}, nil
-								}
-								slog.Debug("reading byte list contents", "len", x)
-								buf, err := wrpc.ReadBytes(r, x)
-								if err != nil {
-									return nil, fmt.Errorf("failed to read byte list contents: %w", err)
-								}
-								return buf, nil
-							}
-							x |= uint32(b&0x7f) << s
-							s += 7
-						}
-						return nil, errors.New("byte length overflows a 32-bit integer")
-					}(r)
-					if err != nil {
-						return nil, fmt.Errorf("failed to read `option::some` value: %w", err)
-					}
-					return v, nil
-				default:
-					return nil, fmt.Errorf("invalid option status byte %d", status)
-				}
-			}(r, path...)
-			if err != nil {
-				return nil, fmt.Errorf("failed to read `result::ok` value: %w", err)
-			}
-			return &wrpc.Result[[]uint8, Error]{Ok: &v}, nil
-		case 1:
-			slog.Debug("reading `result::err` payload")
-			v, err := func(r wrpc.IndexReadCloser, path ...uint32) (*Error, error) {
-				v := &Error{}
-				n, err := func(r io.ByteReader) (uint8, error) {
-					var x uint8
-					var s uint
-					for i := 0; i < 2; i++ {
-						slog.Debug("reading u8 discriminant byte", "i", i)
-						b, err := r.ReadByte()
-						if err != nil {
-							if i > 0 && err == io.EOF {
-								err = io.ErrUnexpectedEOF
-							}
-							return x, fmt.Errorf("failed to read u8 discriminant byte: %w", err)
-						}
-						if s == 7 && b > 0x01 {
-							return x, errors.New("discriminant overflows an 8-bit integer")
-						}
-						if b < 0x80 {
-							return x | uint8(b)<<s, nil
-						}
-						x |= uint8(b&0x7f) << s
-						s += 7
-					}
-					return x, errors.New("discriminant overflows an 8-bit integer")
-				}(r)
-				if err != nil {
-					return nil, fmt.Errorf("failed to read discriminant: %w", err)
-				}
-				switch ErrorDiscriminant(n) {
-				case ErrorNoSuchStore:
-					return v.SetNoSuchStore(), nil
-				case ErrorAccessDenied:
-					return v.SetAccessDenied(), nil
-				case ErrorOther:
-					payload, err := func(r interface {
-						io.ByteReader
-						io.Reader
-					}) (string, error) {
-						var x uint32
-						var s uint8
-						for i := 0; i < 5; i++ {
-							slog.Debug("reading string length byte", "i", i)
-							b, err := r.ReadByte()
-							if err != nil {
-								if i > 0 && err == io.EOF {
-									err = io.ErrUnexpectedEOF
-								}
-								return "", fmt.Errorf("failed to read string length byte: %w", err)
-							}
-							if s == 28 && b > 0x0f {
-								return "", errors.New("string length overflows a 32-bit integer")
-							}
-							if b < 0x80 {
-								x = x | uint32(b)<<s
-								if x == 0 {
-									return "", nil
-								}
-								slog.Debug("reading string bytes", "len", x)
-								buf, err := wrpc.ReadBytes(r, x)
-								if err != nil {
-									return "", fmt.Errorf("failed to read string bytes: %w", err)
-								}
-								if !utf8.Valid(buf) {
-									return string(buf), errors.New("string is not valid UTF-8")
-								}
-								return string(buf), nil
-							}
-							x |= uint32(b&0x7f) << s
-							s += 7
-						}
-						return "", errors.New("string length overflows a 32-bit integer")
-					}(r)
-					if err != nil {
-						return nil, fmt.Errorf("failed to read `other` payload: %w", err)
-					}
-					return v.SetOther(payload), nil
-				default:
-					return nil, fmt.Errorf("unknown discriminant value %d", n)
-				}
-			}(r, path...)
-			if err != nil {
-				return nil, fmt.Errorf("failed to read `result::err` value: %w", err)
-			}
-			return &wrpc.Result[[]uint8, Error]{Err: v}, nil
-		default:
-			return nil, fmt.Errorf("invalid result status byte %d", status)
-		}
-	}(r__, []uint32{0}...)
-	if err__ != nil {
-		err__ = fmt.Errorf("failed to read result 0: %w", err__)
-		return
-	}
-	return
+	return res__.V0, nil
 }
 
 // Set the value associated with the key in the store. If the key already
@@ -774,228 +245,15 @@ func Bucket_Get(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[Buc
 // If the key does not exist in the store, it creates a new key-value pair.
 //
 // If any other error occurs, it returns an `Err(error)`.
-func Bucket_Set(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[Bucket], key string, value []uint8) (r0__ *wrpc.Result[struct{}, Error], err__ error) {
-	var buf__ bytes.Buffer
-	write0__, err__ := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v []byte, w wrpc.ByteWriter) error {
-		_, err := wrpc.WriteByteList(v, w)
-		return err
-	}(self, &buf__)
+func Bucket_Set(ctx__ context.Context, c__ *wrpc.Framed, self wrpc.Borrow[Bucket], key string, value []uint8) (r0__ *wrpc.Result[struct{}, Error], err__ error) {
+	res__, inv__, err__ := wrpc.Invoke[wrpc.Tuple3[wrpc.Borrow[Bucket], string, []uint8], wrpc.Tuple1[*wrpc.Result[struct{}, Error]]](ctx__, c__, "wasi:keyvalue/store@0.2.0-draft2", "bucket.set", wrpc.Tuple3Codec[wrpc.Borrow[Bucket], string, []uint8]{C0: wrpc.BorrowCodec[Bucket]{}, C1: wrpc.StringCodec{}, C2: wrpc.BytesCodec{}}, wrpc.Tuple1Codec[*wrpc.Result[struct{}, Error]]{C0: wrpc.PtrCodec[wrpc.Result[struct{}, Error]]{Elem: wrpc.ResultCodec[struct{}, Error]{Ok: wrpc.UnitCodec{}, Err: ErrorCodec{}}}}, wrpc.Tuple3[wrpc.Borrow[Bucket], string, []uint8]{V0: self, V1: key, V2: value})
 	if err__ != nil {
-		err__ = fmt.Errorf("failed to write `self` parameter: %w", err__)
 		return
 	}
-	write1__, err__ := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
-		if !utf8.ValidString(v) {
-			return errors.New("string is not valid UTF-8")
-		}
-		n := len(v)
-		if n > math.MaxUint32 {
-			return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
-		}
-		if err = func(v int, w io.Writer) error {
-			b := make([]byte, binary.MaxVarintLen32)
-			i := binary.PutUvarint(b, uint64(v))
-			slog.Debug("writing string byte length", "len", n)
-			_, err = w.Write(b[:i])
-			return err
-		}(n, w); err != nil {
-			return fmt.Errorf("failed to write string byte length of %d: %w", n, err)
-		}
-		slog.Debug("writing string bytes")
-		_, err = w.Write([]byte(v))
-		if err != nil {
-			return fmt.Errorf("failed to write string bytes: %w", err)
-		}
-		return nil
-	}(key, &buf__)
-	if err__ != nil {
-		err__ = fmt.Errorf("failed to write `key` parameter: %w", err__)
+	if err__ = inv__.Wait(); err__ != nil {
 		return
 	}
-	write2__, err__ := func(v []uint8, w interface {
-		io.ByteWriter
-		io.Writer
-	}) (write func(context.Context, wrpc.IndexWriter) error, err error) {
-		n := len(v)
-		if n > math.MaxUint32 {
-			return nil, fmt.Errorf("list length of %d overflows a 32-bit integer", n)
-		}
-		if err = func(v int, w io.Writer) error {
-			b := make([]byte, binary.MaxVarintLen32)
-			i := binary.PutUvarint(b, uint64(v))
-			slog.Debug("writing list length", "len", n)
-			_, err = w.Write(b[:i])
-			return err
-		}(n, w); err != nil {
-			return nil, fmt.Errorf("failed to write list length of %d: %w", n, err)
-		}
-		slog.Debug("writing list elements")
-		writes := make(map[uint32]func(context.Context, wrpc.IndexWriter) error, n)
-		for i, e := range v {
-			write, err := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v uint8, w io.ByteWriter) error {
-				slog.Debug("writing u8 byte")
-				return w.WriteByte(v)
-			}(e, w)
-			if err != nil {
-				return nil, fmt.Errorf("failed to write list element %d: %w", i, err)
-			}
-			if write != nil {
-				writes[uint32(i)] = write
-			}
-		}
-		return wrpc.JoinWrites(writes), nil
-	}(value, &buf__)
-	if err__ != nil {
-		err__ = fmt.Errorf("failed to write `value` parameter: %w", err__)
-		return
-	}
-	if write0__ != nil {
-		err__ = errors.New("unexpected deferred write for synchronous `self` parameter")
-		return
-	}
-	if write1__ != nil {
-		err__ = errors.New("unexpected deferred write for synchronous `key` parameter")
-		return
-	}
-	if write2__ != nil {
-		err__ = errors.New("unexpected deferred write for synchronous `value` parameter")
-		return
-	}
-	var w__ wrpc.IndexWriteCloser
-	var r__ wrpc.IndexReadCloser
-	w__, r__, err__ = wrpc__.Invoke(ctx__, "wasi:keyvalue/store@0.2.0-draft2", "bucket.set")
-	if err__ != nil {
-		err__ = fmt.Errorf("failed to invoke `[method]bucket.set`: %w", err__)
-		return
-	}
-	defer func() {
-		if err__ != nil && ctx__.Err() == nil {
-			if err := wrpc.CloseWithError(w__, err__); err != nil {
-				slog.DebugContext(ctx__, "failed to close outgoing stream", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "[method]bucket.set", "err", err)
-			}
-		}
-		if err := r__.Close(); err != nil {
-			slog.ErrorContext(ctx__, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "[method]bucket.set", "err", err)
-		}
-	}()
-	_, err__ = w__.Write(buf__.Bytes())
-	if err__ != nil {
-		err__ = fmt.Errorf("failed to write parameters: %w", err__)
-		return
-	}
-	err__ = w__.ClosePath()
-	if err__ != nil {
-		err__ = fmt.Errorf("failed to close parameters: %w", err__)
-		return
-	}
-	if cErr__ := w__.Close(); cErr__ != nil {
-		slog.DebugContext(ctx__, "failed to close outgoing stream", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "[method]bucket.set", "err", cErr__)
-	}
-	r0__, err__ = func(r wrpc.IndexReadCloser, path ...uint32) (*wrpc.Result[struct{}, Error], error) {
-		slog.Debug("reading result status byte")
-		status, err := r.ReadByte()
-		if err != nil {
-			return nil, fmt.Errorf("failed to read result status byte: %w", err)
-		}
-		switch status {
-		case 0:
-			var v struct{}
-			return &wrpc.Result[struct{}, Error]{Ok: &v}, nil
-		case 1:
-			slog.Debug("reading `result::err` payload")
-			v, err := func(r wrpc.IndexReadCloser, path ...uint32) (*Error, error) {
-				v := &Error{}
-				n, err := func(r io.ByteReader) (uint8, error) {
-					var x uint8
-					var s uint
-					for i := 0; i < 2; i++ {
-						slog.Debug("reading u8 discriminant byte", "i", i)
-						b, err := r.ReadByte()
-						if err != nil {
-							if i > 0 && err == io.EOF {
-								err = io.ErrUnexpectedEOF
-							}
-							return x, fmt.Errorf("failed to read u8 discriminant byte: %w", err)
-						}
-						if s == 7 && b > 0x01 {
-							return x, errors.New("discriminant overflows an 8-bit integer")
-						}
-						if b < 0x80 {
-							return x | uint8(b)<<s, nil
-						}
-						x |= uint8(b&0x7f) << s
-						s += 7
-					}
-					return x, errors.New("discriminant overflows an 8-bit integer")
-				}(r)
-				if err != nil {
-					return nil, fmt.Errorf("failed to read discriminant: %w", err)
-				}
-				switch ErrorDiscriminant(n) {
-				case ErrorNoSuchStore:
-					return v.SetNoSuchStore(), nil
-				case ErrorAccessDenied:
-					return v.SetAccessDenied(), nil
-				case ErrorOther:
-					payload, err := func(r interface {
-						io.ByteReader
-						io.Reader
-					}) (string, error) {
-						var x uint32
-						var s uint8
-						for i := 0; i < 5; i++ {
-							slog.Debug("reading string length byte", "i", i)
-							b, err := r.ReadByte()
-							if err != nil {
-								if i > 0 && err == io.EOF {
-									err = io.ErrUnexpectedEOF
-								}
-								return "", fmt.Errorf("failed to read string length byte: %w", err)
-							}
-							if s == 28 && b > 0x0f {
-								return "", errors.New("string length overflows a 32-bit integer")
-							}
-							if b < 0x80 {
-								x = x | uint32(b)<<s
-								if x == 0 {
-									return "", nil
-								}
-								slog.Debug("reading string bytes", "len", x)
-								buf, err := wrpc.ReadBytes(r, x)
-								if err != nil {
-									return "", fmt.Errorf("failed to read string bytes: %w", err)
-								}
-								if !utf8.Valid(buf) {
-									return string(buf), errors.New("string is not valid UTF-8")
-								}
-								return string(buf), nil
-							}
-							x |= uint32(b&0x7f) << s
-							s += 7
-						}
-						return "", errors.New("string length overflows a 32-bit integer")
-					}(r)
-					if err != nil {
-						return nil, fmt.Errorf("failed to read `other` payload: %w", err)
-					}
-					return v.SetOther(payload), nil
-				default:
-					return nil, fmt.Errorf("unknown discriminant value %d", n)
-				}
-			}(r, path...)
-			if err != nil {
-				return nil, fmt.Errorf("failed to read `result::err` value: %w", err)
-			}
-			return &wrpc.Result[struct{}, Error]{Err: v}, nil
-		default:
-			return nil, fmt.Errorf("invalid result status byte %d", status)
-		}
-	}(r__, []uint32{0}...)
-	if err__ != nil {
-		err__ = fmt.Errorf("failed to read result 0: %w", err__)
-		return
-	}
-	return
+	return res__.V0, nil
 }
 
 // Delete the key-value pair associated with the key in the store.
@@ -1003,187 +261,15 @@ func Bucket_Set(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[Buc
 // If the key does not exist in the store, it does nothing.
 //
 // If any other error occurs, it returns an `Err(error)`.
-func Bucket_Delete(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[Bucket], key string) (r0__ *wrpc.Result[struct{}, Error], err__ error) {
-	var buf__ bytes.Buffer
-	write0__, err__ := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v []byte, w wrpc.ByteWriter) error {
-		_, err := wrpc.WriteByteList(v, w)
-		return err
-	}(self, &buf__)
+func Bucket_Delete(ctx__ context.Context, c__ *wrpc.Framed, self wrpc.Borrow[Bucket], key string) (r0__ *wrpc.Result[struct{}, Error], err__ error) {
+	res__, inv__, err__ := wrpc.Invoke[wrpc.Tuple2[wrpc.Borrow[Bucket], string], wrpc.Tuple1[*wrpc.Result[struct{}, Error]]](ctx__, c__, "wasi:keyvalue/store@0.2.0-draft2", "bucket.delete", wrpc.Tuple2Codec[wrpc.Borrow[Bucket], string]{C0: wrpc.BorrowCodec[Bucket]{}, C1: wrpc.StringCodec{}}, wrpc.Tuple1Codec[*wrpc.Result[struct{}, Error]]{C0: wrpc.PtrCodec[wrpc.Result[struct{}, Error]]{Elem: wrpc.ResultCodec[struct{}, Error]{Ok: wrpc.UnitCodec{}, Err: ErrorCodec{}}}}, wrpc.Tuple2[wrpc.Borrow[Bucket], string]{V0: self, V1: key})
 	if err__ != nil {
-		err__ = fmt.Errorf("failed to write `self` parameter: %w", err__)
 		return
 	}
-	write1__, err__ := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
-		if !utf8.ValidString(v) {
-			return errors.New("string is not valid UTF-8")
-		}
-		n := len(v)
-		if n > math.MaxUint32 {
-			return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
-		}
-		if err = func(v int, w io.Writer) error {
-			b := make([]byte, binary.MaxVarintLen32)
-			i := binary.PutUvarint(b, uint64(v))
-			slog.Debug("writing string byte length", "len", n)
-			_, err = w.Write(b[:i])
-			return err
-		}(n, w); err != nil {
-			return fmt.Errorf("failed to write string byte length of %d: %w", n, err)
-		}
-		slog.Debug("writing string bytes")
-		_, err = w.Write([]byte(v))
-		if err != nil {
-			return fmt.Errorf("failed to write string bytes: %w", err)
-		}
-		return nil
-	}(key, &buf__)
-	if err__ != nil {
-		err__ = fmt.Errorf("failed to write `key` parameter: %w", err__)
+	if err__ = inv__.Wait(); err__ != nil {
 		return
 	}
-	if write0__ != nil {
-		err__ = errors.New("unexpected deferred write for synchronous `self` parameter")
-		return
-	}
-	if write1__ != nil {
-		err__ = errors.New("unexpected deferred write for synchronous `key` parameter")
-		return
-	}
-	var w__ wrpc.IndexWriteCloser
-	var r__ wrpc.IndexReadCloser
-	w__, r__, err__ = wrpc__.Invoke(ctx__, "wasi:keyvalue/store@0.2.0-draft2", "bucket.delete")
-	if err__ != nil {
-		err__ = fmt.Errorf("failed to invoke `[method]bucket.delete`: %w", err__)
-		return
-	}
-	defer func() {
-		if err__ != nil && ctx__.Err() == nil {
-			if err := wrpc.CloseWithError(w__, err__); err != nil {
-				slog.DebugContext(ctx__, "failed to close outgoing stream", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "[method]bucket.delete", "err", err)
-			}
-		}
-		if err := r__.Close(); err != nil {
-			slog.ErrorContext(ctx__, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "[method]bucket.delete", "err", err)
-		}
-	}()
-	_, err__ = w__.Write(buf__.Bytes())
-	if err__ != nil {
-		err__ = fmt.Errorf("failed to write parameters: %w", err__)
-		return
-	}
-	err__ = w__.ClosePath()
-	if err__ != nil {
-		err__ = fmt.Errorf("failed to close parameters: %w", err__)
-		return
-	}
-	if cErr__ := w__.Close(); cErr__ != nil {
-		slog.DebugContext(ctx__, "failed to close outgoing stream", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "[method]bucket.delete", "err", cErr__)
-	}
-	r0__, err__ = func(r wrpc.IndexReadCloser, path ...uint32) (*wrpc.Result[struct{}, Error], error) {
-		slog.Debug("reading result status byte")
-		status, err := r.ReadByte()
-		if err != nil {
-			return nil, fmt.Errorf("failed to read result status byte: %w", err)
-		}
-		switch status {
-		case 0:
-			var v struct{}
-			return &wrpc.Result[struct{}, Error]{Ok: &v}, nil
-		case 1:
-			slog.Debug("reading `result::err` payload")
-			v, err := func(r wrpc.IndexReadCloser, path ...uint32) (*Error, error) {
-				v := &Error{}
-				n, err := func(r io.ByteReader) (uint8, error) {
-					var x uint8
-					var s uint
-					for i := 0; i < 2; i++ {
-						slog.Debug("reading u8 discriminant byte", "i", i)
-						b, err := r.ReadByte()
-						if err != nil {
-							if i > 0 && err == io.EOF {
-								err = io.ErrUnexpectedEOF
-							}
-							return x, fmt.Errorf("failed to read u8 discriminant byte: %w", err)
-						}
-						if s == 7 && b > 0x01 {
-							return x, errors.New("discriminant overflows an 8-bit integer")
-						}
-						if b < 0x80 {
-							return x | uint8(b)<<s, nil
-						}
-						x |= uint8(b&0x7f) << s
-						s += 7
-					}
-					return x, errors.New("discriminant overflows an 8-bit integer")
-				}(r)
-				if err != nil {
-					return nil, fmt.Errorf("failed to read discriminant: %w", err)
-				}
-				switch ErrorDiscriminant(n) {
-				case ErrorNoSuchStore:
-					return v.SetNoSuchStore(), nil
-				case ErrorAccessDenied:
-					return v.SetAccessDenied(), nil
-				case ErrorOther:
-					payload, err := func(r interface {
-						io.ByteReader
-						io.Reader
-					}) (string, error) {
-						var x uint32
-						var s uint8
-						for i := 0; i < 5; i++ {
-							slog.Debug("reading string length byte", "i", i)
-							b, err := r.ReadByte()
-							if err != nil {
-								if i > 0 && err == io.EOF {
-									err = io.ErrUnexpectedEOF
-								}
-								return "", fmt.Errorf("failed to read string length byte: %w", err)
-							}
-							if s == 28 && b > 0x0f {
-								return "", errors.New("string length overflows a 32-bit integer")
-							}
-							if b < 0x80 {
-								x = x | uint32(b)<<s
-								if x == 0 {
-									return "", nil
-								}
-								slog.Debug("reading string bytes", "len", x)
-								buf, err := wrpc.ReadBytes(r, x)
-								if err != nil {
-									return "", fmt.Errorf("failed to read string bytes: %w", err)
-								}
-								if !utf8.Valid(buf) {
-									return string(buf), errors.New("string is not valid UTF-8")
-								}
-								return string(buf), nil
-							}
-							x |= uint32(b&0x7f) << s
-							s += 7
-						}
-						return "", errors.New("string length overflows a 32-bit integer")
-					}(r)
-					if err != nil {
-						return nil, fmt.Errorf("failed to read `other` payload: %w", err)
-					}
-					return v.SetOther(payload), nil
-				default:
-					return nil, fmt.Errorf("unknown discriminant value %d", n)
-				}
-			}(r, path...)
-			if err != nil {
-				return nil, fmt.Errorf("failed to read `result::err` value: %w", err)
-			}
-			return &wrpc.Result[struct{}, Error]{Err: v}, nil
-		default:
-			return nil, fmt.Errorf("invalid result status byte %d", status)
-		}
-	}(r__, []uint32{0}...)
-	if err__ != nil {
-		err__ = fmt.Errorf("failed to read result 0: %w", err__)
-		return
-	}
-	return
+	return res__.V0, nil
 }
 
 // Check if the key exists in the store.
@@ -1192,206 +278,15 @@ func Bucket_Delete(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[
 // not exist in the store, it returns `Ok(false)`.
 //
 // If any other error occurs, it returns an `Err(error)`.
-func Bucket_Exists(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[Bucket], key string) (r0__ *wrpc.Result[bool, Error], err__ error) {
-	var buf__ bytes.Buffer
-	write0__, err__ := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v []byte, w wrpc.ByteWriter) error {
-		_, err := wrpc.WriteByteList(v, w)
-		return err
-	}(self, &buf__)
+func Bucket_Exists(ctx__ context.Context, c__ *wrpc.Framed, self wrpc.Borrow[Bucket], key string) (r0__ *wrpc.Result[bool, Error], err__ error) {
+	res__, inv__, err__ := wrpc.Invoke[wrpc.Tuple2[wrpc.Borrow[Bucket], string], wrpc.Tuple1[*wrpc.Result[bool, Error]]](ctx__, c__, "wasi:keyvalue/store@0.2.0-draft2", "bucket.exists", wrpc.Tuple2Codec[wrpc.Borrow[Bucket], string]{C0: wrpc.BorrowCodec[Bucket]{}, C1: wrpc.StringCodec{}}, wrpc.Tuple1Codec[*wrpc.Result[bool, Error]]{C0: wrpc.PtrCodec[wrpc.Result[bool, Error]]{Elem: wrpc.ResultCodec[bool, Error]{Ok: wrpc.BoolCodec{}, Err: ErrorCodec{}}}}, wrpc.Tuple2[wrpc.Borrow[Bucket], string]{V0: self, V1: key})
 	if err__ != nil {
-		err__ = fmt.Errorf("failed to write `self` parameter: %w", err__)
 		return
 	}
-	write1__, err__ := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
-		if !utf8.ValidString(v) {
-			return errors.New("string is not valid UTF-8")
-		}
-		n := len(v)
-		if n > math.MaxUint32 {
-			return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
-		}
-		if err = func(v int, w io.Writer) error {
-			b := make([]byte, binary.MaxVarintLen32)
-			i := binary.PutUvarint(b, uint64(v))
-			slog.Debug("writing string byte length", "len", n)
-			_, err = w.Write(b[:i])
-			return err
-		}(n, w); err != nil {
-			return fmt.Errorf("failed to write string byte length of %d: %w", n, err)
-		}
-		slog.Debug("writing string bytes")
-		_, err = w.Write([]byte(v))
-		if err != nil {
-			return fmt.Errorf("failed to write string bytes: %w", err)
-		}
-		return nil
-	}(key, &buf__)
-	if err__ != nil {
-		err__ = fmt.Errorf("failed to write `key` parameter: %w", err__)
+	if err__ = inv__.Wait(); err__ != nil {
 		return
 	}
-	if write0__ != nil {
-		err__ = errors.New("unexpected deferred write for synchronous `self` parameter")
-		return
-	}
-	if write1__ != nil {
-		err__ = errors.New("unexpected deferred write for synchronous `key` parameter")
-		return
-	}
-	var w__ wrpc.IndexWriteCloser
-	var r__ wrpc.IndexReadCloser
-	w__, r__, err__ = wrpc__.Invoke(ctx__, "wasi:keyvalue/store@0.2.0-draft2", "bucket.exists")
-	if err__ != nil {
-		err__ = fmt.Errorf("failed to invoke `[method]bucket.exists`: %w", err__)
-		return
-	}
-	defer func() {
-		if err__ != nil && ctx__.Err() == nil {
-			if err := wrpc.CloseWithError(w__, err__); err != nil {
-				slog.DebugContext(ctx__, "failed to close outgoing stream", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "[method]bucket.exists", "err", err)
-			}
-		}
-		if err := r__.Close(); err != nil {
-			slog.ErrorContext(ctx__, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "[method]bucket.exists", "err", err)
-		}
-	}()
-	_, err__ = w__.Write(buf__.Bytes())
-	if err__ != nil {
-		err__ = fmt.Errorf("failed to write parameters: %w", err__)
-		return
-	}
-	err__ = w__.ClosePath()
-	if err__ != nil {
-		err__ = fmt.Errorf("failed to close parameters: %w", err__)
-		return
-	}
-	if cErr__ := w__.Close(); cErr__ != nil {
-		slog.DebugContext(ctx__, "failed to close outgoing stream", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "[method]bucket.exists", "err", cErr__)
-	}
-	r0__, err__ = func(r wrpc.IndexReadCloser, path ...uint32) (*wrpc.Result[bool, Error], error) {
-		slog.Debug("reading result status byte")
-		status, err := r.ReadByte()
-		if err != nil {
-			return nil, fmt.Errorf("failed to read result status byte: %w", err)
-		}
-		switch status {
-		case 0:
-			slog.Debug("reading `result::ok` payload")
-			v, err := func(r io.ByteReader) (bool, error) {
-				slog.Debug("reading bool byte")
-				v, err := r.ReadByte()
-				if err != nil {
-					slog.Debug("reading bool", "value", false)
-					return false, fmt.Errorf("failed to read bool byte: %w", err)
-				}
-				switch v {
-				case 0:
-					return false, nil
-				case 1:
-					return true, nil
-				default:
-					return false, fmt.Errorf("invalid bool value %d", v)
-				}
-			}(r)
-			if err != nil {
-				return nil, fmt.Errorf("failed to read `result::ok` value: %w", err)
-			}
-			return &wrpc.Result[bool, Error]{Ok: &v}, nil
-		case 1:
-			slog.Debug("reading `result::err` payload")
-			v, err := func(r wrpc.IndexReadCloser, path ...uint32) (*Error, error) {
-				v := &Error{}
-				n, err := func(r io.ByteReader) (uint8, error) {
-					var x uint8
-					var s uint
-					for i := 0; i < 2; i++ {
-						slog.Debug("reading u8 discriminant byte", "i", i)
-						b, err := r.ReadByte()
-						if err != nil {
-							if i > 0 && err == io.EOF {
-								err = io.ErrUnexpectedEOF
-							}
-							return x, fmt.Errorf("failed to read u8 discriminant byte: %w", err)
-						}
-						if s == 7 && b > 0x01 {
-							return x, errors.New("discriminant overflows an 8-bit integer")
-						}
-						if b < 0x80 {
-							return x | uint8(b)<<s, nil
-						}
-						x |= uint8(b&0x7f) << s
-						s += 7
-					}
-					return x, errors.New("discriminant overflows an 8-bit integer")
-				}(r)
-				if err != nil {
-					return nil, fmt.Errorf("failed to read discriminant: %w", err)
-				}
-				switch ErrorDiscriminant(n) {
-				case ErrorNoSuchStore:
-					return v.SetNoSuchStore(), nil
-				case ErrorAccessDenied:
-					return v.SetAccessDenied(), nil
-				case ErrorOther:
-					payload, err := func(r interface {
-						io.ByteReader
-						io.Reader
-					}) (string, error) {
-						var x uint32
-						var s uint8
-						for i := 0; i < 5; i++ {
-							slog.Debug("reading string length byte", "i", i)
-							b, err := r.ReadByte()
-							if err != nil {
-								if i > 0 && err == io.EOF {
-									err = io.ErrUnexpectedEOF
-								}
-								return "", fmt.Errorf("failed to read string length byte: %w", err)
-							}
-							if s == 28 && b > 0x0f {
-								return "", errors.New("string length overflows a 32-bit integer")
-							}
-							if b < 0x80 {
-								x = x | uint32(b)<<s
-								if x == 0 {
-									return "", nil
-								}
-								slog.Debug("reading string bytes", "len", x)
-								buf, err := wrpc.ReadBytes(r, x)
-								if err != nil {
-									return "", fmt.Errorf("failed to read string bytes: %w", err)
-								}
-								if !utf8.Valid(buf) {
-									return string(buf), errors.New("string is not valid UTF-8")
-								}
-								return string(buf), nil
-							}
-							x |= uint32(b&0x7f) << s
-							s += 7
-						}
-						return "", errors.New("string length overflows a 32-bit integer")
-					}(r)
-					if err != nil {
-						return nil, fmt.Errorf("failed to read `other` payload: %w", err)
-					}
-					return v.SetOther(payload), nil
-				default:
-					return nil, fmt.Errorf("unknown discriminant value %d", n)
-				}
-			}(r, path...)
-			if err != nil {
-				return nil, fmt.Errorf("failed to read `result::err` value: %w", err)
-			}
-			return &wrpc.Result[bool, Error]{Err: v}, nil
-		default:
-			return nil, fmt.Errorf("invalid result status byte %d", status)
-		}
-	}(r__, []uint32{0}...)
-	if err__ != nil {
-		err__ = fmt.Errorf("failed to read result 0: %w", err__)
-		return
-	}
-	return
+	return res__.V0, nil
 }
 
 // Get all the keys in the store with an optional cursor (for use in pagination). It
@@ -1410,349 +305,30 @@ func Bucket_Exists(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[
 // MAY show an out-of-date list of keys if there are concurrent writes to the store.
 //
 // If any error occurs, it returns an `Err(error)`.
-func Bucket_ListKeys(ctx__ context.Context, wrpc__ wrpc.Invoker, self wrpc.Borrow[Bucket], cursor *string) (r0__ *wrpc.Result[KeyResponse, Error], err__ error) {
-	var buf__ bytes.Buffer
-	write0__, err__ := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v []byte, w wrpc.ByteWriter) error {
-		_, err := wrpc.WriteByteList(v, w)
-		return err
-	}(self, &buf__)
+func Bucket_ListKeys(ctx__ context.Context, c__ *wrpc.Framed, self wrpc.Borrow[Bucket], cursor *string) (r0__ *wrpc.Result[KeyResponse, Error], err__ error) {
+	res__, inv__, err__ := wrpc.Invoke[wrpc.Tuple2[wrpc.Borrow[Bucket], *string], wrpc.Tuple1[*wrpc.Result[KeyResponse, Error]]](ctx__, c__, "wasi:keyvalue/store@0.2.0-draft2", "bucket.list-keys", wrpc.Tuple2Codec[wrpc.Borrow[Bucket], *string]{C0: wrpc.BorrowCodec[Bucket]{}, C1: wrpc.OptionCodec[string]{Elem: wrpc.StringCodec{}}}, wrpc.Tuple1Codec[*wrpc.Result[KeyResponse, Error]]{C0: wrpc.PtrCodec[wrpc.Result[KeyResponse, Error]]{Elem: wrpc.ResultCodec[KeyResponse, Error]{Ok: KeyResponseCodec{}, Err: ErrorCodec{}}}}, wrpc.Tuple2[wrpc.Borrow[Bucket], *string]{V0: self, V1: cursor})
 	if err__ != nil {
-		err__ = fmt.Errorf("failed to write `self` parameter: %w", err__)
 		return
 	}
-	write1__, err__ := func(v *string, w interface {
-		io.ByteWriter
-		io.Writer
-	}) (func(context.Context, wrpc.IndexWriter) error, error) {
-		if v == nil {
-			slog.Debug("writing `option::none` status byte")
-			if err := w.WriteByte(0); err != nil {
-				return nil, fmt.Errorf("failed to write `option::none` byte: %w", err)
-			}
-			return nil, nil
-		}
-		slog.Debug("writing `option::some` status byte")
-		if err := w.WriteByte(1); err != nil {
-			return nil, fmt.Errorf("failed to write `option::some` status byte: %w", err)
-		}
-		slog.Debug("writing `option::some` payload")
-		write, err := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
-			if !utf8.ValidString(v) {
-				return errors.New("string is not valid UTF-8")
-			}
-			n := len(v)
-			if n > math.MaxUint32 {
-				return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
-			}
-			if err = func(v int, w io.Writer) error {
-				b := make([]byte, binary.MaxVarintLen32)
-				i := binary.PutUvarint(b, uint64(v))
-				slog.Debug("writing string byte length", "len", n)
-				_, err = w.Write(b[:i])
-				return err
-			}(n, w); err != nil {
-				return fmt.Errorf("failed to write string byte length of %d: %w", n, err)
-			}
-			slog.Debug("writing string bytes")
-			_, err = w.Write([]byte(v))
-			if err != nil {
-				return fmt.Errorf("failed to write string bytes: %w", err)
-			}
-			return nil
-		}(*v, w)
-		if err != nil {
-			return nil, fmt.Errorf("failed to write `option::some` payload: %w", err)
-		}
-		return write, nil
-	}(cursor, &buf__)
-	if err__ != nil {
-		err__ = fmt.Errorf("failed to write `cursor` parameter: %w", err__)
+	if err__ = inv__.Wait(); err__ != nil {
 		return
 	}
-	if write0__ != nil {
-		err__ = errors.New("unexpected deferred write for synchronous `self` parameter")
-		return
+	return res__.V0, nil
+}
+
+type optionCodec0 struct{}
+
+func (optionCodec0) Encode(v []uint8, dst []byte) ([]byte, wrpc.Transmitter, error) {
+	if v == nil {
+		return append(dst, 0), nil, nil
 	}
-	if write1__ != nil {
-		err__ = errors.New("unexpected deferred write for synchronous `cursor` parameter")
-		return
+	return (wrpc.BytesCodec{}).Encode(v, append(dst, 1))
+}
+
+func (optionCodec0) Decode(r wrpc.ByteReader) ([]uint8, wrpc.Receiver, error) {
+	v, rx, err := (wrpc.OptionCodec[[]uint8]{Elem: wrpc.BytesCodec{}}).Decode(r)
+	if err != nil || v == nil {
+		return nil, nil, err
 	}
-	var w__ wrpc.IndexWriteCloser
-	var r__ wrpc.IndexReadCloser
-	w__, r__, err__ = wrpc__.Invoke(ctx__, "wasi:keyvalue/store@0.2.0-draft2", "bucket.list-keys")
-	if err__ != nil {
-		err__ = fmt.Errorf("failed to invoke `[method]bucket.list-keys`: %w", err__)
-		return
-	}
-	defer func() {
-		if err__ != nil && ctx__.Err() == nil {
-			if err := wrpc.CloseWithError(w__, err__); err != nil {
-				slog.DebugContext(ctx__, "failed to close outgoing stream", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "[method]bucket.list-keys", "err", err)
-			}
-		}
-		if err := r__.Close(); err != nil {
-			slog.ErrorContext(ctx__, "failed to close reader", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "[method]bucket.list-keys", "err", err)
-		}
-	}()
-	_, err__ = w__.Write(buf__.Bytes())
-	if err__ != nil {
-		err__ = fmt.Errorf("failed to write parameters: %w", err__)
-		return
-	}
-	err__ = w__.ClosePath()
-	if err__ != nil {
-		err__ = fmt.Errorf("failed to close parameters: %w", err__)
-		return
-	}
-	if cErr__ := w__.Close(); cErr__ != nil {
-		slog.DebugContext(ctx__, "failed to close outgoing stream", "instance", "wasi:keyvalue/store@0.2.0-draft2", "name", "[method]bucket.list-keys", "err", cErr__)
-	}
-	r0__, err__ = func(r wrpc.IndexReadCloser, path ...uint32) (*wrpc.Result[KeyResponse, Error], error) {
-		slog.Debug("reading result status byte")
-		status, err := r.ReadByte()
-		if err != nil {
-			return nil, fmt.Errorf("failed to read result status byte: %w", err)
-		}
-		switch status {
-		case 0:
-			slog.Debug("reading `result::ok` payload")
-			v, err := func(r wrpc.IndexReadCloser, path ...uint32) (*KeyResponse, error) {
-				v := &KeyResponse{}
-				var err error
-				slog.Debug("reading field", "name", "keys")
-				v.Keys, err = func(r wrpc.IndexReadCloser, path ...uint32) ([]string, error) {
-					var x uint32
-					var s uint
-					for i := 0; i < 5; i++ {
-						slog.Debug("reading list length byte", "i", i)
-						b, err := r.ReadByte()
-						if err != nil {
-							if i > 0 && err == io.EOF {
-								err = io.ErrUnexpectedEOF
-							}
-							return nil, fmt.Errorf("failed to read list length byte: %w", err)
-						}
-						if s == 28 && b > 0x0f {
-							return nil, errors.New("list length overflows a 32-bit integer")
-						}
-						if b < 0x80 {
-							x = x | uint32(b)<<s
-							vs := make([]string, 0)
-							for i := range x {
-								slog.Debug("reading list element", "i", i)
-								v, err := func(r interface {
-									io.ByteReader
-									io.Reader
-								}) (string, error) {
-									var x uint32
-									var s uint8
-									for i := 0; i < 5; i++ {
-										slog.Debug("reading string length byte", "i", i)
-										b, err := r.ReadByte()
-										if err != nil {
-											if i > 0 && err == io.EOF {
-												err = io.ErrUnexpectedEOF
-											}
-											return "", fmt.Errorf("failed to read string length byte: %w", err)
-										}
-										if s == 28 && b > 0x0f {
-											return "", errors.New("string length overflows a 32-bit integer")
-										}
-										if b < 0x80 {
-											x = x | uint32(b)<<s
-											if x == 0 {
-												return "", nil
-											}
-											slog.Debug("reading string bytes", "len", x)
-											buf, err := wrpc.ReadBytes(r, x)
-											if err != nil {
-												return "", fmt.Errorf("failed to read string bytes: %w", err)
-											}
-											if !utf8.Valid(buf) {
-												return string(buf), errors.New("string is not valid UTF-8")
-											}
-											return string(buf), nil
-										}
-										x |= uint32(b&0x7f) << s
-										s += 7
-									}
-									return "", errors.New("string length overflows a 32-bit integer")
-								}(r)
-								if err != nil {
-									return nil, fmt.Errorf("failed to read list element %d: %w", i, err)
-								}
-								vs = append(vs, v)
-							}
-							return vs, nil
-						}
-						x |= uint32(b&0x7f) << s
-						s += 7
-					}
-					return nil, errors.New("list length overflows a 32-bit integer")
-				}(r, append(path, 0)...)
-				if err != nil {
-					return nil, fmt.Errorf("failed to read `keys` field: %w", err)
-				}
-				slog.Debug("reading field", "name", "cursor")
-				v.Cursor, err = func(r wrpc.IndexReadCloser, path ...uint32) (*string, error) {
-					slog.Debug("reading option status byte")
-					status, err := r.ReadByte()
-					if err != nil {
-						return nil, fmt.Errorf("failed to read option status byte: %w", err)
-					}
-					switch status {
-					case 0:
-						return nil, nil
-					case 1:
-						slog.Debug("reading `option::some` payload")
-						v, err := func(r interface {
-							io.ByteReader
-							io.Reader
-						}) (string, error) {
-							var x uint32
-							var s uint8
-							for i := 0; i < 5; i++ {
-								slog.Debug("reading string length byte", "i", i)
-								b, err := r.ReadByte()
-								if err != nil {
-									if i > 0 && err == io.EOF {
-										err = io.ErrUnexpectedEOF
-									}
-									return "", fmt.Errorf("failed to read string length byte: %w", err)
-								}
-								if s == 28 && b > 0x0f {
-									return "", errors.New("string length overflows a 32-bit integer")
-								}
-								if b < 0x80 {
-									x = x | uint32(b)<<s
-									if x == 0 {
-										return "", nil
-									}
-									slog.Debug("reading string bytes", "len", x)
-									buf, err := wrpc.ReadBytes(r, x)
-									if err != nil {
-										return "", fmt.Errorf("failed to read string bytes: %w", err)
-									}
-									if !utf8.Valid(buf) {
-										return string(buf), errors.New("string is not valid UTF-8")
-									}
-									return string(buf), nil
-								}
-								x |= uint32(b&0x7f) << s
-								s += 7
-							}
-							return "", errors.New("string length overflows a 32-bit integer")
-						}(r)
-						if err != nil {
-							return nil, fmt.Errorf("failed to read `option::some` value: %w", err)
-						}
-						return &v, nil
-					default:
-						return nil, fmt.Errorf("invalid option status byte %d", status)
-					}
-				}(r, append(path, 1)...)
-				if err != nil {
-					return nil, fmt.Errorf("failed to read `cursor` field: %w", err)
-				}
-				return v, nil
-			}(r, path...)
-			if err != nil {
-				return nil, fmt.Errorf("failed to read `result::ok` value: %w", err)
-			}
-			return &wrpc.Result[KeyResponse, Error]{Ok: v}, nil
-		case 1:
-			slog.Debug("reading `result::err` payload")
-			v, err := func(r wrpc.IndexReadCloser, path ...uint32) (*Error, error) {
-				v := &Error{}
-				n, err := func(r io.ByteReader) (uint8, error) {
-					var x uint8
-					var s uint
-					for i := 0; i < 2; i++ {
-						slog.Debug("reading u8 discriminant byte", "i", i)
-						b, err := r.ReadByte()
-						if err != nil {
-							if i > 0 && err == io.EOF {
-								err = io.ErrUnexpectedEOF
-							}
-							return x, fmt.Errorf("failed to read u8 discriminant byte: %w", err)
-						}
-						if s == 7 && b > 0x01 {
-							return x, errors.New("discriminant overflows an 8-bit integer")
-						}
-						if b < 0x80 {
-							return x | uint8(b)<<s, nil
-						}
-						x |= uint8(b&0x7f) << s
-						s += 7
-					}
-					return x, errors.New("discriminant overflows an 8-bit integer")
-				}(r)
-				if err != nil {
-					return nil, fmt.Errorf("failed to read discriminant: %w", err)
-				}
-				switch ErrorDiscriminant(n) {
-				case ErrorNoSuchStore:
-					return v.SetNoSuchStore(), nil
-				case ErrorAccessDenied:
-					return v.SetAccessDenied(), nil
-				case ErrorOther:
-					payload, err := func(r interface {
-						io.ByteReader
-						io.Reader
-					}) (string, error) {
-						var x uint32
-						var s uint8
-						for i := 0; i < 5; i++ {
-							slog.Debug("reading string length byte", "i", i)
-							b, err := r.ReadByte()
-							if err != nil {
-								if i > 0 && err == io.EOF {
-									err = io.ErrUnexpectedEOF
-								}
-								return "", fmt.Errorf("failed to read string length byte: %w", err)
-							}
-							if s == 28 && b > 0x0f {
-								return "", errors.New("string length overflows a 32-bit integer")
-							}
-							if b < 0x80 {
-								x = x | uint32(b)<<s
-								if x == 0 {
-									return "", nil
-								}
-								slog.Debug("reading string bytes", "len", x)
-								buf, err := wrpc.ReadBytes(r, x)
-								if err != nil {
-									return "", fmt.Errorf("failed to read string bytes: %w", err)
-								}
-								if !utf8.Valid(buf) {
-									return string(buf), errors.New("string is not valid UTF-8")
-								}
-								return string(buf), nil
-							}
-							x |= uint32(b&0x7f) << s
-							s += 7
-						}
-						return "", errors.New("string length overflows a 32-bit integer")
-					}(r)
-					if err != nil {
-						return nil, fmt.Errorf("failed to read `other` payload: %w", err)
-					}
-					return v.SetOther(payload), nil
-				default:
-					return nil, fmt.Errorf("unknown discriminant value %d", n)
-				}
-			}(r, path...)
-			if err != nil {
-				return nil, fmt.Errorf("failed to read `result::err` value: %w", err)
-			}
-			return &wrpc.Result[KeyResponse, Error]{Err: v}, nil
-		default:
-			return nil, fmt.Errorf("invalid result status byte %d", status)
-		}
-	}(r__, []uint32{0}...)
-	if err__ != nil {
-		err__ = fmt.Errorf("failed to read result 0: %w", err__)
-		return
-	}
-	return
+	return *v, rx, nil
 }

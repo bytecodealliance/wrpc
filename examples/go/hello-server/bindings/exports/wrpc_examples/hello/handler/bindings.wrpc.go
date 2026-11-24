@@ -2,148 +2,33 @@
 package handler
 
 import (
-	bytes "bytes"
 	context "context"
-	binary "encoding/binary"
-	errors "errors"
-	fmt "fmt"
-	io "io"
-	slog "log/slog"
-	math "math"
-	sync "sync"
-	utf8 "unicode/utf8"
 	wrpc "wrpc.io/go"
 )
 
 // Handler handles invocations of the exported functions.
 //
-// The context passed to a method is cancelled once the invocation completes.
-// `context.Cause` then returns `context.Canceled` if the invocation succeeded,
-// or the error that failed it, such as a pending parameter that could not be
-// received. The channel of such a parameter is never closed, so a method
-// waiting on it must also wait on the context's `Done` channel.
+// The context passed to a method is cancelled once the invocation completes or fails,
+// for example, if a pending parameter could not be received. The channel
+// of such a parameter is never closed, so a method waiting on it must also
+// wait on the context's `Done` channel.
 type Handler interface {
 	Hello(ctx__ context.Context) (string, error)
 }
 
-func ServeInterface(s wrpc.Server, h Handler) (stop func() error, err error) {
-	stops := make([]func() error, 0, 1)
-	stop = func() error {
-		for _, stop := range stops {
-			if err := stop(); err != nil {
-				return err
-			}
-		}
-		return nil
+// HandleInterface serves the invocation with header `hdr` over `c` using `h`.
+// It returns false if the function is not exported by this interface.
+func HandleInterface(ctx context.Context, hdr wrpc.Header, c *wrpc.Framed, h Handler) (bool, error) {
+	if hdr.Instance != "wrpc-examples:hello/handler" {
+		return false, nil
 	}
+	switch hdr.Name {
 
-	stop0, err := s.Serve("wrpc-examples:hello/handler", "hello", func(ctx context.Context, w wrpc.IndexWriteCloser, r wrpc.IndexReadCloser) {
-		ctx, cancel := context.WithCancelCause(ctx)
-		var ok bool
-		defer func() {
-			var err error
-			if !ok {
-				err = context.Cause(ctx)
-				if err == nil {
-					err = errors.New("invocation failed")
-				}
-			}
-			if err := wrpc.CloseWithError(w, err); err != nil {
-				slog.DebugContext(ctx, "failed to close writer", "instance", "wrpc-examples:hello/handler", "name", "hello", "err", err)
-			}
-		}()
-		var wg sync.WaitGroup
-		defer func() {
-			go func() {
-				wg.Wait()
-				cancel(nil)
-			}()
-		}()
-		slog.DebugContext(ctx, "calling `wrpc-examples:hello/handler.hello` handler")
-		r0, err := h.Hello(ctx)
-		if cErr := r.Close(); cErr != nil {
-			slog.ErrorContext(ctx, "failed to close reader", "instance", "wrpc-examples:hello/handler", "name", "hello", "err", cErr)
-		}
-		if err != nil {
-			slog.WarnContext(ctx, "failed to handle invocation", "instance", "wrpc-examples:hello/handler", "name", "hello", "err", err)
-			cancel(err)
-			return
-		}
-
-		var buf bytes.Buffer
-		writes := make(map[uint32]func(context.Context, wrpc.IndexWriter) error, 1)
-
-		write0, err := (func(context.Context, wrpc.IndexWriter) error)(nil), func(v string, w io.Writer) (err error) {
-			if !utf8.ValidString(v) {
-				return errors.New("string is not valid UTF-8")
-			}
-			n := len(v)
-			if n > math.MaxUint32 {
-				return fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
-			}
-			if err = func(v int, w io.Writer) error {
-				b := make([]byte, binary.MaxVarintLen32)
-				i := binary.PutUvarint(b, uint64(v))
-				slog.Debug("writing string byte length", "len", n)
-				_, err = w.Write(b[:i])
-				return err
-			}(n, w); err != nil {
-				return fmt.Errorf("failed to write string byte length of %d: %w", n, err)
-			}
-			slog.Debug("writing string bytes")
-			_, err = w.Write([]byte(v))
-			if err != nil {
-				return fmt.Errorf("failed to write string bytes: %w", err)
-			}
-			return nil
-		}(r0, &buf)
-		if err != nil {
-			slog.WarnContext(ctx, "failed to write result value", "i", 0, "instance", "wrpc-examples:hello/handler", "name", "hello", "err", err)
-			cancel(err)
-			return
-		}
-		if write0 != nil {
-			writes[0] = write0
-		}
-		slog.DebugContext(ctx, "transmitting `wrpc-examples:hello/handler.hello` result")
-		_, err = w.Write(buf.Bytes())
-		if err != nil {
-			slog.WarnContext(ctx, "failed to write result", "instance", "wrpc-examples:hello/handler", "name", "hello", "err", err)
-			cancel(err)
-			return
-		}
-		if len(writes) > 0 {
-			for index, write := range writes {
-				_ = write
-				switch index {
-				case 0:
-					w, err := w.Index(0)
-					if err != nil {
-						slog.ErrorContext(ctx, "failed to index result writer", "instance", "wrpc-examples:hello/handler", "name", "hello", "err", err)
-						cancel(err)
-						return
-					}
-					write := write
-					wg.Add(1)
-					go func() {
-						defer wg.Done()
-						err := write(ctx, w)
-						if err != nil {
-							slog.WarnContext(ctx, "failed to write nested result value", "instance", "wrpc-examples:hello/handler", "name", "hello", "err", err)
-							cancel(err)
-						}
-						if err := wrpc.CloseWithError(w, err); err != nil {
-							slog.DebugContext(ctx, "failed to close nested result writer", "instance", "wrpc-examples:hello/handler", "name", "hello", "err", err)
-						}
-					}()
-				}
-			}
-		}
-		ok = true
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to serve `wrpc-examples:hello/handler.hello`: %w", err)
+	case "hello":
+		return true, wrpc.Serve[struct{}, wrpc.Tuple1[string]](ctx, c, wrpc.UnitCodec{}, wrpc.Tuple1Codec[string]{C0: wrpc.StringCodec{}}, func(ctx context.Context, _ struct{}) (wrpc.Tuple1[string], error) {
+			r0, err := h.Hello(ctx)
+			return wrpc.Tuple1[string]{V0: r0}, err
+		})
 	}
-	stops = append(stops, stop0)
-	return stop, nil
+	return false, nil
 }

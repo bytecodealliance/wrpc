@@ -5,31 +5,24 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"math"
+	"slices"
 	"unicode/utf8"
 )
 
-func PutUint16(buf []byte, x uint16) int {
-	return binary.PutUvarint(buf, uint64(x))
-}
+const minReadSize = 512
 
+// AppendUint16 appends the encoding of `x` to `buf`
 func AppendUint16(buf []byte, x uint16) []byte {
 	return binary.AppendUvarint(buf, uint64(x))
 }
 
-func PutUint32(buf []byte, x uint32) int {
-	return binary.PutUvarint(buf, uint64(x))
-}
-
+// AppendUint32 appends the encoding of `x` to `buf`
 func AppendUint32(buf []byte, x uint32) []byte {
 	return binary.AppendUvarint(buf, uint64(x))
 }
 
-func PutUint64(buf []byte, x uint64) int {
-	return binary.PutUvarint(buf, x)
-}
-
+// AppendUint64 appends the encoding of `x` to `buf`
 func AppendUint64(buf []byte, x uint64) []byte {
 	return binary.AppendUvarint(buf, x)
 }
@@ -48,96 +41,21 @@ func float64Bits(x float64) uint64 {
 	return math.Float64bits(x)
 }
 
+// AppendFloat32 appends the encoding of `x` to `buf`, NaN values are canonicalized
 func AppendFloat32(buf []byte, x float32) []byte {
 	return binary.LittleEndian.AppendUint32(buf, float32Bits(x))
 }
 
-func PutFloat32(buf []byte, x float32) {
-	binary.LittleEndian.PutUint32(buf, float32Bits(x))
-}
-
+// AppendFloat64 appends the encoding of `x` to `buf`, NaN values are canonicalized
 func AppendFloat64(buf []byte, x float64) []byte {
 	return binary.LittleEndian.AppendUint64(buf, float64Bits(x))
-}
-
-func PutFloat64(buf []byte, x float64) {
-	binary.LittleEndian.PutUint64(buf, float64Bits(x))
-}
-
-func WriteUint8(v uint8, w ByteWriter) error {
-	return w.WriteByte(v)
-}
-
-func WriteUint16(v uint16, w ByteWriter) (int, error) {
-	b := make([]byte, binary.MaxVarintLen16)
-	i := binary.PutUvarint(b, uint64(v))
-	return w.Write(b[:i])
-}
-
-func WriteUint32(v uint32, w ByteWriter) (int, error) {
-	b := make([]byte, binary.MaxVarintLen32)
-	i := binary.PutUvarint(b, uint64(v))
-	return w.Write(b[:i])
-}
-
-func WriteUint64(v uint64, w ByteWriter) (int, error) {
-	b := make([]byte, binary.MaxVarintLen64)
-	i := binary.PutUvarint(b, uint64(v))
-	return w.Write(b[:i])
-}
-
-func WriteString(v string, w ByteWriter) (int, error) {
-	if !utf8.ValidString(v) {
-		return 0, errors.New("string is not valid UTF-8")
-	}
-	n := len(v)
-	if n > math.MaxUint32 {
-		return 0, fmt.Errorf("string byte length of %d overflows a 32-bit integer", n)
-	}
-	slog.Debug("writing string byte length", "len", n)
-	wn, err := WriteUint32(uint32(n), w)
-	if err != nil {
-		return wn, fmt.Errorf("failed to write string length of %d: %w", n, err)
-	}
-	slog.Debug("writing string bytes")
-	n, err = w.Write([]byte(v))
-	if n > 0 {
-		if math.MaxInt-n < wn {
-			return math.MaxInt, errors.New("written byte count overflows int")
-		}
-		wn += n
-	}
-	if err != nil {
-		return wn, fmt.Errorf("failed to write string bytes: %w", err)
-	}
-	return wn, nil
-}
-
-// ReadString reads a string from `r` and returns it
-func ReadString(r ByteReader) (string, error) {
-	slog.Debug("reading string length")
-	n, err := ReadUint32(r)
-	if err != nil {
-		return "", fmt.Errorf("failed to read string length: %w", err)
-	}
-
-	slog.Debug("reading string bytes", "len", n)
-	b, err := ReadBytes(r, n)
-	if err != nil {
-		return "", fmt.Errorf("failed to read string: %w", err)
-	}
-	slog.Debug("read string bytes", "buf", b)
-	if !utf8.Valid(b) {
-		return "", errors.New("string is not valid UTF-8")
-	}
-	return string(b), nil
 }
 
 // ReadUint64 reads an encoded uint64 from r and returns it.
 // The error is [io.EOF] only if no bytes were read.
 // If an [io.EOF] happens after reading some but not all the bytes,
-// ReadUvarint returns [io.ErrUnexpectedEOF].
-func ReadUint64(r ByteReader) (uint64, error) {
+// ReadUint64 returns [io.ErrUnexpectedEOF].
+func ReadUint64(r io.ByteReader) (uint64, error) {
 	return binary.ReadUvarint(r)
 }
 
@@ -146,8 +64,8 @@ var errOverflow16 = errors.New("wrpc: varint overflows a 16-bit integer")
 // ReadUint16 reads an encoded uint16 from r and returns it.
 // The error is [io.EOF] only if no bytes were read.
 // If an [io.EOF] happens after reading some but not all the bytes,
-// ReadUvarint returns [io.ErrUnexpectedEOF].
-func ReadUint16(r ByteReader) (uint16, error) {
+// ReadUint16 returns [io.ErrUnexpectedEOF].
+func ReadUint16(r io.ByteReader) (uint16, error) {
 	var x uint16
 	var s uint8
 	for i := range 3 {
@@ -175,8 +93,8 @@ var errOverflow32 = errors.New("wrpc: varint overflows a 32-bit integer")
 // ReadUint32 reads an encoded uint32 from r and returns it.
 // The error is [io.EOF] only if no bytes were read.
 // If an [io.EOF] happens after reading some but not all the bytes,
-// ReadUvarint returns [io.ErrUnexpectedEOF].
-func ReadUint32(r ByteReader) (uint32, error) {
+// ReadUint32 returns [io.ErrUnexpectedEOF].
+func ReadUint32(r io.ByteReader) (uint32, error) {
 	var x uint32
 	var s uint8
 	for i := range 5 {
@@ -197,4 +115,52 @@ func ReadUint32(r ByteReader) (uint32, error) {
 		s += 7
 	}
 	return x, errOverflow32
+}
+
+// ReadBytes reads exactly `n` bytes from `r` and returns them,
+// growing the buffer as the bytes arrive
+func ReadBytes(r io.Reader, n uint32) ([]byte, error) {
+	b := make([]byte, 0)
+	for n > 0 {
+		k := int(min(n, uint32(max(len(b), minReadSize))))
+		b = slices.Grow(b, k)
+		if _, err := io.ReadFull(r, b[len(b):len(b)+k]); err != nil {
+			if err == io.EOF {
+				err = io.ErrUnexpectedEOF
+			}
+			return nil, err
+		}
+		b = b[:len(b)+k]
+		n -= uint32(k)
+	}
+	return b, nil
+}
+
+// ReadByteList reads an encoded `list<u8>` from `r` and returns it
+func ReadByteList(r ByteReader) ([]byte, error) {
+	n, err := ReadUint32(r)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read list length: %w", err)
+	}
+	b, err := ReadBytes(r, n)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read list bytes: %w", err)
+	}
+	return b, nil
+}
+
+// ReadString reads an encoded `string` from `r` and returns it
+func ReadString(r ByteReader) (string, error) {
+	n, err := ReadUint32(r)
+	if err != nil {
+		return "", fmt.Errorf("failed to read string length: %w", err)
+	}
+	b, err := ReadBytes(r, n)
+	if err != nil {
+		return "", fmt.Errorf("failed to read string: %w", err)
+	}
+	if !utf8.Valid(b) {
+		return "", errors.New("string is not valid UTF-8")
+	}
+	return string(b), nil
 }

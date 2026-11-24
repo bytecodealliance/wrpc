@@ -1,15 +1,22 @@
 package main
 
 import (
+	"fmt"
 	"log"
+	"net"
 
 	app "wrpc.io/examples/go/wasi-keyvalue-client"
-	wrpctcp "wrpc.io/go/x/tcp"
+	wrpc "wrpc.io/go"
 )
 
-func run() (err error) {
+func run() error {
 	addr := "[::1]:7761"
-	return app.Run(addr, wrpctcp.NewInvoker(addr))
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("failed to connect to `%s`: %w", addr, err)
+	}
+	defer conn.Close()
+	return app.Run(addr, wrpc.NewFramed(conn, conn))
 }
 
 func main() {
