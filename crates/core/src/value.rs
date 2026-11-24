@@ -748,19 +748,6 @@ where
     }
 }
 
-impl<'a, 'b, T> tokio_util::codec::Encoder<&'a &'b Vec<T>> for ListEncoder<T::Encoder>
-where
-    T: Encode,
-    T::Encoder: tokio_util::codec::Encoder<&'b T, Error = std::io::Error>,
-{
-    type Error = std::io::Error;
-
-    fn encode(&mut self, items: &'a &'b Vec<T>, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        self.nested = encode_list(*items, dst)?;
-        Ok(())
-    }
-}
-
 impl<'a, T> tokio_util::codec::Encoder<&'a [T]> for ListEncoder<T::Encoder>
 where
     T: Encode,
@@ -774,16 +761,16 @@ where
     }
 }
 
-impl<'a, 'b, T> tokio_util::codec::Encoder<&'a &'b [T]> for ListEncoder<T::Encoder>
+impl<'a, 'b, T, E> tokio_util::codec::Encoder<&'a &'b T> for ListEncoder<E>
 where
-    T: Encode,
-    T::Encoder: tokio_util::codec::Encoder<&'b T, Error = std::io::Error>,
+    T: ?Sized,
+    &'b T: Encode<Encoder = Self>,
+    <&'b T as Encode>::Encoder: tokio_util::codec::Encoder<&'b T, Error = std::io::Error>,
 {
     type Error = std::io::Error;
 
-    fn encode(&mut self, items: &'a &'b [T], dst: &mut BytesMut) -> Result<(), Self::Error> {
-        self.nested = encode_list(*items, dst)?;
-        Ok(())
+    fn encode(&mut self, items: &'a &'b T, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        self.encode(*items, dst)
     }
 }
 
@@ -935,21 +922,6 @@ where
     }
 }
 
-impl<'a, 'b, T, const N: usize> tokio_util::codec::Encoder<&'a &'b [T; N]>
-    for ListEncoder<T::Encoder>
-where
-    T: Encode,
-    T::Encoder: tokio_util::codec::Encoder<&'b T, Error = std::io::Error>,
-{
-    type Error = std::io::Error;
-
-    #[instrument(level = "trace", skip(self, items), fields(ty = "array"))]
-    fn encode(&mut self, items: &'a &'b [T; N], dst: &mut BytesMut) -> Result<(), Self::Error> {
-        self.nested = T::encode_iter(*items, dst)?;
-        Ok(())
-    }
-}
-
 impl<T, const N: usize> Encode for [T; N]
 where
     T: Encode,
@@ -1088,26 +1060,6 @@ where
     }
 }
 
-impl<'a, 'b, K, V> tokio_util::codec::Encoder<&'a &'b BTreeMap<K, V>>
-    for ListEncoder<TupleEncoder<(K::Encoder, V::Encoder)>>
-where
-    K: Encode,
-    V: Encode,
-    K::Encoder: tokio_util::codec::Encoder<&'b K, Error = std::io::Error>,
-    V::Encoder: tokio_util::codec::Encoder<&'b V, Error = std::io::Error>,
-{
-    type Error = std::io::Error;
-
-    fn encode(
-        &mut self,
-        items: &'a &'b BTreeMap<K, V>,
-        dst: &mut BytesMut,
-    ) -> Result<(), Self::Error> {
-        self.nested = encode_map(*items, dst)?;
-        Ok(())
-    }
-}
-
 impl<K, V, S> tokio_util::codec::Encoder<HashMap<K, V, S>>
     for ListEncoder<TupleEncoder<(K::Encoder, V::Encoder)>>
 where
@@ -1138,26 +1090,6 @@ where
         dst: &mut BytesMut,
     ) -> Result<(), Self::Error> {
         self.nested = encode_map(items, dst)?;
-        Ok(())
-    }
-}
-
-impl<'a, 'b, K, V, S> tokio_util::codec::Encoder<&'a &'b HashMap<K, V, S>>
-    for ListEncoder<TupleEncoder<(K::Encoder, V::Encoder)>>
-where
-    K: Encode,
-    V: Encode,
-    K::Encoder: tokio_util::codec::Encoder<&'b K, Error = std::io::Error>,
-    V::Encoder: tokio_util::codec::Encoder<&'b V, Error = std::io::Error>,
-{
-    type Error = std::io::Error;
-
-    fn encode(
-        &mut self,
-        items: &'a &'b HashMap<K, V, S>,
-        dst: &mut BytesMut,
-    ) -> Result<(), Self::Error> {
-        self.nested = encode_map(*items, dst)?;
         Ok(())
     }
 }
