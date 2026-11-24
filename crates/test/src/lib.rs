@@ -19,8 +19,8 @@ use tokio::time::timeout;
 use tokio::try_join;
 use tokio_util::codec::{Encoder as _, FramedRead, FramedWrite};
 use wrpc_core::{
-    Codec, Decode, Encode, FrameDecoder, FrameEncoder, FrameRef, Framed, Header, HeaderDecoder,
-    HeaderEncoder, HeaderRef, Listener, Server, invoke, serve,
+    Codec, Decode, Encode, FrameDecoder, FrameEncoder, FrameRef, Framed, Header, HeaderEncoder,
+    HeaderRef, Listener, invoke, serve,
 };
 
 /// Parameters and results of the invocation of [`assert_single_invocation`] and
@@ -66,12 +66,12 @@ where
 }
 
 /// Receives the header of the next invocation over `lis`, ensures that it invokes function `func`
-/// on instance `instance` and returns the server serving it
-pub async fn next_invocation<I, O>(
-    lis: &mut Listener<I, O>,
+/// on instance `instance` and returns the frames to serve it over
+pub async fn next_invocation<'a, I, O>(
+    lis: &'a mut Listener<I, O>,
     instance: &str,
     func: &str,
-) -> anyhow::Result<Server<I, O>>
+) -> anyhow::Result<&'a mut Framed<I, O>>
 where
     I: AsyncRead + Unpin,
 {
@@ -329,17 +329,13 @@ where
             anyhow::Ok(())
         },
         async {
-            let (mut srv_tx, rx) = accept().await.context("failed to accept")?;
-            let mut srv_rx = FramedRead::new(rx, HeaderDecoder::default());
-            let header = srv_rx
-                .try_next()
-                .await
-                .context("failed to read invocation header")?;
-            ensure!(
-                header.is_some_and(|Header { instance, name }| instance == "foo" && name == "baz"),
-                "unexpected invocation"
-            );
-            let srv_rx = srv_rx.map_decoder(|_| FrameDecoder::default());
+            let (tx, rx) = accept().await.context("failed to accept")?;
+            let mut lis = Listener::new(tx, rx);
+            let Framed {
+                tx: srv_tx,
+                rx: srv_rx,
+            } = next_invocation(&mut lis, "foo", "baz").await?;
+            let srv_tx = srv_tx.get_mut();
             srv_tx
                 .write_all(&invalid)
                 .await

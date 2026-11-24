@@ -238,11 +238,12 @@ async fn invoke_tuple() -> anyhow::Result<()> {
                 enc: TupleEncoder::new(Arc::clone(&result_tys)),
                 dec: TupleDecoder::<Value>::new(Arc::clone(&param_tys)),
             };
-            srv.serve(codec, async |got| {
-                assert_eq!(got, params);
-                anyhow::Ok(results.as_slice())
-            })
-            .await?;
+            codec
+                .serve(&mut srv.tx, &mut srv.rx, async |got| {
+                    assert_eq!(got, params);
+                    anyhow::Ok(results.as_slice())
+                })
+                .await?;
             anyhow::Ok(())
         },
     )?;

@@ -117,10 +117,11 @@ async fn serve_conn_shared(
             enc: TupleEncoder::new(Arc::clone(&export.results)),
             dec: TupleDecoder::new(Arc::clone(&export.params)),
         };
-        srv.serve(codec, async |params| {
-            call(guest.store, func, export, params).await
-        })
-        .await?;
+        codec
+            .serve(&mut srv.tx, &mut srv.rx, async |params| {
+                call(guest.store, func, export, params).await
+            })
+            .await?;
     }
     Ok(())
 }
@@ -166,10 +167,11 @@ async fn serve_conn(
                     enc: TupleEncoder::new(Arc::clone(&export.results)),
                     dec: TupleDecoder::new(Arc::clone(&export.params)),
                 };
-                srv.serve(codec, async |params| {
-                    call(store, func, export, params).await
-                })
-                .await
+                codec
+                    .serve(&mut srv.tx, &mut srv.rx, async |params| {
+                        call(store, func, export, params).await
+                    })
+                    .await
             })
             .await
             .map_err(anyhow::Error::from)??;
