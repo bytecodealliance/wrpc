@@ -34,7 +34,7 @@ type BoxBody = UnsyncBoxBody<Bytes, std::io::Error>;
 
 fn service<F, Fut>(
     f: F,
-    tx: mpsc::UnboundedSender<Result<(), ServeError>>,
+    tx: mpsc::UnboundedSender<anyhow::Result<()>>,
 ) -> impl Service<
     http::Request<Incoming>,
     Response = http::Response<BoxBody>,
@@ -51,8 +51,12 @@ where
         let f = f.clone();
         let tx = tx.clone();
         async move {
-            let (header, req) = wrpc_http::accept(req.into_body()).await?;
-            match f(header, req).await {
+            let res = async {
+                let (header, req) = wrpc_http::accept(req.into_body()).await?;
+                let res = f(header, req).await?;
+                anyhow::Ok(res)
+            };
+            match res.await {
                 Ok(res) => {
                     _ = tx.unbounded_send(Ok(()));
                     Ok(res)
@@ -68,10 +72,7 @@ where
 
 async fn connect<B, F, Fut>(
     f: F,
-) -> anyhow::Result<(
-    SendRequest<B>,
-    mpsc::UnboundedReceiver<Result<(), ServeError>>,
-)>
+) -> anyhow::Result<(SendRequest<B>, mpsc::UnboundedReceiver<anyhow::Result<()>>)>
 where
     B: http_body::Body<Data = Bytes, Error = std::io::Error> + Send + Unpin + 'static,
     F: Fn(Header, IncomingRequest<Incoming>) -> Fut + Clone + Send + Sync + 'static,
@@ -122,7 +123,7 @@ async fn http2() -> anyhow::Result<()> {
             .expect_err("invalid data must fail the invocation");
         let res = results.next().await.context("missing invocation")?;
         match res {
-            Err(ServeError::Request(..)) => {}
+            Err(err) if matches!(err.downcast_ref(), Some(ServeError::Request(..))) => {}
             Ok(()) if path.is_empty() => {}
             res => bail!("unexpected result `{res:?}`"),
         }
@@ -211,7 +212,9 @@ async fn peer_cancel() -> anyhow::Result<()> {
     }
     done_rx.next().await.context("invocation was not served")?;
     let res = results.next().await.context("missing invocation")?;
-    let Err(ServeError::Request(ReceiveError::Frame(FrameDecodeError::Io(err)))) = res else {
+    let Some(ServeError::Request(ReceiveError::Frame(FrameDecodeError::Io(err)))) =
+        res.as_ref().err().and_then(|err| err.downcast_ref())
+    else {
         bail!("unexpected result `{res:?}`");
     };
     assert_eq!(err.kind(), ErrorKind::ConnectionReset);
@@ -285,8 +288,8 @@ async fn response_parts() -> anyhow::Result<()> {
             }),
         );
         let res = invoke::<(), (Bytes,), _>(clt, "foo", "bar", ()).await;
-        let Err(InvokeError::Response(ReceiveError::Frame(FrameDecodeError::Io(err)))) = res else {
-            bail!("receiving results should fail");
+        let Err(InvokeError::Request(err)) = res else {
+            bail!("the service should fail");
         };
         assert_eq!(err.to_string(), "status `418 I'm a teapot`");
         Ok(())
@@ -362,7 +365,7 @@ async fn params_error() -> anyhow::Result<()> {
     use hyper::server::conn::http1::Builder;
 
     async fn assert_params_error<Fut>(
-        mut results: mpsc::UnboundedReceiver<Result<(), ServeError>>,
+        mut results: mpsc::UnboundedReceiver<anyhow::Result<()>>,
         send: impl FnMut(http::Request<OutgoingParams>) -> Fut,
     ) -> anyhow::Result<()>
     where
