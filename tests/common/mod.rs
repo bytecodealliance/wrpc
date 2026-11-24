@@ -12,29 +12,29 @@ use tokio::{join, try_join};
 use tower::Service;
 use tracing::info;
 use wrpc::http::{Client, OutgoingParams};
-use wrpc::{Framed, Invoke, Transmit};
+use wrpc::{Framed, Invoke};
 
 /// Connection, which invocations are made on one after another
 pub trait Connection {
-    type Client<'a, E: Transmit + Send + 'static>: Invoke<E>
+    type Client<'a>: Invoke
     where
         Self: 'a;
 
     /// Returns the client of the next invocation
-    fn client<E: Transmit + Send + 'static>(&mut self) -> Self::Client<'_, E>;
+    fn client(&mut self) -> Self::Client<'_>;
 }
 
 impl<I, O> Connection for Framed<I, O>
 where
-    I: AsyncRead + Unpin,
-    O: AsyncWrite + Unpin,
+    I: AsyncRead + Unpin + Send,
+    O: AsyncWrite + Unpin + Send,
 {
-    type Client<'a, E: Transmit + Send + 'static>
+    type Client<'a>
         = &'a mut Framed<I, O>
     where
         Self: 'a;
 
-    fn client<E: Transmit + Send + 'static>(&mut self) -> Self::Client<'_, E> {
+    fn client(&mut self) -> Self::Client<'_> {
         self
     }
 }
@@ -45,15 +45,17 @@ where
             http::Request<OutgoingParams>,
             Response = http::Response<B>,
             Error: Into<Box<dyn core::error::Error + Send + Sync>>,
-        >,
-    B: hyper::body::Body<Data = Bytes, Error: Into<Box<dyn core::error::Error + Send + Sync>>>,
+            Future: Send,
+        > + Send,
+    B: hyper::body::Body<Data = Bytes, Error: Into<Box<dyn core::error::Error + Send + Sync>>>
+        + Send,
 {
-    type Client<'a, E: Transmit + Send + 'static>
+    type Client<'a>
         = &'a mut Client<T>
     where
         Self: 'a;
 
-    fn client<E: Transmit + Send + 'static>(&mut self) -> Self::Client<'_, E> {
+    fn client(&mut self) -> Self::Client<'_> {
         self
     }
 }

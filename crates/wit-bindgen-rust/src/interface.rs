@@ -627,10 +627,9 @@ where
             self.push_str(&to_rust_ident(func.item_name()));
         };
         if self.in_import {
-            let args_ty = self.import_args_ty(func);
             uwrite!(
                 self.src,
-                "<'a, C__: {wrpc_core}::Invoke<<{args_ty} as {wrpc_core}::Encode>::Encoder>>(clt__: C__,",
+                "<'a, C__: {wrpc_core}::Invoke>(clt__: C__,",
                 wrpc_core = self.r#gen.wrpc_core_path(),
             );
         } else {

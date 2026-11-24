@@ -71,78 +71,96 @@ impl From<InvokeError> for std::io::Error {
     }
 }
 
-/// Client invoking functions with parameters encoded by `E`, such as [`Framed`], see
+/// Client invoking functions with [`Send`] codecs and futures, such as [`Framed`], see
 /// [`Codec::invoke`]
 ///
 /// The asynchronous results must be consumed concurrently with each other and with the
 /// [`Invoke::Invocation`], see the [crate docs](crate).
-pub trait Invoke<E: Transmit> {
+pub trait Invoke {
     /// Future transmitting the asynchronous parameters and receiving the asynchronous results of
     /// an invocation
-    type Invocation<D: Receive>: Future<Output = Result<(), InvokeError>>;
+    type Invocation<E, D>: Future<Output = Result<(), InvokeError>> + Send
+    where
+        E: Transmit + Send + 'static,
+        D: Receive + Send + 'static;
 
     /// Invokes function `func` on instance `instance` with `params` using `codec`, see
     /// [`Codec::invoke`]
-    fn invoke<D, T>(
+    fn invoke<E, D, T>(
         self,
         codec: Codec<E, D>,
         instance: &str,
         func: &str,
         params: T,
-    ) -> impl Future<Output = Result<(D::Item, Self::Invocation<D>), InvokeError>> + use<Self, E, D, T>
+    ) -> impl Future<Output = Result<(D::Item, Self::Invocation<E, D>), InvokeError>>
+    + Send
+    + use<Self, E, D, T>
     where
-        E: Encoder<T, Error = std::io::Error>,
-        D: Decoder<Error = std::io::Error> + Receive;
+        E: Transmit + Encoder<T, Error = std::io::Error> + Send + 'static,
+        D: Decoder<Error = std::io::Error> + Receive + Send + 'static,
+        D::Item: Send;
 }
 
-impl<I, O, E> Invoke<E> for Framed<I, O>
+impl<I, O> Invoke for Framed<I, O>
 where
-    I: AsyncRead + Unpin,
-    O: AsyncWrite + Unpin,
-    E: Transmit,
+    I: AsyncRead + Unpin + Send,
+    O: AsyncWrite + Unpin + Send,
 {
-    type Invocation<D: Receive> = Invocation<
+    type Invocation<E, D>
+        = Invocation<
         Transmission<E, FramedWrite<O, FrameEncoder>, O>,
         Receipt<D, FramedRead<I, FrameDecoder>, I>,
-    >;
+    >
+    where
+        E: Transmit + Send + 'static,
+        D: Receive + Send + 'static;
 
-    fn invoke<D, T>(
+    fn invoke<E, D, T>(
         self,
         codec: Codec<E, D>,
         instance: &str,
         func: &str,
         params: T,
-    ) -> impl Future<Output = Result<(D::Item, Self::Invocation<D>), InvokeError>> + use<I, O, E, D, T>
+    ) -> impl Future<Output = Result<(D::Item, Self::Invocation<E, D>), InvokeError>>
+    + Send
+    + use<I, O, E, D, T>
     where
-        E: Encoder<T, Error = std::io::Error>,
-        D: Decoder<Error = std::io::Error> + Receive,
+        E: Transmit + Encoder<T, Error = std::io::Error> + Send + 'static,
+        D: Decoder<Error = std::io::Error> + Receive + Send + 'static,
+        D::Item: Send,
     {
         let Self { tx, rx } = self;
         codec.invoke(tx, rx, instance, func, params)
     }
 }
 
-impl<'a, I, O, E> Invoke<E> for &'a mut Framed<I, O>
+impl<'a, I, O> Invoke for &'a mut Framed<I, O>
 where
-    I: AsyncRead + Unpin,
-    O: AsyncWrite + Unpin,
-    E: Transmit,
+    I: AsyncRead + Unpin + Send,
+    O: AsyncWrite + Unpin + Send,
 {
-    type Invocation<D: Receive> = Invocation<
+    type Invocation<E, D>
+        = Invocation<
         Transmission<E, &'a mut FramedWrite<O, FrameEncoder>, O>,
         Receipt<D, &'a mut FramedRead<I, FrameDecoder>, I>,
-    >;
+    >
+    where
+        E: Transmit + Send + 'static,
+        D: Receive + Send + 'static;
 
-    fn invoke<D, T>(
+    fn invoke<E, D, T>(
         self,
         codec: Codec<E, D>,
         instance: &str,
         func: &str,
         params: T,
-    ) -> impl Future<Output = Result<(D::Item, Self::Invocation<D>), InvokeError>> + use<'a, I, O, E, D, T>
+    ) -> impl Future<Output = Result<(D::Item, Self::Invocation<E, D>), InvokeError>>
+    + Send
+    + use<'a, I, O, E, D, T>
     where
-        E: Encoder<T, Error = std::io::Error>,
-        D: Decoder<Error = std::io::Error> + Receive,
+        E: Transmit + Encoder<T, Error = std::io::Error> + Send + 'static,
+        D: Decoder<Error = std::io::Error> + Receive + Send + 'static,
+        D::Item: Send,
     {
         let Framed { tx, rx } = self;
         codec.invoke(tx, rx, instance, func, params)
@@ -233,11 +251,13 @@ pub fn invoke<P, R, C>(
     instance: &str,
     func: &str,
     params: P,
-) -> impl Future<Output = Result<(R, C::Invocation<R::Decoder>), InvokeError>> + use<P, R, C>
+) -> impl Future<Output = Result<(R, C::Invocation<P::Encoder, R::Decoder>), InvokeError>>
++ Send
++ use<P, R, C>
 where
-    C: Invoke<P::Encoder>,
-    P: Encode,
-    R: Decode,
+    C: Invoke,
+    P: Encode<Encoder: Send + 'static>,
+    R: Decode<Decoder: Send> + Send,
 {
     clt.invoke(
         Codec::<P::Encoder, R::Decoder>::default(),

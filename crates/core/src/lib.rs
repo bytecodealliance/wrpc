@@ -17,7 +17,8 @@
 //! [`Codec::serve`] *serves* WIT functions by receiving the parameters following the header of an
 //! invocation and transmitting the results, [`serve()`] uses the default codecs. Generated
 //! bindings, [`invoke()`] and [`serve()`] use any [`Invoke`] client and [`Serve`] server, such as
-//! [`Framed`]. [`Serve`] requires [`Send`] values and futures, [`Codec::serve`] does not.
+//! [`Framed`]. [`Invoke`] and [`Serve`] require [`Send`] values and futures, [`Codec::invoke`] and
+//! [`Codec::serve`] do not.
 //!
 //! A transport establishes bidirectional byte streams, each carrying invocations one after
 //! another, which it yields as any [`AsyncWrite`](tokio::io::AsyncWrite)/

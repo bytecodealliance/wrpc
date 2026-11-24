@@ -623,7 +623,7 @@ where
 #[cfg(feature = "http")]
 pub async fn assert_http_invocation<T>(clt: wrpc_http::Client<T>) -> anyhow::Result<()>
 where
-    wrpc_http::Client<T>: wrpc_core::Invoke<<FooBar as Encode>::Encoder>,
+    wrpc_http::Client<T>: wrpc_core::Invoke,
 {
     let s: BoxStream<'static, Bytes> =
         Box::pin(stream::iter([Bytes::from_static(b"client->server")]));

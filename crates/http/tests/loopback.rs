@@ -360,7 +360,17 @@ async fn local() -> anyhow::Result<()> {
         }),
     );
     let greeting: BoxFuture<'static, String> = Box::pin(async { "Hello".into() });
-    let ((greeting,), io) = invoke::<_, (String,), _>(clt, "foo", "bar", (greeting,)).await?;
+    let ((greeting,), io) = clt
+        .invoke(
+            Codec::<
+                <(BoxFuture<'static, String>,) as Encode>::Encoder,
+                <(String,) as Decode>::Decoder,
+            >::default(),
+            "foo",
+            "bar",
+            (greeting,),
+        )
+        .await?;
     io.await?;
     assert_eq!(greeting, "Hello, world");
     Ok(())
@@ -373,10 +383,10 @@ async fn params_error() -> anyhow::Result<()> {
 
     async fn assert_params_error<Fut>(
         mut results: mpsc::UnboundedReceiver<anyhow::Result<()>>,
-        send: impl FnMut(http::Request<OutgoingParams>) -> Fut,
+        send: impl FnMut(http::Request<OutgoingParams>) -> Fut + Send,
     ) -> anyhow::Result<()>
     where
-        Fut: Future<Output = hyper::Result<http::Response<Incoming>>>,
+        Fut: Future<Output = hyper::Result<http::Response<Incoming>>> + Send,
     {
         let (tx, rx) = oneshot::channel::<()>();
         let s: BoxFuture<'static, Utf8Bytes<&'static [u8]>> = Box::pin(async {
