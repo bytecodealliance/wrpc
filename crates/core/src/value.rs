@@ -955,36 +955,26 @@ mod tests {
     fn map_encodes_as_list() -> std::io::Result<()> {
         let v: HashMap<String, u32> = HashMap::from([("a".into(), 1)]);
         let mut buf = BytesMut::default();
-        crate::pack(
-            <HashMap<String, u32> as Encode>::Encoder::default(),
-            v,
-            &mut buf,
-        )?;
+        crate::pack(v, &mut buf)?;
         assert_eq!(buf, b"\x01\x01a\x01"[..]);
-        let v = crate::unpack(
-            <BTreeMap<String, u32> as Decode>::Decoder::default(),
-            &mut buf,
-        )?;
+        let v: BTreeMap<String, u32> = crate::unpack(&mut buf)?;
         assert_eq!(v, BTreeMap::from([("a".into(), 1)]));
         Ok(())
     }
 
     #[test]
     fn map_rejects_duplicate_keys() {
-        let err = crate::unpack(
-            <HashMap<String, u32> as Decode>::Decoder::default(),
-            &mut BytesMut::from(&b"\x02\x01a\x01\x01a\x02"[..]),
-        )
+        let err = crate::unpack::<HashMap<String, u32>>(&mut BytesMut::from(
+            &b"\x02\x01a\x01\x01a\x02"[..],
+        ))
         .unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     }
 
     #[test_log::test(tokio::test)]
     async fn unit_stream_max_chunk() -> std::io::Result<()> {
-        let s = crate::unpack(
-            <BoxStream<'static, Vec<()>> as Decode>::Decoder::default(),
-            &mut BytesMut::from(&b"\x01\xff\xff\xff\xff\x0f"[..]),
-        )?;
+        let s: BoxStream<'static, Vec<()>> =
+            crate::unpack(&mut BytesMut::from(&b"\x01\xff\xff\xff\xff\x0f"[..]))?;
         let lens: Vec<_> = s.map(|chunk| chunk.len()).collect().await;
         assert_eq!(lens, [0xffff_ffff]);
         Ok(())
@@ -994,17 +984,9 @@ mod tests {
     fn list_length_exceeds_data() {
         const LEN: &[u8] = b"\xff\xff\xff\xff\x0f";
 
-        let err = crate::unpack(
-            <Vec<String> as Decode>::Decoder::default(),
-            &mut BytesMut::from(LEN),
-        )
-        .unwrap_err();
+        let err = crate::unpack::<Vec<String>>(&mut BytesMut::from(LEN)).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
-        let err = crate::unpack(
-            <Bytes as Decode>::Decoder::default(),
-            &mut BytesMut::from(LEN),
-        )
-        .unwrap_err();
+        let err = crate::unpack::<Bytes>(&mut BytesMut::from(LEN)).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
     }
 }

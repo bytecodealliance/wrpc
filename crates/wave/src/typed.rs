@@ -14,12 +14,11 @@ use crate::encode::encode_value;
 /// use bytes::BytesMut;
 /// use wasm_wave::value::{Type, Value};
 /// use wasm_wave::wasm::WasmValue as _;
-/// use wrpc_core::SyncCodec;
-/// use wrpc_wave::{TypedValue, TypedValueEncoder};
+/// use wrpc_wave::TypedValue;
 ///
 /// let mut buf = BytesMut::default();
 /// let v = TypedValue(Value::make_u32(42), Type::U32);
-/// wrpc_core::pack(SyncCodec(TypedValueEncoder), v, &mut buf).unwrap();
+/// wrpc_core::pack(v, &mut buf).unwrap();
 /// assert_eq!(buf.as_ref(), [42]);
 /// ```
 #[derive(Clone, Debug)]
