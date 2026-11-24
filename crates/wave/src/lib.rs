@@ -22,6 +22,6 @@ mod decode;
 mod encode;
 mod typed;
 
-pub use decode::{DEFAULT_MAX_LEN, TupleDecoder, ValueDecoder};
-pub use encode::{TupleEncoder, ValueEncoder};
+pub use decode::{DEFAULT_MAX_LEN, DecodeError, TupleDecoder, ValueDecoder};
+pub use encode::{EncodeError, TupleEncoder, ValueEncoder};
 pub use typed::{TypedValue, TypedValueEncoder};
