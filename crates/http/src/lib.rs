@@ -9,20 +9,49 @@
 //! # async fn run(
 //! #     io: impl hyper::rt::Read + hyper::rt::Write + Unpin,
 //! # ) -> Result<(), Box<dyn core::error::Error + Send + Sync>> {
+//! # #[derive(Debug)]
+//! # struct EmptyName;
+//! # impl core::fmt::Display for EmptyName {
+//! #     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+//! #         f.write_str("empty name")
+//! #     }
+//! # }
+//! # impl core::error::Error for EmptyName {}
+//! use bytes::Bytes;
+//! use http::StatusCode;
+//! use http_body_util::combinators::UnsyncBoxBody;
 //! use hyper::body::Incoming;
 //! use hyper::server::conn::http1;
 //! use hyper::service::service_fn;
-//! use wrpc_core::{Header, serve};
+//! use wrpc_core::{Header, ServeError, serve};
+//!
+//! fn status(status: StatusCode) -> http::Response<UnsyncBoxBody<Bytes, std::io::Error>> {
+//!     let mut res = http::Response::new(UnsyncBoxBody::default());
+//!     *res.status_mut() = status;
+//!     res
+//! }
 //!
 //! let svc = service_fn(|req: http::Request<Incoming>| async move {
 //!     let (Header { instance, name }, req) = wrpc_http::accept(req.into_body()).await?;
 //!     if instance != "foo" || name != "bar" {
-//!         return Err(format!("`{instance}.{name}` is not exported").into());
+//!         return Ok(status(StatusCode::NOT_FOUND));
 //!     }
-//!     let res = serve::<(String,), (String,), _, _>(req, async |(name,)| {
+//!     let res = match serve::<(String,), (String,), _, _>(req, async |(name,)| {
+//!         if name.is_empty() {
+//!             return Err(std::io::Error::other(EmptyName));
+//!         }
 //!         Ok((format!("Hello, {name}"),))
 //!     })
-//!     .await?;
+//!     .await
+//!     {
+//!         Ok(res) => res,
+//!         Err(ServeError::Handler(err))
+//!             if err.get_ref().and_then(|err| err.downcast_ref::<EmptyName>()).is_some() =>
+//!         {
+//!             status(StatusCode::UNPROCESSABLE_ENTITY)
+//!         }
+//!         Err(err) => return Err(err.into()),
+//!     };
 //!     Ok::<_, Box<dyn core::error::Error + Send + Sync>>(res)
 //! });
 //! http1::Builder::new().serve_connection(io, svc).await?;
@@ -31,19 +60,33 @@
 //! ```
 //!
 //! Clients invoke functions with a [Client] sending requests with a [`Service`], such as a
-//! hyper-util client:
+//! hyper-util client, here shared with other requests and failing on a non-2xx response status:
 //!
 //! ```no_run
 //! # async fn run() -> Result<(), Box<dyn core::error::Error + Send + Sync>> {
-//! use http::Uri;
+//! use bytes::Bytes;
+//! use http::{Request, Uri};
+//! use http_body_util::BodyExt;
+//! use http_body_util::combinators::UnsyncBoxBody;
 //! use hyper_util::client::legacy;
 //! use hyper_util::rt::TokioExecutor;
+//! use tower::ServiceExt as _;
 //! use wrpc_core::invoke;
 //! use wrpc_http::{Client, OutgoingParams};
 //!
-//! let clt: legacy::Client<_, OutgoingParams> =
+//! let http: legacy::Client<_, UnsyncBoxBody<Bytes, std::io::Error>> =
 //!     legacy::Client::builder(TokioExecutor::default()).build_http();
-//! let clt = Client::new(Uri::from_static("http://localhost:7763"), clt);
+//! let svc = http
+//!     .clone()
+//!     .map_request(|req: Request<OutgoingParams>| req.map(BodyExt::boxed_unsync))
+//!     .map_result(|res| -> Result<_, Box<dyn core::error::Error + Send + Sync>> {
+//!         let res = res?;
+//!         if !res.status().is_success() {
+//!             return Err(format!("unexpected response status `{}`", res.status()).into());
+//!         }
+//!         Ok(res)
+//!     });
+//! let clt = Client::new(Uri::from_static("http://localhost:7763"), svc);
 //! let name = String::from("world");
 //! let ((greeting,), io) = invoke::<_, (String,), _>(clt, "foo", "bar", (name,)).await?;
 //! io.await?;
@@ -51,6 +94,10 @@
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! The response status is left to callers: clients act on it in their [`Service`], servers may
+//! set the status and headers of the response [`IncomingRequest::serve`] returns, `200 OK` by
+//! default.
 //!
 //! With the `h2` feature (default), [`h2`](https://docs.rs/h2) errors from the peer are reported
 //! as [`std::io::ErrorKind::ConnectionReset`], refused streams and graceful shutdowns as
@@ -231,6 +278,8 @@ impl<E: Transmit> http_body::Body for Egress<E> {
 
 /// Receives the invocation header of a request with `body`, returning it along with the
 /// [IncomingRequest] of the invocation
+///
+/// Pass `Box::pin(body)` for a `!Unpin` body.
 pub async fn accept<T>(body: T) -> Result<(Header, IncomingRequest<T>), HeaderDecodeError>
 where
     T: http_body::Body<Error: Into<Box<dyn core::error::Error + Send + Sync>>> + Unpin,
