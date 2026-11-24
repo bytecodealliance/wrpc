@@ -20,6 +20,7 @@ use tokio::time::timeout;
 use tokio::{join, select, spawn};
 use tokio_util::codec::Encoder as _;
 use tracing::{info, instrument};
+use wrpc::http::Client;
 use wrpc::{FrameEncoder, FrameRef, Framed, Header, HeaderEncoder, HeaderRef, Listener};
 
 pub mod common;
@@ -246,15 +247,17 @@ async fn js_http_server() -> anyhow::Result<()> {
     .await?;
 
     let conn = wrpc_test::tcp_connect(addr).await?;
-    let (sender, conn) = http2::handshake(TokioExecutor::new(), TokioIo::new(conn))
+    let (mut sender, conn) = http2::handshake(TokioExecutor::new(), TokioIo::new(conn))
         .await
         .context("failed to establish HTTP/2 connection")?;
     spawn(conn);
-    let (mut parts, ()) = http::Request::new(()).into_parts();
-    parts.uri = format!("http://{addr}/")
+    let uri = format!("http://{addr}/")
         .parse()
         .context("failed to parse request URI")?;
-    let mut clt = (sender, parts);
+    let mut clt = Client::new(
+        uri,
+        tower::util::service_fn(move |req| sender.send_request(req)),
+    );
     common::assert_sync(&mut clt).await?;
     common::assert_async(&mut clt).await?;
 
