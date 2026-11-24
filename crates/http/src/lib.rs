@@ -71,7 +71,7 @@ use http::{HeaderValue, Method, Uri};
 use http_body::{Frame, SizeHint};
 use http_body_util::combinators::{MapErr, UnsyncBoxBody};
 use http_body_util::{BodyDataStream, BodyExt};
-use tokio::io::{AsyncRead, ReadBuf};
+use tokio::io::AsyncRead;
 use tokio_util::codec::{Decoder, Encoder, FramedRead};
 use tokio_util::io::StreamReader;
 use tower_service::Service;
@@ -245,47 +245,12 @@ where
     Ok((header, IncomingRequest { rx, parts }))
 }
 
-/// Reader of the data of the body of the response a future resolves to, which it awaits on first
-/// read
-struct ResponseReader<F, B: http_body::Body> {
-    res: Option<Pin<Box<F>>>,
-    body: Option<Pin<Box<BodyReader<B>>>>,
-}
-
-impl<F, B, Err> AsyncRead for ResponseReader<F, B>
-where
-    F: Future<Output = Result<http::Response<B>, Err>>,
-    B: http_body::Body<Data = Bytes, Error: Into<Box<dyn core::error::Error + Send + Sync>>>,
-    Err: Into<Box<dyn core::error::Error + Send + Sync>>,
-{
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        let Self { res, body } = self.get_mut();
-        if let Some(fut) = res {
-            let ret = ready!(fut.as_mut().poll(cx));
-            *res = None;
-            let ret = ret.map_err(into_io_error)?;
-            *body = Some(Box::pin(StreamReader::new(
-                ret.into_body()
-                    .map_err(into_io_error as fn(_) -> _)
-                    .into_data_stream(),
-            )));
-        }
-        match body {
-            Some(body) => body.as_mut().poll_read(cx, buf),
-            None => Poll::Ready(Ok(())),
-        }
-    }
-}
-
 /// Client invoking functions with `POST` requests to `uri`, with content type [`MEDIA_TYPE`],
 /// sent by `service`, such as a hyper-util client
 ///
 /// The parameters are encoded before [`Invoke::invoke`] returns. The response status and headers
 /// are not checked: to act on them or to set other request headers, wrap `service` in a layer.
+/// Errors of `service` are [`InvokeError::Request`].
 #[derive(Clone, Debug)]
 pub struct Client<T> {
     /// URI of the requests
@@ -311,7 +276,7 @@ where
         >,
     B: http_body::Body<Data = Bytes, Error: Into<Box<dyn core::error::Error + Send + Sync>>>,
 {
-    type Invocation<D: Receive> = Invocation<S::Future, B, D>;
+    type Invocation<D: Receive> = Invocation<B, D>;
 
     fn invoke<D, T>(
         self,
@@ -359,10 +324,17 @@ where
             *req.uri_mut() = uri;
             req.headers_mut()
                 .insert(CONTENT_TYPE, HeaderValue::from_static(MEDIA_TYPE));
-            let rx = ResponseReader {
-                res: Some(Box::pin(service.call(req))),
-                body: None,
-            };
+            let res = service.call(req).await.map_err(|err| {
+                InvokeError::Request(match error.try_recv() {
+                    Ok(Some(err)) => err,
+                    _ => into_io_error(err),
+                })
+            })?;
+            let rx = Box::pin(StreamReader::new(
+                res.into_body()
+                    .map_err(into_io_error as fn(_) -> _)
+                    .into_data_stream(),
+            ));
             let rx = FramedRead::new(rx, FrameDecoder::default());
             let (results, rx) = match receive(dec, rx).await {
                 Ok(res) => res,
@@ -394,7 +366,7 @@ where
         >,
     B: http_body::Body<Data = Bytes, Error: Into<Box<dyn core::error::Error + Send + Sync>>>,
 {
-    type Invocation<D: Receive> = Invocation<S::Future, B, D>;
+    type Invocation<D: Receive> = Invocation<B, D>;
 
     fn invoke<D, T>(
         self,
@@ -417,16 +389,14 @@ where
 ///
 /// Dropping it before the request body was sent fails the request body.
 #[must_use]
-pub struct Invocation<F, B: http_body::Body, D> {
+pub struct Invocation<B: http_body::Body, D> {
     error: oneshot::Receiver<std::io::Error>,
-    rx: Ingress<D, ResponseReader<F, B>>,
+    rx: Ingress<D, Pin<Box<BodyReader<B>>>>,
 }
 
-impl<F, B, Err, D> Future for Invocation<F, B, D>
+impl<B, D> Future for Invocation<B, D>
 where
-    F: Future<Output = Result<http::Response<B>, Err>>,
     B: http_body::Body<Data = Bytes, Error: Into<Box<dyn core::error::Error + Send + Sync>>>,
-    Err: Into<Box<dyn core::error::Error + Send + Sync>>,
     D: Receive,
 {
     type Output = Result<(), InvokeError>;
