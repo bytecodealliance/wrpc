@@ -29,6 +29,27 @@
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! Clients invoke functions with a [Client] sending requests with a [`Service`], such as a
+//! hyper-util client:
+//!
+//! ```no_run
+//! # async fn run() -> Result<(), Box<dyn core::error::Error + Send + Sync>> {
+//! use http::Uri;
+//! use hyper_util::client::legacy;
+//! use hyper_util::rt::TokioExecutor;
+//! use wrpc_core::invoke;
+//! use wrpc_http::{Body, Client};
+//!
+//! let clt: legacy::Client<_, Body> = legacy::Client::builder(TokioExecutor::default()).build_http();
+//! let clt = Client::new(Uri::from_static("http://localhost:7763"), clt);
+//! let name = String::from("world");
+//! let ((greeting,), io) = invoke::<_, (String,), _>(clt, "foo", "bar", (name,)).await?;
+//! io.await?;
+//! println!("{greeting}");
+//! # Ok(())
+//! # }
+//! ```
 
 use core::future::poll_fn;
 use core::iter;
@@ -41,14 +62,15 @@ use std::collections::VecDeque;
 use bytes::{Bytes, BytesMut};
 use futures::channel::oneshot;
 use futures::{StreamExt as _, TryFutureExt as _, TryStreamExt as _};
-use http::HeaderValue;
 use http::header::CONTENT_TYPE;
+use http::{HeaderValue, Method, Uri};
 use http_body::{Frame, SizeHint};
 use http_body_util::combinators::{MapErr, UnsyncBoxBody};
 use http_body_util::{BodyDataStream, BodyExt};
 use tokio::io::{AsyncRead, ReadBuf};
 use tokio_util::codec::{Decoder, Encoder, FramedRead};
 use tokio_util::io::StreamReader;
+use tower_service::Service;
 use wrpc_core::{
     Codec, FrameDecoder, FrameEncoder, FrameHeaderEncoder, FrameHeaderRef, FrameRef, Header,
     HeaderDecodeError, HeaderDecoder, HeaderEncoder, HeaderRef, Invoke, InvokeError, Receipt,
@@ -64,9 +86,31 @@ pub type BodyReader<T> = StreamReader<
     <T as http_body::Body>::Data,
 >;
 
-/// Body transmitting a value, the parameters of an [OutgoingRequest], and the asynchronous values
-/// nested in it, using `E`
-pub struct Body<E> {
+/// Body of a [Client] request, transmitting the parameters with a [`Send`] encoder
+pub struct Body(Egress<Box<dyn Transmit + Send>>);
+
+impl http_body::Body for Body {
+    type Data = Bytes;
+    type Error = std::io::Error;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+        Pin::new(&mut self.get_mut().0).poll_frame(cx)
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.0.is_end_stream()
+    }
+
+    fn size_hint(&self) -> SizeHint {
+        self.0.size_hint()
+    }
+}
+
+/// Body transmitting a value and the asynchronous values nested in it using `E`
+struct Egress<E> {
     enc: E,
     path: Vec<usize>,
     frames: VecDeque<Bytes>,
@@ -74,9 +118,9 @@ pub struct Body<E> {
     error: Option<oneshot::Sender<std::io::Error>>,
 }
 
-impl<E> Unpin for Body<E> {}
+impl<E> Unpin for Egress<E> {}
 
-impl<E> Body<E> {
+impl<E> Egress<E> {
     fn new<T>(mut enc: E, mut buffer: BytesMut, value: T) -> std::io::Result<Self>
     where
         E: Encoder<T, Error = std::io::Error>,
@@ -110,7 +154,7 @@ impl<E> Body<E> {
     }
 }
 
-impl<E: Transmit> http_body::Body for Body<E> {
+impl<E: Transmit> http_body::Body for Egress<E> {
     type Data = Bytes;
     type Error = std::io::Error;
 
@@ -233,30 +277,37 @@ where
     }
 }
 
-/// Outgoing `POST` request with `parts` invoking a function, with content type
-/// [`MEDIA_TYPE`] unless `parts` set one, sent by `send`, such as a closure calling
-/// `send_request` of a hyper HTTP/1 or HTTP/2 connection
+/// Client invoking functions with `POST` requests to `uri`, with content type [`MEDIA_TYPE`],
+/// sent by `service`, such as a hyper-util client
 ///
-/// The parameters are encoded before [`Invoke::invoke`] returns.
-///
-/// The response status and headers are not checked: to act on them, map the response `send`
-/// resolves to, failing it with an error.
-pub struct OutgoingRequest<F> {
-    /// Parts of the request
-    pub parts: http::request::Parts,
-    /// Function sending the request and returning a future resolving to its response
-    pub send: F,
+/// The parameters are encoded before [`Invoke::invoke`] returns. The response status and headers
+/// are not checked: to act on them or to set other request headers, wrap `service` in a layer.
+#[derive(Clone, Debug)]
+pub struct Client<T> {
+    /// URI of the requests
+    pub uri: Uri,
+    /// Service sending the requests
+    pub service: T,
 }
 
-impl<E, F, Fut, B, Err> Invoke<E> for OutgoingRequest<F>
+impl<T> Client<T> {
+    /// Returns a client sending requests to `uri` with `service`
+    pub fn new(uri: Uri, service: T) -> Self {
+        Self { uri, service }
+    }
+}
+
+impl<E, S, B> Invoke<E> for Client<S>
 where
-    E: Transmit,
-    F: FnOnce(http::Request<Body<E>>) -> Fut,
-    Fut: Future<Output = Result<http::Response<B>, Err>>,
+    E: Transmit + Send + 'static,
+    S: Service<
+            http::Request<Body>,
+            Response = http::Response<B>,
+            Error: Into<Box<dyn core::error::Error + Send + Sync>>,
+        >,
     B: http_body::Body<Data = Bytes, Error: Into<Box<dyn core::error::Error + Send + Sync>>>,
-    Err: Into<Box<dyn core::error::Error + Send + Sync>>,
 {
-    type Invocation<D: Receive> = Invocation<Fut, B, D>;
+    type Invocation<D: Receive> = Invocation<S::Future, B, D>;
 
     fn invoke<D, T>(
         self,
@@ -264,13 +315,12 @@ where
         instance: &str,
         func: &str,
         params: T,
-    ) -> impl Future<Output = Result<(D::Item, Self::Invocation<D>), InvokeError>>
-    + use<E, F, Fut, B, Err, D, T>
+    ) -> impl Future<Output = Result<(D::Item, Self::Invocation<D>), InvokeError>> + use<E, S, B, D, T>
     where
         E: Encoder<T, Error = std::io::Error>,
         D: Decoder<Error = std::io::Error> + Receive,
     {
-        let Self { mut parts, send } = self;
+        let Self { uri, mut service } = self;
         let Codec { enc, dec } = codec;
         let mut buffer = BytesMut::default();
         let body = HeaderEncoder
@@ -281,19 +331,32 @@ where
                 },
                 &mut buffer,
             )
-            .and_then(|()| Body::new(enc, buffer, params));
-        parts.method = http::Method::POST;
-        parts
-            .headers
-            .entry(CONTENT_TYPE)
-            .or_insert(HeaderValue::from_static(MEDIA_TYPE));
+            .and_then(|()| Egress::new(enc, buffer, params));
         async move {
-            let mut body = body.map_err(InvokeError::Request)?;
+            let Egress {
+                enc,
+                path,
+                frames,
+                buffer,
+                ..
+            } = body.map_err(InvokeError::Request)?;
+            poll_fn(|cx| service.poll_ready(cx))
+                .await
+                .map_err(|err| InvokeError::Request(into_io_error(err)))?;
             let (tx, mut error) = oneshot::channel();
-            body.error = Some(tx);
-            let res = send(http::Request::from_parts(parts, body));
+            let mut req = http::Request::new(Body(Egress {
+                enc: Box::new(enc),
+                path,
+                frames,
+                buffer,
+                error: Some(tx),
+            }));
+            *req.method_mut() = Method::POST;
+            *req.uri_mut() = uri;
+            req.headers_mut()
+                .insert(CONTENT_TYPE, HeaderValue::from_static(MEDIA_TYPE));
             let rx = ResponseReader {
-                res: Some(Box::pin(res)),
+                res: Some(Box::pin(service.call(req))),
                 body: None,
             };
             let rx = FramedRead::new(rx, FrameDecoder::default());
@@ -317,8 +380,36 @@ where
     }
 }
 
-/// Future receiving the asynchronous results and the end of the response body of an
-/// [OutgoingRequest] invocation, failing with the error of its request body, if any
+impl<'a, E, S, B> Invoke<E> for &'a mut Client<S>
+where
+    E: Transmit + Send + 'static,
+    S: Service<
+            http::Request<Body>,
+            Response = http::Response<B>,
+            Error: Into<Box<dyn core::error::Error + Send + Sync>>,
+        >,
+    B: http_body::Body<Data = Bytes, Error: Into<Box<dyn core::error::Error + Send + Sync>>>,
+{
+    type Invocation<D: Receive> = Invocation<S::Future, B, D>;
+
+    fn invoke<D, T>(
+        self,
+        codec: Codec<E, D>,
+        instance: &str,
+        func: &str,
+        params: T,
+    ) -> impl Future<Output = Result<(D::Item, Self::Invocation<D>), InvokeError>> + use<'a, E, S, B, D, T>
+    where
+        E: Encoder<T, Error = std::io::Error>,
+        D: Decoder<Error = std::io::Error> + Receive,
+    {
+        let Client { uri, service } = self;
+        Client::new(uri.clone(), service).invoke(codec, instance, func, params)
+    }
+}
+
+/// Future receiving the asynchronous results and the end of the response body of a [Client]
+/// invocation, failing with the error of its request body, if any
 ///
 /// Dropping it before the request body was sent fails the request body.
 #[must_use]
@@ -392,7 +483,7 @@ where
             results.as_mut().poll(cx).map_err(ServeError::Handler)
         })
         .await?;
-        let body = Body::new(enc, BytesMut::default(), results).map_err(ServeError::Response)?;
+        let body = Egress::new(enc, BytesMut::default(), results).map_err(ServeError::Response)?;
         parts
             .headers
             .entry(CONTENT_TYPE)
@@ -433,7 +524,7 @@ where
 /// received only while it is polled, which HTTP/2 does only while the response has flow-control
 /// capacity.
 pub struct ResponseBody<E, D, T: http_body::Body> {
-    body: Body<E>,
+    body: Egress<E>,
     rx: Ingress<D, BodyReader<T>>,
 }
 

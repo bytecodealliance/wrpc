@@ -3,22 +3,16 @@ use core::time::Duration;
 
 use anyhow::{Context as _, bail, ensure};
 use bytes::Bytes;
-use futures::future::BoxFuture;
 use futures::{StreamExt as _, future, stream};
-use http::request::Parts;
-use http::{Request, Response};
-use http_body_util::BodyExt;
-use http_body_util::combinators::UnsyncBoxBody;
-use hyper::body::Incoming;
-use hyper::client::conn::http2::SendRequest;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt as _};
 use tokio::sync::oneshot;
 use tokio::task::yield_now;
 use tokio::time::timeout;
 use tokio::{join, try_join};
+use tower::Service;
 use tracing::info;
 use wrpc_core::{Framed, Invoke, Transmit};
-use wrpc_http::{Body, OutgoingRequest};
+use wrpc_http::{Body, Client};
 
 /// Connection, which invocations are made on one after another
 pub trait Connection {
@@ -45,29 +39,22 @@ where
     }
 }
 
-impl Connection for (SendRequest<UnsyncBoxBody<Bytes, std::io::Error>>, Parts) {
-    type Client<'a, E: Transmit + Send + 'static>
-        = OutgoingRequest<
-        Box<
-            dyn FnOnce(Request<Body<E>>) -> BoxFuture<'a, hyper::Result<Response<Incoming>>>
-                + Send
-                + 'a,
+impl<T, B> Connection for Client<T>
+where
+    T: Service<
+            http::Request<Body>,
+            Response = http::Response<B>,
+            Error: Into<Box<dyn core::error::Error + Send + Sync>>,
         >,
-    >
+    B: hyper::body::Body<Data = Bytes, Error: Into<Box<dyn core::error::Error + Send + Sync>>>,
+{
+    type Client<'a, E: Transmit + Send + 'static>
+        = &'a mut Client<T>
     where
         Self: 'a;
 
     fn client<E: Transmit + Send + 'static>(&mut self) -> Self::Client<'_, E> {
-        let (sender, parts) = self;
-        OutgoingRequest {
-            parts: parts.clone(),
-            send: Box::new(|req| {
-                Box::pin(async move {
-                    sender.ready().await?;
-                    sender.send_request(req.map(BodyExt::boxed_unsync)).await
-                })
-            }),
-        }
+        self
     }
 }
 
