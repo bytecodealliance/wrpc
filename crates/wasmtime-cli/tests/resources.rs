@@ -5,7 +5,7 @@ use std::io::Write as _;
 use bytes::Bytes;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::select;
-use wrpc_core::{Framed, invoke_blocking};
+use wrpc_core::{Framed, invoke};
 
 const COMPONENT: &str = r#"
 (component
@@ -62,26 +62,28 @@ async fn invalid_resource_handles() -> anyhow::Result<()> {
     );
     let clt = async {
         let mut clt = connect().await?;
-        let (r,) = invoke_blocking::<(u32,), (Bytes,)>(&mut clt, "", "r", (42,)).await?;
-        invoke_blocking::<(Bytes,), ()>(&mut clt, "", "r.consume", (r.clone(),)).await?;
-        invoke_blocking::<(Bytes,), ()>(clt, "", "r.consume", (r,))
-            .await
-            .expect_err("consumed resource accepted");
+        let ((r,), io) = invoke::<(u32,), (Bytes,), _>(&mut clt, "", "r", (42,)).await?;
+        io.await?;
+        let ((), io) = invoke::<(Bytes,), (), _>(&mut clt, "", "r.consume", (r.clone(),)).await?;
+        io.await?;
+        let res = invoke::<(Bytes,), (), _>(clt, "", "r.consume", (r,)).await;
+        assert!(res.is_err(), "consumed resource accepted");
 
         let mut clt = connect().await?;
-        let (r,) = invoke_blocking::<(u32,), (Bytes,)>(&mut clt, "", "r", (42,)).await?;
-        let (s,) = invoke_blocking::<(u32,), (Bytes,)>(&mut clt, "", "s", (42,)).await?;
-        invoke_blocking::<(Bytes,), (u32,)>(clt, "", "r.get", (s,))
-            .await
-            .expect_err("resource of a different type accepted");
+        let ((r,), io) = invoke::<(u32,), (Bytes,), _>(&mut clt, "", "r", (42,)).await?;
+        io.await?;
+        let ((s,), io) = invoke::<(u32,), (Bytes,), _>(&mut clt, "", "s", (42,)).await?;
+        io.await?;
+        let res = invoke::<(Bytes,), (u32,), _>(clt, "", "r.get", (s,)).await;
+        assert!(res.is_err(), "resource of a different type accepted");
 
         let clt = connect().await?;
-        invoke_blocking::<(Bytes, Bytes), ()>(clt, "", "r.both", (r.clone(), r.clone()))
-            .await
-            .expect_err("borrowed resource moved");
+        let res = invoke::<(Bytes, Bytes), (), _>(clt, "", "r.both", (r.clone(), r.clone())).await;
+        assert!(res.is_err(), "borrowed resource moved");
 
         let clt = connect().await?;
-        let (v,) = invoke_blocking::<(Bytes,), (u32,)>(clt, "", "r.get", (r,)).await?;
+        let ((v,), io) = invoke::<(Bytes,), (u32,), _>(clt, "", "r.get", (r,)).await?;
+        io.await?;
         assert_eq!(v, 42);
         anyhow::Ok(())
     };

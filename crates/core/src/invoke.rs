@@ -182,26 +182,6 @@ where
     )
 }
 
-/// Invokes function `func` on instance `instance` using `clt` and the default codecs of `params`
-/// and results `R`, see [`Codec::invoke`]
-///
-/// This is like [`invoke()`], but it only resolves once all I/O is done
-pub async fn invoke_blocking<P, R>(
-    clt: impl Invoke<P::Encoder>,
-    instance: &str,
-    func: &str,
-    params: P,
-) -> std::io::Result<R>
-where
-    P: Encode,
-    R: Decode,
-{
-    let (ret, io) = invoke(clt, instance, func, params).await?;
-    trace!("awaiting I/O completion");
-    io.await?;
-    Ok(ret)
-}
-
 /// Future transmitting the parameters and receiving the results of an invocation, see
 /// [`Codec::invoke`]
 #[must_use]

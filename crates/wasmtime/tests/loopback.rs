@@ -23,7 +23,7 @@ use wasmtime::component::{
 use wasmtime::error::Context as _;
 use wrpc_core::{
     Codec, FrameDecoder, FrameEncoder, FrameRef, Framed, HeaderEncoder, HeaderRef, Listener,
-    Receive as _, ReceiveError, invoke, invoke_blocking,
+    Receive as _, ReceiveError, invoke,
 };
 use wrpc_test::serve_until;
 use wrpc_wasmtime::{Export, Exports, TupleDecoder, TupleEncoder, Val, lift, lower};
@@ -204,8 +204,8 @@ async fn shared_store_trap() -> anyhow::Result<()> {
                 srv,
                 async {
                     let (tx, rx) = wrpc_test::tcp_streams(addr).await?;
-                    let res = invoke_blocking::<(), ()>(Framed::new(tx, rx), "", "run", ()).await;
-                    res.expect_err("`run` invocation succeeded");
+                    let res = invoke::<(), (), _>(Framed::new(tx, rx), "", "run", ()).await;
+                    assert!(res.is_err(), "`run` invocation succeeded");
                     Ok(())
                 },
                 |tx, rx| async {
@@ -249,19 +249,21 @@ async fn shared_resources() -> anyhow::Result<()> {
                 async {
                     let (tx, rx) = wrpc_test::tcp_streams(addr).await?;
                     let mut clt = Framed::new(tx, rx);
-                    let (r,) =
-                        invoke_blocking::<(u32,), (Bytes,)>(&mut clt, "", "r", (42,)).await?;
-                    let (v,) =
-                        invoke_blocking::<(Bytes,), (u32,)>(&mut clt, "", "r.get", (r,)).await?;
+                    let ((r,), io) =
+                        invoke::<(u32,), (Bytes,), _>(&mut clt, "", "r", (42,)).await?;
+                    io.await?;
+                    let ((v,), io) =
+                        invoke::<(Bytes,), (u32,), _>(&mut clt, "", "r.get", (r,)).await?;
+                    io.await?;
                     assert_eq!(v, 42);
-                    invoke_blocking::<(Bytes,), (u32,)>(
+                    let res = invoke::<(Bytes,), (u32,), _>(
                         clt,
                         "",
                         "r.get",
                         (Bytes::from_static(b"\x01"),),
                     )
-                    .await
-                    .expect_err("unknown resource accepted");
+                    .await;
+                    assert!(res.is_err(), "unknown resource accepted");
                     Ok(())
                 },
                 |tx, rx| async {
@@ -506,7 +508,8 @@ async fn async_params_after_return() -> anyhow::Result<()> {
                 io.await?;
 
                 for _ in 0..100 {
-                    let (n,) = invoke_blocking::<(), (u32,)>(&mut clt, "", "count", ()).await?;
+                    let ((n,), io) = invoke::<(), (u32,), _>(&mut clt, "", "count", ()).await?;
+                    io.await?;
                     if n == 3 {
                         return Ok(());
                     }
