@@ -104,7 +104,7 @@ export class InvokeError extends Error {
   constructor(kind, cause) {
     super(
       {
-        request: "failed to send request",
+        request: "request failed",
         unread: "client dropped an unread result",
         response: "failed to receive response",
       }[kind],

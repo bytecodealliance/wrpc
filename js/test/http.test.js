@@ -77,8 +77,8 @@ test("callers decide on the response", async () => {
   const err = await invoke(fromFetch(ADDR, { fetch: reject }), "i", "f", [], [], [t.u8]).catch(
     (err) => err,
   );
-  assert.equal(err.kind, "response");
-  assert.equal(err.cause.cause.cause.message, "status 418");
+  assert.equal(err.kind, "request");
+  assert.equal(err.cause.message, "status 418");
 });
 
 test("data after the invocation fails it", async () => {
