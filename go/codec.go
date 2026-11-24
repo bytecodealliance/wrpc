@@ -170,7 +170,7 @@ func (c MapCodec[K, V]) Encode(v map[K]V, dst []byte) ([]byte, Transmitter, erro
 		if dst, vtx, err = c.Value.Encode(v, dst); err != nil {
 			return nil, nil, fmt.Errorf("failed to encode value %d: %w", i, err)
 		}
-		if tx := transmitters(ktx, vtx); tx != nil {
+		if tx := NewTransmitters(ktx, vtx); tx != nil {
 			ts[i] = tx
 		}
 		i++
@@ -201,7 +201,7 @@ func (c MapCodec[K, V]) Decode(r ByteReader) (map[K]V, Receiver, error) {
 			return nil, nil, fmt.Errorf("failed to decode value %d: %w", i, unexpectedEOF(err))
 		}
 		m[k] = v
-		if rx := receivers(krx, vrx); rx != nil {
+		if rx := NewReceivers(krx, vrx); rx != nil {
 			rs[i] = rx
 		}
 	}
@@ -235,15 +235,35 @@ func (c OptionCodec[T]) Decode(r ByteReader) (*T, Receiver, error) {
 	return &v, rx, nil
 }
 
+// PtrCodec is the Codec of pointers to values of type T, encoding fails on nil
+type PtrCodec[T any] struct {
+	Elem Codec[T]
+}
+
+func (c PtrCodec[T]) Encode(v *T, dst []byte) ([]byte, Transmitter, error) {
+	if v == nil {
+		return nil, nil, errors.New("pointer is nil")
+	}
+	return c.Elem.Encode(*v, dst)
+}
+
+func (c PtrCodec[T]) Decode(r ByteReader) (*T, Receiver, error) {
+	v, rx, err := c.Elem.Decode(r)
+	if err != nil {
+		return nil, nil, err
+	}
+	return &v, rx, nil
+}
+
 // ResultCodec is the Codec of `result<O, E>` values, `UnitCodec` encodes an omitted type
 type ResultCodec[O, E any] struct {
 	Ok  Codec[O]
 	Err Codec[E]
 }
 
-func (c ResultCodec[O, E]) Encode(v *Result[O, E], dst []byte) ([]byte, Transmitter, error) {
+func (c ResultCodec[O, E]) Encode(v Result[O, E], dst []byte) ([]byte, Transmitter, error) {
 	switch {
-	case v == nil || (v.Ok == nil) == (v.Err == nil):
+	case (v.Ok == nil) == (v.Err == nil):
 		return nil, nil, errors.New("exactly one of `ok` and `err` must be set")
 	case v.Ok != nil:
 		return c.Ok.Encode(*v.Ok, append(dst, 0))
@@ -252,23 +272,23 @@ func (c ResultCodec[O, E]) Encode(v *Result[O, E], dst []byte) ([]byte, Transmit
 	}
 }
 
-func (c ResultCodec[O, E]) Decode(r ByteReader) (*Result[O, E], Receiver, error) {
+func (c ResultCodec[O, E]) Decode(r ByteReader) (Result[O, E], Receiver, error) {
 	isErr, err := readStatus(r)
 	if err != nil {
-		return nil, nil, err
+		return Result[O, E]{}, nil, err
 	}
 	if isErr {
 		v, rx, err := c.Err.Decode(r)
 		if err != nil {
-			return nil, nil, unexpectedEOF(err)
+			return Result[O, E]{}, nil, unexpectedEOF(err)
 		}
-		return &Result[O, E]{Err: &v}, rx, nil
+		return Result[O, E]{Err: &v}, rx, nil
 	}
 	v, rx, err := c.Ok.Decode(r)
 	if err != nil {
-		return nil, nil, unexpectedEOF(err)
+		return Result[O, E]{}, nil, unexpectedEOF(err)
 	}
-	return &Result[O, E]{Ok: &v}, rx, nil
+	return Result[O, E]{Ok: &v}, rx, nil
 }
 
 func readStatus(r ByteReader) (bool, error) {

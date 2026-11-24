@@ -25,7 +25,7 @@ func (e *tupleEncoder) result() ([]byte, Transmitter, error) {
 	if e.err != nil {
 		return nil, nil, e.err
 	}
-	return e.dst, transmitters(e.txs...), nil
+	return e.dst, NewTransmitters(e.txs...), nil
 }
 
 type tupleDecoder struct {
@@ -54,7 +54,7 @@ func (d *tupleDecoder) result() (Receiver, error) {
 	if d.err != nil {
 		return nil, d.err
 	}
-	return receivers(d.rxs...), nil
+	return NewReceivers(d.rxs...), nil
 }
 
 // Tuple1Codec is the Codec of `tuple<T0>` values
