@@ -1,6 +1,6 @@
 [package]
 name = "wit-bindgen-wrpc-test"
-version = "0.2.0-rc.1"
+version = "0.2.0-rc.2"
 description = """
 Test runner for the wRPC bindings generators, exposed as `wit-bindgen-wrpc test`.
 """
