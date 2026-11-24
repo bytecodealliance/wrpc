@@ -7,11 +7,11 @@ const pending = Symbol("pending");
 
 export async function run(connect) {
   const pendingImport = async (x) => {
-    const transport = await connect();
-    const call = i.pendingImport(transport, x);
+    const clt = await connect();
+    const call = i.pendingImport(clt, x);
     const cancel = () => {
-      call.then(({ finished }) => finished).catch(() => {});
-      return transport.abort(new Error("cancelled"));
+      call.catch(() => {});
+      clt.abort();
     };
     return { call, cancel };
   };
@@ -69,7 +69,6 @@ export async function run(connect) {
     await starting.cancel();
 
     resolve();
-    const { finished } = await started.call;
-    await finished;
+    await started.call;
   }
 }

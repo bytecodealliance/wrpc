@@ -12,8 +12,7 @@ export async function run(connect) {
     assert.equal(await Promise.race([call, pending]), pending);
     assert.equal(await Promise.race([call, pending]), pending);
     resolve();
-    const { finished } = await call;
-    await finished;
+    await call;
   }
 
   {

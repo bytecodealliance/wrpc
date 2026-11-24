@@ -1,7 +1,7 @@
 // The wRPC wire encoding, framing and invocation are provided by the
 // `@bytecodealliance/wrpc` client, served by the backend under `/wrpc`, and
 // the `wasi:keyvalue/store` client by the bindings in `bindings`.
-import { fromWebStreams } from "@bytecodealliance/wrpc";
+import { Framed } from "@bytecodealliance/wrpc";
 
 import * as store from "./bindings/wasi/keyvalue/store.js";
 
@@ -12,11 +12,24 @@ let conn = null;
 /** @type {Map<string, Uint8Array>} */
 let buckets = new Map();
 
-// A transport over a fresh WebTransport bidirectional stream, which carries
-// one invocation.
-async function transport() {
+/**
+ * Calls `f` with the frames over a fresh WebTransport bidirectional stream,
+ * which is closed once `f` is done, or torn down if it fails.
+ * @template T @param {(io: Framed) => Promise<T>} f @returns {Promise<T>}
+ */
+async function call(f) {
   if (!conn) throw "WebTransport not connected";
-  return fromWebStreams(await conn.createBidirectionalStream());
+  const { writable, readable } = await conn.createBidirectionalStream();
+  const io = new Framed(writable, readable);
+  try {
+    const ret = await f(io);
+    await io.tx.writer.close();
+    return ret;
+  } catch (err) {
+    io.tx.writer.abort(err).catch(() => {});
+    io.rx.reader.cancel(err).catch(() => {});
+    throw err;
+  }
 }
 
 // Render a decoded `error` variant value (`{ kind, value? }`) as a string.
@@ -96,7 +109,7 @@ async function getBucket() {
   if (existing) return existing;
 
   dbg.debug(`opening bucket for \`${identifier}\`...`);
-  const res = await store.open(await transport(), identifier);
+  const res = await call((io) => store.open(io, identifier));
   if (res.kind === "error") throw "failed to open bucket: " + formatError(res.value);
   const bucket = res.value;
   buckets.set(identifier, bucket);
@@ -116,7 +129,7 @@ async function handleGet() {
   if (!key) throw "key must be set";
 
   dbg.debug(`getting \`${key}\`...`);
-  const res = await store.Bucket.get(await transport(), bucket, key);
+  const res = await call((io) => store.Bucket.get(io, bucket, key));
   if (res.kind === "error") throw "failed to get value: " + formatError(res.value);
   if (res.value === undefined) {
     dbg.info("key missing");
@@ -138,7 +151,7 @@ async function handleSet() {
   const valueBuf = value ? new TextEncoder().encode(value) : new Uint8Array();
 
   dbg.debug(`setting \`${key}\`...`);
-  const res = await store.Bucket.set(await transport(), bucket, key, valueBuf);
+  const res = await call((io) => store.Bucket.set(io, bucket, key, valueBuf));
   if (res.kind === "error") throw "failed to set value: " + formatError(res.value);
   dbg.info(`set value in bucket ${uuidString(bucket)}`);
 }

@@ -138,6 +138,18 @@ async function transmitNested(nested, path, tx) {
   );
 }
 
+/**
+ * The encoder transmitting the pending values of `nested`.
+ * @param {Map<number, Encoder>} nested @returns {Encoder}
+ */
+const node = (nested) => ({
+  encode() {},
+  transmit: (path, tx) => transmitNested(nested, path, tx),
+  get complete() {
+    return nested.size === 0;
+  },
+});
+
 /** @param {readonly number[]} path @returns {never} */
 const unknownPath = (path) => {
   throw errorUnknownPath(path);
@@ -423,7 +435,21 @@ function map(key, value) {
     (w, v) => {
       const entries = mapEntries(v) ?? fail(new TypeError("expected a `Map` for a `map`"));
       w.varU(entries.length);
-      return its.encode(w, entries);
+      /** @type {Set<string>} */
+      const keys = new Set();
+      /** @type {Map<number, Encoder>} */
+      const nested = new Map();
+      entries.forEach(([k, v], i) => {
+        const off = w.len;
+        key.encoder().encode(w, k);
+        const bytes = w.buf.subarray(off, w.len).join();
+        if (keys.has(bytes)) throw new TypeError("duplicate map key");
+        keys.add(bytes);
+        const enc = value.encoder();
+        enc.encode(w, v);
+        if (!enc.complete) nested.set(i, node(new Map([[1, enc]])));
+      });
+      return nested;
     },
     function* (r) {
       const n = yield* atomic(r, readVarU32);
@@ -509,7 +535,8 @@ function future(payload) {
           pending = true;
         },
         async transmit(path, tx) {
-          const v = await (typeof value === "function" ? value() : value);
+          let v = await value;
+          if (typeof v === "function") v = await v();
           if (!payload) {
             await tx.close(path);
             pending = false;
@@ -837,15 +864,28 @@ export const encoder = (ty) => codec(ty).encoder();
 export const decoder = (ty) => codec(ty).decoder();
 
 /**
+ * Encodes `value` using `enc`, returning the function sending it on the root
+ * path, then the pending values nested in it.
+ * @param {Encoder} enc @param {FrameWriter} tx @param {any} value
+ * @returns {() => Promise<void>}
+ */
+export function transmission(enc, tx, value) {
+  const w = new Writer();
+  enc.encode(w, value);
+  const data = w.finish();
+  return async () => {
+    await Promise.all([tx.write([], data), tx.close([])]);
+    if (!enc.complete) await enc.transmit([], tx);
+  };
+}
+
+/**
  * Sends `value` on the root path using `enc`, then the pending values nested
  * in it. Resolves once all paths are closed.
  * @param {Encoder} enc @param {FrameWriter} tx @param {any} value
  */
 export async function transmit(enc, tx, value) {
-  const w = new Writer();
-  enc.encode(w, value);
-  await Promise.all([tx.write([], w.finish()), tx.close([])]);
-  if (!enc.complete) await enc.transmit([], tx);
+  await transmission(enc, tx, value)();
 }
 
 /**

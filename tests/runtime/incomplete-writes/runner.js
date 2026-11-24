@@ -13,10 +13,10 @@ export async function run(connect) {
       await Thing.new(await connect(), "b"),
       await Thing.new(await connect(), "c"),
     ];
-    const { result, finished } = await shortReads(await connect(), [things]);
+    const [result, io] = await shortReads(await connect(), [things]);
     const received = [];
     for await (const chunk of result) received.push(...chunk);
-    await finished;
+    await io;
     assert.equal(received.length, 3);
     assert.equal(await Thing.get(await connect(), received[0]), "a");
     assert.equal(await Thing.get(await connect(), received[1]), "b");
@@ -28,12 +28,13 @@ export async function run(connect) {
     [LeafThing, test.droppedReaderLeaf],
   ]) {
     const thing = await Thing.new(await connect(), "a");
-    const {
-      result: [, f2],
-      finished,
-    } = await droppedReader(await connect(), Promise.resolve(thing), Promise.resolve(thing));
+    const [[, f2], io] = await droppedReader(
+      await connect(),
+      Promise.resolve(thing),
+      Promise.resolve(thing),
+    );
     const received = await f2;
-    await finished;
+    await io;
     assert.equal(await Thing.get(await connect(), received), "a");
   }
 }

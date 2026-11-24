@@ -186,10 +186,10 @@ impl Runner<'_> {
             let handlers = file_url(&bindings.join("impl.js"));
             let world = file_url(&bindings.join(format!("{}.js", dep.bindgen.world)));
             imports.push_str(&format!(
-                "import {{ handlers as handlers{i} }} from {handlers:?};\nimport {{ serve as serve{i}, served as served{i} }} from {world:?};\n"
+                "import {{ handlers as handlers{i} }} from {handlers:?};\nimport {{ handle as handle{i}, served as served{i} }} from {world:?};\n"
             ));
             serve.push_str(&format!(
-                "routes = [[served{i}, await listen(serve{i}, handlers{i}(router(routes)))], ...routes];\n"
+                "routes = [[served{i}, await listen(handle{i}, handlers{i}(router(routes)))], ...routes];\n"
             ));
         }
         crate::write_if_different(
@@ -198,7 +198,7 @@ impl Runner<'_> {
                 r#"import net from "node:net";
 import {{ Duplex }} from "node:stream";
 
-import {{ Reader, fromWebStreams }} from {wrpc:?};
+import {{ Framed, Listener }} from {wrpc:?};
 
 import {{ run }} from {run:?};
 {imports}
@@ -208,67 +208,55 @@ setTimeout(() => {{
 }}, 10_000).unref();
 
 /** @param {{net.Socket}} sock */
-const transport = (sock) => fromWebStreams(Duplex.toWeb(sock));
+const streams = (sock) => {{
+  const {{ readable, writable }} = Duplex.toWeb(sock);
+  return [writable, readable];
+}};
 
-/** @param {{number}} port */
+/** @param {{number}} port @returns {{Promise<net.Socket>}} */
 const dial = (port) =>
   new Promise((resolve, reject) => {{
-    const sock = net.connect({{ host: "::1", port, allowHalfOpen: true }}, () =>
-      resolve(transport(sock)),
-    );
+    const sock = net.connect({{ host: "::1", port, allowHalfOpen: true }}, () => resolve(sock));
     sock.once("error", reject);
   }});
 
 /**
- * Connects to the first of `routes` exporting the invoked function, once the
- * invocation header is written.
+ * A client invoking each function over a new connection to the first of
+ * `routes` exporting it, which `abort` resets.
  * @param {{[[string, string][], number][]}} routes
  */
 const router = (routes) => async () => {{
-  let header = new Uint8Array();
-  let connect;
-  let fail;
-  const conn = new Promise((resolve, reject) => {{
-    connect = resolve;
-    fail = reject;
-  }});
+  /** @type {{Set<net.Socket>}} */
+  const socks = new Set();
+  let aborted = false;
   return {{
-    async write(bytes) {{
-      if (connect) {{
-        const buf = new Uint8Array(header.length + bytes.length);
-        buf.set(header);
-        buf.set(bytes, header.length);
-        header = buf;
-        const r = new Reader(header);
-        let instance, func;
-        try {{
-          r.u8();
-          instance = r.name();
-          func = r.name();
-        }} catch (err) {{
-          if (err instanceof RangeError) return;
-          throw err;
-        }}
-        const route = routes.find(([funcs]) =>
-          funcs.some(([i, f]) => i === instance && f === func),
-        );
-        if (!route) throw new Error(`no component exports \`${{instance}}#${{func}}\``);
-        connect(dial(route[1]));
-        connect = undefined;
-        bytes = header;
+    async invoke(codec, instance, name, params) {{
+      const route = routes.find(([funcs]) =>
+        funcs.some(([i, f]) => i === instance && f === name),
+      );
+      if (!route) throw new Error(`no component exports \`${{instance}}#${{name}}\``);
+      const sock = await dial(route[1]);
+      socks.add(sock);
+      sock.once("close", () => socks.delete(sock));
+      if (aborted) {{
+        sock.resetAndDestroy();
+        throw new Error("invocation aborted");
       }}
-      const t = await conn;
-      return t.write(bytes);
+      const io = new Framed(...streams(sock));
+      try {{
+        const [results, done] = await io.invoke(codec, instance, name, params);
+        return [results, done.then(() => io.tx.writer.close(), (err) => {{
+          sock.resetAndDestroy();
+          throw err;
+        }})];
+      }} catch (err) {{
+        sock.resetAndDestroy();
+        throw err;
+      }}
     }},
-    read: async () => (await conn).read(),
-    closeWrite: async () => {{
-      if (connect) fail(new Error("invocation closed before its header was written"));
-      return (await conn).closeWrite();
-    }},
-    abort: (reason) => {{
-      if (connect) fail(reason);
-      connect = undefined;
-      void conn.then((t) => t.abort?.(reason), () => {{}});
+    abort() {{
+      aborted = true;
+      for (const sock of socks) sock.resetAndDestroy();
     }},
   }};
 }};
@@ -276,12 +264,22 @@ const router = (routes) => async () => {{
 /** @type {{net.Server[]}} */
 const servers = [];
 
-/** Serves `handlers` with `serve` on a new listener and returns its port. */
-async function listen(serve, handlers) {{
-  const server = net.createServer({{ allowHalfOpen: true }}, (sock) => {{
-    serve(transport(sock), ...handlers).catch((err) => {{
+/** Serves `handlers` with `handle` on a new listener and returns its port. */
+async function listen(handle, handlers) {{
+  const server = net.createServer({{ allowHalfOpen: true }}, async (sock) => {{
+    const lis = new Listener(...streams(sock));
+    try {{
+      for (let inv; (inv = await lis.accept()); ) {{
+        const [{{ instance, name }}, io] = inv;
+        const served = handle(handlers, instance, name, io);
+        if (!served) throw new Error(`\`${{instance}}#${{name}}\` is not exported`);
+        await served;
+      }}
+      await lis.io.tx.writer.close();
+    }} catch (err) {{
       console.error("failed to serve invocation:", err);
-    }});
+      sock.resetAndDestroy();
+    }}
   }});
   servers.push(server);
   await new Promise((resolve) => server.listen(0, "::1", () => resolve(undefined)));

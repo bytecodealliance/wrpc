@@ -4,15 +4,15 @@ import { ping, pong } from "./my/test/i.js";
 
 export async function run(connect) {
   const x = Promise.withResolvers();
-  const [{ result, finished }] = await Promise.all([
+  const [[result, io]] = await Promise.all([
     ping(await connect(), x.promise, "world"),
     x.resolve("hello"),
   ]);
-  const [m2] = await Promise.all([result, finished]);
+  const [m2] = await Promise.all([result, io]);
   assert.equal(m2, "helloworld");
 
   const y = Promise.withResolvers();
-  const [res] = await Promise.all([pong(await connect(), y.promise), y.resolve(m2)]);
-  assert.equal(res.result, "helloworld");
-  await res.finished;
+  const [[res, io2]] = await Promise.all([pong(await connect(), y.promise), y.resolve(m2)]);
+  assert.equal(res, "helloworld");
+  await io2;
 }
