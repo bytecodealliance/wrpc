@@ -861,12 +861,9 @@ async fn rust_webtransport_stopped_mid_params() -> anyhow::Result<()> {
 async fn rust_http_bindgen_sync() -> anyhow::Result<()> {
     use std::sync::OnceLock;
 
-    use http::request::Parts;
-    use http_body_util::combinators::UnsyncBoxBody;
-    use hyper::client::conn::http2::SendRequest;
+    use wrpc::http::Client;
 
-    let conn: Arc<OnceLock<(SendRequest<UnsyncBoxBody<Bytes, std::io::Error>>, Parts)>> =
-        Arc::default();
+    let conn: Arc<OnceLock<Client<_>>> = Arc::default();
     let handler = sync_bindgen::Handler {
         counts: Arc::default(),
         count: {
@@ -897,8 +894,11 @@ async fn rust_http_bindgen_sync() -> anyhow::Result<()> {
             .await
             .context("failed to serve HTTP/2 connection")
         },
-        |parts, sender| async move {
-            let mut clt = (sender, parts);
+        |uri, mut sender| async move {
+            let mut clt = Client::new(
+                uri,
+                tower::util::service_fn(move |req| sender.send_request(req)),
+            );
             _ = conn.set(clt.clone());
             assert_sync(&mut clt).await
         },
@@ -909,6 +909,8 @@ async fn rust_http_bindgen_sync() -> anyhow::Result<()> {
 #[cfg(feature = "http")]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_http_bindgen_async() -> anyhow::Result<()> {
+    use wrpc::http::Client;
+
     wrpc_test::with_http2(
         async |stream| {
             wrpc_test::serve_http(stream, |_, Header { instance, name }, srv| async move {
@@ -923,7 +925,10 @@ async fn rust_http_bindgen_async() -> anyhow::Result<()> {
             .await
             .context("failed to serve HTTP/2 connection")
         },
-        |parts, sender| async move { assert_async(&mut (sender, parts)).await },
+        |uri, mut sender| async move {
+            let svc = tower::util::service_fn(move |req| sender.send_request(req));
+            assert_async(&mut Client::new(uri, svc)).await
+        },
     )
     .await
 }
@@ -931,13 +936,13 @@ async fn rust_http_bindgen_async() -> anyhow::Result<()> {
 #[cfg(feature = "http")]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_http_dynamic() -> anyhow::Result<()> {
-    use http_body_util::BodyExt;
+    use http::Uri;
     use hyper::body::Incoming;
     use hyper::client::conn::http2::handshake;
     use hyper::server::conn::http2::Builder;
     use hyper::service::service_fn;
     use hyper_util::rt::{TokioExecutor, TokioIo};
-    use wrpc::http::{Body, OutgoingRequest};
+    use wrpc::http::Client;
 
     let (clt, srv) = duplex(65536);
     let (mut sender, conn) = handshake(TokioExecutor::default(), TokioIo::new(clt)).await?;
@@ -968,46 +973,22 @@ async fn rust_http_dynamic() -> anyhow::Result<()> {
     });
     let srv =
         spawn(Builder::new(TokioExecutor::default()).serve_connection(TokioIo::new(srv), svc));
-    let (parts, ()) = http::Request::new(()).into_parts();
-    sender.ready().await?;
-    let (res, io) = invoke::<SyncValues, SyncValues, _>(
-        OutgoingRequest {
-            parts: parts.clone(),
-            send: |req: http::Request<Body<_>>| sender.send_request(req.map(BodyExt::boxed_unsync)),
-        },
-        "test",
-        "sync",
-        sync_values(),
-    )
-    .await?;
+    let mut clt = Client::new(
+        Uri::default(),
+        tower::util::service_fn(move |req| sender.send_request(req)),
+    );
+    let (res, io) =
+        invoke::<SyncValues, SyncValues, _>(&mut clt, "test", "sync", sync_values()).await?;
     io.await?;
     assert_eq!(res, sync_values());
 
-    let (res, io) = invoke::<AsyncValues, AsyncValues, _>(
-        OutgoingRequest {
-            parts: parts.clone(),
-            send: |req: http::Request<Body<_>>| sender.send_request(req.map(BodyExt::boxed_unsync)),
-        },
-        "test",
-        "async",
-        async_values(),
-    )
-    .await?;
+    let (res, io) =
+        invoke::<AsyncValues, AsyncValues, _>(&mut clt, "test", "async", async_values()).await?;
     assert_async_values(res, io).await?;
 
-    sender.ready().await?;
-    let res = invoke::<(String,), (String,), _>(
-        OutgoingRequest {
-            parts,
-            send: |req: http::Request<Body<_>>| sender.send_request(req.map(BodyExt::boxed_unsync)),
-        },
-        "test",
-        "reset",
-        ("arg".into(),),
-    )
-    .await;
+    let res = invoke::<(String,), (String,), _>(&mut clt, "test", "reset", ("arg".into(),)).await;
     ensure!(res.is_err(), "`test.reset` should have failed");
-    drop(sender);
+    drop(clt);
     let res = srv.await?;
     res.context("connection must close cleanly")?;
     Ok(())

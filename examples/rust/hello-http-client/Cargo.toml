@@ -10,6 +10,7 @@ repository.workspace = true
 
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
+bytes = { workspace = true }
 clap = { workspace = true, features = [
     "color",
     "derive",
@@ -20,8 +21,14 @@ clap = { workspace = true, features = [
     "usage",
 ] }
 http = { workspace = true }
-reqwest = { workspace = true, features = ["http2"] }
+hyper-util = { workspace = true, features = [
+    "client-legacy",
+    "http1",
+    "http2",
+    "tokio",
+] }
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread"] }
+tower = { workspace = true, features = ["util"] }
 tracing-subscriber = { workspace = true, features = [
     "ansi",
     "env-filter",

@@ -21,6 +21,7 @@ http-body = { workspace = true }
 http-body-util = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true, features = ["codec", "io"] }
+tower-service = { workspace = true }
 wrpc-core = { workspace = true }
 
 [dev-dependencies]
@@ -35,4 +36,5 @@ hyper-util = { workspace = true, features = [
 ] }
 test-log = { workspace = true, features = ["color", "log", "trace"] }
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "sync"] }
+tower = { workspace = true, features = ["util"] }
 wrpc-test = { workspace = true, features = ["http"] }

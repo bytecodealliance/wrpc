@@ -481,7 +481,7 @@ where
 #[cfg(feature = "http")]
 pub async fn with_http2<B, T, Fut>(
     serve: impl AsyncFnOnce(TcpStream) -> anyhow::Result<()>,
-    f: impl FnOnce(http::request::Parts, hyper::client::conn::http2::SendRequest<B>) -> Fut,
+    f: impl FnOnce(http::Uri, hyper::client::conn::http2::SendRequest<B>) -> Fut,
 ) -> anyhow::Result<T>
 where
     B: hyper::body::Body + Send + Unpin + 'static,
@@ -510,12 +510,11 @@ where
     )?;
     assert!(addr.ip().is_loopback());
 
-    let (parts, ()) = http::Request::new(()).into_parts();
     let mut srv = pin!(serve(srv));
     let mut srv_done = false;
     let mut clt = Box::pin(clt);
     let mut clt_done = false;
-    let mut f = pin!(f(parts, sender));
+    let mut f = pin!(f(http::Uri::default(), sender));
     let res = loop {
         tokio::select! {
             res = &mut f => break res.context("closure failed")?,
@@ -541,7 +540,7 @@ where
 #[cfg(feature = "http")]
 pub async fn with_http_pooling<B, T, Fut>(
     f: impl FnOnce(
-        http::request::Parts,
+        http::Uri,
         hyper_util::client::legacy::Client<
             hyper_util::client::legacy::connect::HttpConnector<
                 hyper_util::client::legacy::connect::dns::GaiResolver,
@@ -565,9 +564,8 @@ where
     conn.set_nodelay(true);
     let clt = hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
         .build(conn);
-    let (mut parts, ()) = http::Request::new(()).into_parts();
-    parts.uri = format!("http://{addr}").parse().unwrap();
-    f(parts, clt, lis).await.context("closure failed")
+    let uri = format!("http://{addr}").parse().unwrap();
+    f(uri, clt, lis).await.context("closure failed")
 }
 
 /// Serves wRPC requests on HTTP/1 or HTTP/2 connection `stream` with the responses `f` returns
@@ -621,30 +619,14 @@ where
 
 /// A common single-invocation test of HTTP clients, like [`assert_single_invocation`]
 ///
-/// The invocation request with `parts` is sent using `send` and served by
-/// [`serve_http_invocation`].
+/// The invocation is made with `clt` and served by [`serve_http_invocation`].
 #[cfg(feature = "http")]
-pub async fn assert_http_invocation<B, E, Fut>(
-    parts: http::request::Parts,
-    send: impl FnOnce(
-        http::Request<http_body_util::combinators::UnsyncBoxBody<Bytes, std::io::Error>>,
-    ) -> Fut,
-) -> anyhow::Result<()>
+pub async fn assert_http_invocation<T>(clt: wrpc_http::Client<T>) -> anyhow::Result<()>
 where
-    B: hyper::body::Body<Data = Bytes, Error: Into<Box<dyn core::error::Error + Send + Sync>>>
-        + Send
-        + 'static,
-    E: Into<Box<dyn core::error::Error + Send + Sync>>,
-    Fut: Future<Output = Result<http::Response<B>, E>> + Send + 'static,
+    wrpc_http::Client<T>: wrpc_core::Invoke<<FooBar as Encode>::Encoder>,
 {
     let s: BoxStream<'static, Bytes> =
         Box::pin(stream::iter([Bytes::from_static(b"client->server")]));
-    let clt = wrpc_http::OutgoingRequest {
-        parts,
-        send: |req: http::Request<wrpc_http::Body<_>>| {
-            send(req.map(http_body_util::BodyExt::boxed_unsync))
-        },
-    };
     let ((results, s), io) =
         invoke::<FooBar, FooBar, _>(clt, "foo", "bar", (Bytes::from_static(b"testbar"), s))
             .await
