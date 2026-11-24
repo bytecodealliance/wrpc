@@ -9,9 +9,10 @@ const textDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 /** The message thrown by readers when the input is exhausted mid-value. */
 export const UNEXPECTED_EOF = "unexpected end of input";
 
+const OVERFLOW = "LEB128 integer overflows";
+
 /** @param {string} sign @param {number} bits */
-const overflow = (sign, bits) =>
-  new RangeError(`LEB128 integer overflows ${sign} ${bits}-bit range`);
+const overflow = (sign, bits) => new RangeError(`${OVERFLOW} ${sign} ${bits}-bit range`);
 
 /** A growable little-endian byte writer. */
 export class Writer {
@@ -230,6 +231,11 @@ export function isUnexpectedEof(err) {
   return err instanceof RangeError && err.message.startsWith(UNEXPECTED_EOF);
 }
 
+/** @param {unknown} err @returns {boolean} whether `err` is a LEB128 integer overflow */
+export function isOverflow(err) {
+  return err instanceof RangeError && err.message.startsWith(OVERFLOW);
+}
+
 /**
  * Run the synchronous read `f` as one step of a resumable decoder: if the
  * input runs out partway, rewind `r` and yield the number of bytes the step
@@ -346,22 +352,6 @@ export class AsyncReader {
       r.bytes = this.remaining();
       r.pos = 0;
     }
-  }
-
-  /**
-   * Read an unsigned LEB128 integer of at most `bits` bits.
-   * @param {number} [bits] @returns {Promise<bigint>}
-   */
-  varU(bits = 64) {
-    return this.decode((r) => atomic(r, (r) => r.varU(bits)));
-  }
-
-  /**
-   * Read a `core:name` of at most `max` bytes.
-   * @param {number} [max] @returns {Promise<string>}
-   */
-  name(max) {
-    return this.decode((r) => atomic(r, (r) => r.name(max)));
   }
 }
 

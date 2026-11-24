@@ -74,13 +74,14 @@ test("callers decide on the response", async () => {
     if (!res.ok) throw new Error(`status ${res.status}`);
     return res;
   };
-  await assert.rejects(invoke(fromFetch(ADDR, { fetch: reject }), "i", "f", [], [], [t.u8]), {
-    message: "status 418",
-  });
+  const err = await invoke(fromFetch(ADDR, { fetch: reject }), "i", "f", [], [], [t.u8]).catch(
+    (err) => err,
+  );
+  assert.equal(err.kind, "response");
+  assert.equal(err.cause.cause.cause.message, "status 418");
 });
 
 test("data after the invocation fails it", async () => {
-  const err = /data after value end/;
   /** @param {Request} req */
   const respond = async (req) => {
     const [, srv] = await accept(req);
@@ -102,14 +103,20 @@ test("data after the invocation fails it", async () => {
     return new Response();
   };
   await call(twice).catch(() => {});
-  await assert.rejects(/** @type {Promise<unknown>} */ (served), (e) =>
-    err.test(/** @type {any} */ (e).cause.message),
-  );
+  await assert.rejects(/** @type {Promise<unknown>} */ (served), (/** @type {any} */ err) => {
+    assert.equal(err.kind, "request");
+    assert.equal(err.cause.kind, "dataAfterEnd");
+    return true;
+  });
 
   /** @type {typeof globalThis.fetch} */
   const trailing = async (input, init) => {
     const body = await (await respond(new Request(input, init))).arrayBuffer();
     return new Response(new Blob([body, Uint8Array.of(0, 0)]));
   };
-  await assert.rejects(call(trailing), err);
+  await assert.rejects(call(trailing), (/** @type {any} */ err) => {
+    assert.equal(err.kind, "response");
+    assert.equal(err.cause.kind, "dataAfterEnd");
+    return true;
+  });
 });

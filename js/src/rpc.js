@@ -1,7 +1,8 @@
 // Invoking and serving functions over the frames of an invocation, using the
 // codec tree.
 
-import { UnreadError, decoder, encoder, receive, transmission } from "./codec.js";
+import { decoder, encoder, receive, transmission } from "./codec.js";
+import { InvokeError, ReceiveError, ServeError } from "./error.js";
 import { tuple } from "./types.js";
 
 /**
@@ -19,26 +20,44 @@ export const noop = () => {};
 /** @type {Promise<never>} */
 export const never = new Promise(noop);
 
-const MESSAGES = {
-  request: "failed to receive request",
-  unread: "handler dropped an unread parameter",
-  handler: "handler failed",
-  response: "failed to send response",
-};
-
-/** The error of serving an invocation, by the side at fault. */
-export class ServeError extends Error {
-  /** @param {keyof typeof MESSAGES} kind @param {unknown} [cause] */
-  constructor(kind, cause) {
-    super(MESSAGES[kind], cause === undefined ? undefined : { cause });
-    this.name = "ServeError";
-    this.kind = kind;
-  }
-}
+/**
+ * `p`, failing with what `fail` maps its error to.
+ * @template T @param {Promise<T>} p @param {(err: unknown) => Error} fail
+ * @returns {Promise<T>}
+ */
+export const mapError = (p, fail) =>
+  p.catch((err) => {
+    throw fail(err);
+  });
 
 /** @param {unknown} err */
+const isUnread = (err) => err instanceof ReceiveError && err.kind === "unread";
+
+/** The error of receiving the parameters of an invocation with `err`. @param {unknown} err */
 export const requestError = (err) =>
-  err instanceof UnreadError ? new ServeError("unread") : new ServeError("request", err);
+  isUnread(err) ? new ServeError("unread") : new ServeError("request", err);
+
+/** The error of receiving the results of an invocation with `err`. @param {unknown} err */
+export const responseError = (err) =>
+  isUnread(err) ? new InvokeError("unread") : new InvokeError("response", err);
+
+/**
+ * Encodes `value` using `enc`, returning the function sending it using `tx`,
+ * failing with what `fail` maps the error to.
+ * @param {Encoder} enc @param {FrameWriter} tx @param {any} value
+ * @param {(err: unknown) => Error} fail
+ * @returns {() => Promise<void>}
+ */
+export function send(enc, tx, value, fail) {
+  /** @type {() => Promise<void>} */
+  let start;
+  try {
+    start = transmission(enc, tx, value);
+  } catch (err) {
+    throw fail(err);
+  }
+  return () => mapError(start(), fail);
+}
 
 /**
  * Invokes `instance#name` with `params` using `codec` over the frames written
@@ -48,11 +67,14 @@ export const requestError = (err) =>
  * @returns {Promise<[any, Promise<void>]>}
  */
 export async function invokeOver({ enc, dec }, tx, rx, instance, name, params) {
-  const send = transmission(enc, tx, params);
+  const start = send(enc, tx, params, (err) => new InvokeError("request", err));
   tx.header({ instance, name }).catch(noop);
-  const sent = send();
-  const [results, received] = await Promise.race([receive(dec, rx), sent.then(() => never)]);
-  return [results, Promise.all([sent, received]).then(noop)];
+  const sent = start();
+  const [results, received] = await Promise.race([
+    mapError(receive(dec, rx), responseError),
+    sent.then(() => never),
+  ]);
+  return [results, Promise.all([sent, mapError(received, responseError)]).then(noop)];
 }
 
 /**
@@ -63,30 +85,12 @@ export async function invokeOver({ enc, dec }, tx, rx, instance, name, params) {
  * @returns {Promise<void>}
  */
 export async function serveOver({ enc, dec }, tx, rx, f) {
-  /** @type {[any, Promise<void>]} */
-  let received;
-  try {
-    received = await receive(dec, rx);
-  } catch (err) {
-    throw requestError(err);
-  }
-  const [params, rest] = received;
+  const [params, rest] = await mapError(receive(dec, rx), requestError);
   await Promise.all([
-    rest.catch((err) => {
-      throw requestError(err);
-    }),
+    mapError(rest, requestError),
     (async () => {
       const results = await handle(f, params);
-      /** @type {() => Promise<void>} */
-      let send;
-      try {
-        send = transmission(enc, tx, results);
-      } catch (err) {
-        throw new ServeError("response", err);
-      }
-      await send().catch((err) => {
-        throw new ServeError("response", err);
-      });
+      await send(enc, tx, results, (err) => new ServeError("response", err))();
     })(),
   ]);
 }

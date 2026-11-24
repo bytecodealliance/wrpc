@@ -3,6 +3,7 @@
 // encoded or decoded over the frames of an invocation (see `SPEC.md`,
 // "Framed stream specification" and "Indexing").
 
+import { ReceiveError } from "./error.js";
 import { Reader, UNEXPECTED_EOF, Writer, atomic, readVarU32 } from "./io.js";
 import {
   OPTION_CASES,
@@ -43,23 +44,21 @@ import {
 
 const EMPTY = new Uint8Array(0);
 
-/** Thrown on data for a pending value whose consumer was cancelled. */
-export class UnreadError extends Error {
-  constructor() {
-    super("received data for a cancelled consumer");
-    this.name = "UnreadError";
+const errorUnknownPath = () => new ReceiveError("unknownPath");
+const errorDataAfterEnd = () => new ReceiveError("dataAfterEnd");
+const errorTruncated = () => new ReceiveError("truncated");
+
+/**
+ * The next chunk of frame data `rx` reads, failing with a {@link ReceiveError}.
+ * @param {FrameReader} rx
+ */
+export async function next(rx) {
+  try {
+    return await rx.next();
+  } catch (err) {
+    throw new ReceiveError("frame", err);
   }
 }
-
-/** The error for a frame received on `path`, which is not pending. @param {readonly number[]} path */
-export const errorUnknownPath = (path) =>
-  new RangeError(`received frame on unknown path \`[${path}]\``);
-
-/** The error for data received after the end of a value. */
-export const errorDataAfterEnd = () => new RangeError("received data after value end");
-
-/** @param {string} msg */
-const errorEof = (msg) => new RangeError(`${UNEXPECTED_EOF}: ${msg}`);
 
 /** @param {Reader} r */
 const isPending = (r) => !optionStatus(r);
@@ -88,7 +87,13 @@ class Feed {
     const r = this.#r;
     r.bytes = this.#parts.length === 1 ? this.#parts[0] : join(this.#parts, this.#size);
     r.pos = 0;
-    const step = this.#steps.next();
+    /** @type {IteratorResult<number, any>} */
+    let step;
+    try {
+      step = this.#steps.next();
+    } catch (err) {
+      throw new ReceiveError("decode", err);
+    }
     if (step.done) {
       this.value = step.value;
       return true;
@@ -123,7 +128,7 @@ function join(parts, size) {
  */
 async function route(nested, path, at, data) {
   const dec = at < path.length ? nested.get(path[at]) : undefined;
-  if (!dec) throw errorUnknownPath(path);
+  if (!dec) throw errorUnknownPath();
   await dec.receive(path, at + 1, data);
   if (dec.complete) nested.delete(path[at]);
 }
@@ -150,9 +155,9 @@ const node = (nested) => ({
   },
 });
 
-/** @param {readonly number[]} path @returns {never} */
-const unknownPath = (path) => {
-  throw errorUnknownPath(path);
+/** @returns {never} */
+const unknownPath = () => {
+  throw errorUnknownPath();
 };
 
 /** @param {Error} err @returns {never} */
@@ -253,7 +258,7 @@ function cases(encode, decode) {
           return payload ? make(yield* payload.decode(r)) : make();
         },
         receive(path, at, data) {
-          if (!payload) throw errorUnknownPath(path);
+          if (!payload) throw errorUnknownPath();
           return payload.receive(path, at, data);
         },
         get complete() {
@@ -577,7 +582,7 @@ function future(payload) {
         },
         receive(path, at, data) {
           if (at < path.length) {
-            if (path[at] !== 0 || resolve || !dec) throw errorUnknownPath(path);
+            if (path[at] !== 0 || resolve || !dec) throw errorUnknownPath();
             return dec.receive(path, at + 1, data);
           }
           if (!resolve) {
@@ -587,7 +592,7 @@ function future(payload) {
           }
           if (!data.length) {
             closed = true;
-            if (feed && !feed.push(EMPTY)) throw errorEof("future closed without a value");
+            if (feed && !feed.push(EMPTY)) throw errorTruncated();
           } else {
             if (!feed) throw errorDataAfterEnd();
             if (!feed.push(data)) return;
@@ -742,7 +747,7 @@ function stream(elem) {
           if (at < path.length) return route(nested, path, at, data);
           if (!ctrl) throw errorDataAfterEnd();
           if (!data.length) {
-            if (feed) throw errorEof("stream closed within a chunk");
+            if (feed) throw errorTruncated();
             if (!cancelled) ctrl.close();
             ctrl = undefined;
             feed = undefined;
@@ -753,7 +758,7 @@ function stream(elem) {
             await new Promise((resolve) => (wake = () => resolve(undefined)));
             wake = undefined;
           }
-          if (cancelled) throw new UnreadError();
+          if (cancelled) throw new ReceiveError("unread");
           /** @type {Chunk[]} */
           const parts = [];
           for (let rest = data; rest.length;) {
@@ -849,7 +854,7 @@ export function pack(enc, value, w) {
  */
 export function unpack(dec, r) {
   const step = dec.decode(r).next();
-  if (!step.done) throw errorEof("buffer is incomplete");
+  if (!step.done) throw new RangeError(`${UNEXPECTED_EOF}: buffer is incomplete`);
   if (!dec.complete) {
     throw new RangeError("buffer contains pending asynchronous values, which cannot be unpacked");
   }
@@ -899,10 +904,10 @@ export async function receive(dec, rx) {
   const feed = new Feed((r) => dec.decode(r));
   let decoded = false;
   for (;;) {
-    const data = await rx.next();
-    if (data === null) throw errorEof("ingress ended before the root path was closed");
+    const data = await next(rx);
+    if (data === null) throw errorTruncated();
     if (rx.path.length) {
-      if (!decoded) throw errorUnknownPath(rx.path);
+      if (!decoded) throw errorUnknownPath();
       return [feed.value, receipt(dec, rx, false, data)];
     }
     if (!decoded) {
@@ -912,7 +917,7 @@ export async function receive(dec, rx) {
       throw errorDataAfterEnd();
     }
     if (!data.length) {
-      if (!decoded) throw errorEof("path closed without a value");
+      if (!decoded) throw errorTruncated();
       return [feed.value, receipt(dec, rx, true, undefined)];
     }
   }
@@ -926,11 +931,11 @@ async function receipt(dec, rx, closed, data) {
   for (;;) {
     if (data) await dec.receive(rx.path, 0, data);
     if (closed && dec.complete) return;
-    const next = await rx.next();
-    if (next === null) throw errorEof("ingress ended before all paths were closed");
+    const rest = await next(rx);
+    if (rest === null) throw errorTruncated();
     if (rx.path.length) {
-      data = next;
-    } else if (closed || next.length) {
+      data = rest;
+    } else if (closed || rest.length) {
       throw errorDataAfterEnd();
     } else {
       closed = true;

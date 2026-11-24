@@ -111,8 +111,8 @@ awaiting those of several chunks does not. Such a stall is not an error: only a 
 it.
 
 Cancel a `ReadableStream` (or leave a `for await` loop over it early) to stop
-receiving it: any further chunk of it then fails the invocation with an
-`UnreadError`, while its end does not. A stream or future that is merely left
+receiving it: any further chunk of it then fails the invocation with a
+`ReceiveError` of kind `unread`, while its end does not. A stream or future that is merely left
 unreferenced cannot be detected, so it stalls the invocation instead.
 
 Any frame the peer sends for a path that the received values do not carry —
@@ -155,6 +155,32 @@ receiving the parameters or the rest of the invocation failed (`request`), the
 function cancelled a pending parameter, for which data was received
 (`unread`), the function failed (`handler`), or encoding or transmitting the
 results failed (`response`). Nothing is transmitted if the function fails.
+
+### Errors
+
+Errors are classes with a `kind` naming what failed, keeping the error they are
+caused by as their `cause`, as in the Rust implementation:
+
+- `InvokeError`: encoding or transmitting the parameters failed (`request`),
+  a pending result was cancelled while data was received for it (`unread`), or
+  receiving the results or the rest of the invocation failed (`response`,
+  caused by a `ReceiveError`).
+- `ServeError`: see [Serving](#serving); `request` is caused by a `ReceiveError`.
+- `ReceiveError`: data for a cancelled consumer (`unread`), a frame on a path,
+  which is not pending (`unknownPath`), data after the end of a value
+  (`dataAfterEnd`), frames or a path ending before its value was complete
+  (`truncated`), invalid data (`decode`), or reading the frames failing
+  (`frame`, caused by a `FrameDecodeError`).
+- `FrameDecodeError`: a path longer than its maximum (`pathTooDeep`, with
+  `depth` and `max`), a path or length, which does not fit in a `u32`
+  (`overflow`), the byte stream ending inside a frame (`truncated`), or reading
+  it failing (`io`).
+- `HeaderDecodeError`, of `Listener.accept()` and `accept(request)`: an
+  unsupported protocol `version` (`unsupportedVersion`), a name longer than its
+  maximum (`nameTooLong`, with `len` and `max`), a name, which is not UTF-8
+  (`invalidName`), a name length, which does not fit in a `u32` (`overflow`),
+  the byte stream ending inside a header (`truncated`), or reading it failing
+  (`io`).
 
 ### Transports
 
@@ -355,8 +381,10 @@ It deviates from the draft in that:
 
 - `t` / `types` — type-tree builders (`bool`, `list`, `record`, `result`, `stream`, `future`, …).
 - `invoke(clt, instance, name, params, values, results)` / `serve(srv, params, results, f)` —
-  invoke or serve a function by its parameter and result types; `ServeError` is the error of
-  serving.
+  invoke or serve a function by its parameter and result types.
+- `InvokeError` / `ServeError` / `ReceiveError` / `FrameDecodeError` / `HeaderDecodeError` — the
+  errors of invoking, serving, receiving values and decoding frames and headers, which callers
+  match by class and `kind` (see [Errors](#errors)).
 - `Framed` / `Listener` — the frames over a byte stream pair, which invoke functions one after
   another or serve an invocation, and the listener accepting the invocations of a client.
 - `fromFetch(input, options?)` / `accept(request)` / `IncomingRequest` — the HTTP client and
@@ -364,7 +392,7 @@ It deviates from the draft in that:
 - `encoder(ty)` / `decoder(ty)` — the codec tree of a type; `Framed.invoke(codec, ...)` and
   `Framed.serve(codec, f)` take a `{ enc, dec }` pair of them.
 - `transmit(enc, tx, value)` / `receive(dec, rx)` — send or receive a value and its pending
-  values over frames; `UnreadError` is the error of data for a cancelled consumer.
+  values over frames.
 - `pack(enc, value, writer)` / `unpack(dec, reader)` — encode or decode a value without pending
   values.
 - `FrameWriter` / `FrameReader` / `PROTOCOL` — the low-level framing, for direct integrations.
