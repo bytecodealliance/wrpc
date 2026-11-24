@@ -11,7 +11,7 @@ use wit_bindgen_core::wit_parser::{
     Record, Resolve, Result_, Tuple, Type, TypeDefKind, TypeId, TypeOwner, Variant, WorldKey,
 };
 use wit_bindgen_core::{Source, TypeInfo, dealias, uwrite, uwriteln};
-use wrpc_introspect::{async_paths_ty, async_paths_tyid, is_ty, rpc_func_name};
+use wrpc_introspect::{is_async_ty, is_async_tyid, is_ty, rpc_func_name};
 
 pub struct InterfaceGenerator<'a> {
     pub src: Source,
@@ -435,8 +435,11 @@ where
         }
         self.src.push_str("#[allow(clippy::all)]\n");
 
-        let async_params = func.params.iter().any(|param| self.is_async(&param.ty));
-        let async_results = func.result.iter().any(|ty| self.is_async(ty));
+        let async_params = func
+            .params
+            .iter()
+            .any(|param| is_async_ty(self.resolve, &param.ty));
+        let async_results = func.result.iter().any(|ty| is_async_ty(self.resolve, ty));
 
         let wrpc_core = self.r#gen.wrpc_core_path();
 
@@ -765,8 +768,7 @@ where
                     TypeDefKind::Stream(ty) => self.print_stream(ty, false),
                     TypeDefKind::Type(ty) => self.print_import_param_ty(ty),
                     _ => {
-                        let (paths, fut) = async_paths_tyid(self.resolve, *id);
-                        if !fut && paths.is_empty() {
+                        if !is_async_tyid(self.resolve, *id) {
                             self.push_str("&'a ");
                         }
                         self.print_tyid(*id, true, false);
@@ -847,11 +849,6 @@ where
         let prev = mem::take(&mut self.src);
         self.print_decoded_ty(ty, false);
         mem::replace(&mut self.src, prev).to_string()
-    }
-
-    fn is_async(&self, ty: &Type) -> bool {
-        let (paths, fut) = async_paths_ty(self.resolve, ty);
-        fut || !paths.is_empty()
     }
 
     fn encoded_ty(&mut self, ty: &Type) -> String {
@@ -1280,7 +1277,7 @@ impl<'a> wit_bindgen_core::InterfaceGenerator<'a> for InterfaceGenerator<'a> {
             .cloned()
             .collect();
         if let Some(name) = self.name_of(id) {
-            let (paths, _) = async_paths_tyid(self.resolve, id);
+            let is_async = is_async_tyid(self.resolve, id);
 
             self.rustdoc(docs);
             let mut derives = BTreeSet::new();
@@ -1292,7 +1289,7 @@ impl<'a> wit_bindgen_core::InterfaceGenerator<'a> for InterfaceGenerator<'a> {
             {
                 derives.extend(additional_derives.clone());
             }
-            if info.is_copy() && paths.is_empty() {
+            if info.is_copy() && !is_async {
                 self.push_str("#[repr(C)]\n");
                 if !derives.contains("Clone")
                     && !derives.contains("core :: clone :: Clone")
@@ -1307,7 +1304,7 @@ impl<'a> wit_bindgen_core::InterfaceGenerator<'a> for InterfaceGenerator<'a> {
                     derives.insert("::core::marker::Copy".to_string());
                 }
             } else if info.is_clone()
-                && paths.is_empty()
+                && !is_async
                 && !derives.contains("Clone")
                 && !derives.contains("core :: clone :: Clone")
                 && !derives.contains(":: core :: clone :: Clone")
@@ -1336,8 +1333,7 @@ impl<'a> wit_bindgen_core::InterfaceGenerator<'a> for InterfaceGenerator<'a> {
             let tokio_util = self.r#gen.tokio_util_path();
             let wrpc_core = self.r#gen.wrpc_core_path();
 
-            let (paths, _) = async_paths_tyid(self.resolve, id);
-            if paths.is_empty() {
+            if !is_async {
                 uwriteln!(
                     self.src,
                     r"
@@ -1504,7 +1500,7 @@ mod {mod_name} {{
             self.push_str("}\n");
 
             let mut names = vec![format!("super::{name}")];
-            if paths.is_empty() {
+            if !is_async {
                 names.push(format!("&super::{name}"));
             }
             for name in names {
@@ -1767,7 +1763,7 @@ mod {mod_name} {{
             .cloned()
             .collect();
         if let Some(name) = self.name_of(id) {
-            let (paths, fut) = async_paths_tyid(self.resolve, id);
+            let is_async = is_async_tyid(self.resolve, id);
 
             self.rustdoc(docs);
             let mut derives = BTreeSet::new();
@@ -1779,13 +1775,13 @@ mod {mod_name} {{
             {
                 derives.extend(additional_derives.clone());
             }
-            if info.is_copy() && paths.is_empty() && !fut {
+            if info.is_copy() && !is_async {
                 derives.extend(
                     ["::core::marker::Copy", "::core::clone::Clone"]
                         .into_iter()
                         .map(std::string::ToString::to_string),
                 );
-            } else if info.is_clone() && paths.is_empty() && !fut {
+            } else if info.is_clone() && !is_async {
                 derives.insert("::core::clone::Clone".to_string());
             }
             if !derives.is_empty() {
@@ -1945,8 +1941,7 @@ mod {mod_name} {{
 }}"#,
                 );
             } else {
-                let (paths, fut) = async_paths_tyid(self.resolve, id);
-                if paths.is_empty() && !fut {
+                if !is_async {
                     uwrite!(
                         self.src,
                         r#"
@@ -2029,7 +2024,7 @@ mod {mod_name} {{
                 );
 
                 let mut names = vec![format!("super::{name}")];
-                if paths.is_empty() && !fut {
+                if !is_async {
                     names.extend_from_slice(&[
                         format!("&super::{name}"),
                         format!("&&super::{name}"),

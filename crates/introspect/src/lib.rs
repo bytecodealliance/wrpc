@@ -1,8 +1,8 @@
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::BTreeSet;
 
 use wit_parser::{
-    Case, Field, Function, FunctionKind, Handle, Record, Resolve, Type, TypeDefKind, TypeId,
-    TypeIdVisitor, WorldId,
+    Case, Field, Function, FunctionKind, Handle, Record, Resolve, Result_, Type, TypeDefKind,
+    TypeId, TypeIdVisitor, WorldId,
 };
 
 #[must_use]
@@ -86,181 +86,42 @@ pub fn is_tuple(resolve: &Resolve, ty: &Type) -> bool {
     }
 }
 
-/// Merges `paths`, such that a position, which is matched by a wildcard in any of them, is
-/// matched by a wildcard in all of them
+/// Whether `ty` contains a `future` or a `stream`
 #[must_use]
-pub fn merge_wildcards<T: Clone + Ord>(
-    paths: BTreeSet<VecDeque<Option<T>>>,
-) -> BTreeSet<VecDeque<Option<T>>> {
-    let mut paths: Vec<Vec<_>> = paths.into_iter().map(Vec::from).collect();
-    let depth = paths.iter().map(Vec::len).max().unwrap_or_default();
-    for k in 0..depth {
-        let wildcards: BTreeSet<_> = paths
-            .iter()
-            .filter(|path| path.get(k) == Some(&None))
-            .map(|path| path[..k].to_vec())
-            .collect();
-        for path in &mut paths {
-            if path.len() > k && wildcards.contains(&path[..k]) {
-                path[k] = None;
-            }
-        }
-    }
-    paths.into_iter().map(VecDeque::from).collect()
-}
-
-#[must_use]
-pub fn async_paths_ty(resolve: &Resolve, ty: &Type) -> (BTreeSet<VecDeque<Option<u32>>>, bool) {
-    if let Type::Id(ty) = ty {
-        async_paths_tyid(resolve, *ty)
+pub fn is_async_ty(resolve: &Resolve, ty: &Type) -> bool {
+    if let Type::Id(id) = ty {
+        is_async_tyid(resolve, *id)
     } else {
-        (BTreeSet::default(), false)
+        false
     }
 }
 
+/// Whether the type `id` contains a `future` or a `stream`
 #[must_use]
-pub fn async_paths_tyid(resolve: &Resolve, id: TypeId) -> (BTreeSet<VecDeque<Option<u32>>>, bool) {
+pub fn is_async_tyid(resolve: &Resolve, id: TypeId) -> bool {
     match &resolve.types[id].kind {
-        TypeDefKind::List(ty) => {
-            let mut paths = BTreeSet::default();
-            let (nested, fut) = async_paths_ty(resolve, ty);
-            for mut path in nested {
-                path.push_front(None);
-                paths.insert(path);
-            }
-            if fut {
-                paths.insert(vec![None].into());
-            }
-            (paths, false)
+        TypeDefKind::List(ty)
+        | TypeDefKind::FixedLengthList(ty, _)
+        | TypeDefKind::Map(_, ty)
+        | TypeDefKind::Option(ty)
+        | TypeDefKind::Type(ty) => is_async_ty(resolve, ty),
+        TypeDefKind::Result(Result_ { ok, err }) => {
+            ok.iter().chain(err).any(|ty| is_async_ty(resolve, ty))
         }
-        TypeDefKind::FixedLengthList(ty, _) => {
-            let mut paths = BTreeSet::default();
-            let (nested, fut) = async_paths_ty(resolve, ty);
-            for mut path in nested {
-                path.push_front(None);
-                paths.insert(path);
-            }
-            if fut {
-                paths.insert(vec![None].into());
-            }
-            (paths, false)
-        }
-        TypeDefKind::Map(_, ty) => {
-            let mut paths = BTreeSet::default();
-            let (nested, fut) = async_paths_ty(resolve, ty);
-            for mut path in nested {
-                path.push_front(Some(1));
-                path.push_front(None);
-                paths.insert(path);
-            }
-            if fut {
-                paths.insert(vec![None, Some(1)].into());
-            }
-            (paths, false)
-        }
-        TypeDefKind::Option(ty) => async_paths_ty(resolve, ty),
-        TypeDefKind::Result(ty) => {
-            let mut paths = BTreeSet::default();
-            let mut is_fut = false;
-            if let Some(ty) = ty.ok.as_ref() {
-                let (nested, fut) = async_paths_ty(resolve, ty);
-                for path in nested {
-                    paths.insert(path);
-                }
-                if fut {
-                    is_fut = true;
-                }
-            }
-            if let Some(ty) = ty.err.as_ref() {
-                let (nested, fut) = async_paths_ty(resolve, ty);
-                for path in nested {
-                    paths.insert(path);
-                }
-                if fut {
-                    is_fut = true;
-                }
-            }
-            (merge_wildcards(paths), is_fut)
-        }
-        TypeDefKind::Variant(ty) => {
-            let mut paths = BTreeSet::default();
-            let mut is_fut = false;
-            for Case { ty, .. } in &ty.cases {
-                if let Some(ty) = ty {
-                    let (nested, fut) = async_paths_ty(resolve, ty);
-                    for path in nested {
-                        paths.insert(path);
-                    }
-                    if fut {
-                        is_fut = true;
-                    }
-                }
-            }
-            (merge_wildcards(paths), is_fut)
-        }
-        TypeDefKind::Tuple(ty) => {
-            let mut paths = BTreeSet::default();
-            for (i, ty) in ty.types.iter().enumerate() {
-                let (nested, fut) = async_paths_ty(resolve, ty);
-                for mut path in nested {
-                    path.push_front(Some(i.try_into().unwrap()));
-                    paths.insert(path);
-                }
-                if fut {
-                    let path = vec![Some(i.try_into().unwrap())].into();
-                    paths.insert(path);
-                }
-            }
-            (paths, false)
-        }
-        TypeDefKind::Record(Record { fields }) => {
-            let mut paths = BTreeSet::default();
-            for (i, Field { ty, .. }) in fields.iter().enumerate() {
-                let (nested, fut) = async_paths_ty(resolve, ty);
-                for mut path in nested {
-                    path.push_front(Some(i.try_into().unwrap()));
-                    paths.insert(path);
-                }
-                if fut {
-                    let path = vec![Some(i.try_into().unwrap())].into();
-                    paths.insert(path);
-                }
-            }
-            (paths, false)
-        }
-        TypeDefKind::Future(ty) => {
-            let mut paths = BTreeSet::default();
-            if let Some(ty) = ty {
-                let (nested, fut) = async_paths_ty(resolve, ty);
-                for mut path in nested {
-                    path.push_front(Some(0));
-                    paths.insert(path);
-                }
-                if fut {
-                    paths.insert(vec![Some(0)].into());
-                }
-            }
-            (paths, true)
-        }
-        TypeDefKind::Stream(element) => {
-            let mut paths = BTreeSet::new();
-            if let Some(ty) = element {
-                let (nested, fut) = async_paths_ty(resolve, ty);
-                for mut path in nested {
-                    path.push_front(None);
-                    paths.insert(path);
-                }
-                if fut {
-                    paths.insert(vec![None].into());
-                }
-            }
-            (paths.into_iter().collect(), true)
-        }
-        TypeDefKind::Type(ty) => async_paths_ty(resolve, ty),
+        TypeDefKind::Variant(ty) => ty
+            .cases
+            .iter()
+            .filter_map(|Case { ty, .. }| ty.as_ref())
+            .any(|ty| is_async_ty(resolve, ty)),
+        TypeDefKind::Tuple(ty) => ty.types.iter().any(|ty| is_async_ty(resolve, ty)),
+        TypeDefKind::Record(Record { fields }) => fields
+            .iter()
+            .any(|Field { ty, .. }| is_async_ty(resolve, ty)),
+        TypeDefKind::Future(..) | TypeDefKind::Stream(..) => true,
         TypeDefKind::Resource
         | TypeDefKind::Flags(..)
         | TypeDefKind::Enum(..)
-        | TypeDefKind::Handle(Handle::Own(..) | Handle::Borrow(..)) => (BTreeSet::default(), false),
+        | TypeDefKind::Handle(Handle::Own(..) | Handle::Borrow(..)) => false,
         TypeDefKind::Unknown => unreachable!(),
     }
 }
@@ -298,7 +159,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn map_async_paths() {
+    fn map_is_async() {
         let mut resolve = Resolve::default();
         let pkg = resolve
             .push_source(
@@ -306,19 +167,13 @@ mod tests {
                 "package test:test;
                 interface i {
                     type m = map<string, tuple<u8, future<map<u32, stream<u8>>>>>;
+                    type n = map<string, tuple<u8, list<u32>>>;
                 }",
             )
             .unwrap();
         let (_, iface) = resolve.packages[pkg].interfaces.first().unwrap();
-        let id = resolve.interfaces[*iface].types["m"];
-        let (paths, fut) = async_paths_tyid(&resolve, id);
-        assert!(!fut);
-        assert_eq!(
-            paths,
-            BTreeSet::from([
-                VecDeque::from([None, Some(1), Some(1)]),
-                VecDeque::from([None, Some(1), Some(1), Some(0), None, Some(1)]),
-            ])
-        );
+        let types = &resolve.interfaces[*iface].types;
+        assert!(is_async_tyid(&resolve, types["m"]));
+        assert!(!is_async_tyid(&resolve, types["n"]));
     }
 }

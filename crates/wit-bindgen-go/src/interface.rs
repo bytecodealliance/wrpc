@@ -11,7 +11,7 @@ use wit_bindgen_core::wit_parser::{
     Variant, WorldKey,
 };
 use wit_bindgen_core::{Source, TypeInfo, uwrite, uwriteln};
-use wrpc_introspect::{async_paths_ty, is_tuple, is_ty, rpc_func_name};
+use wrpc_introspect::{is_async_ty, is_tuple, is_ty, rpc_func_name};
 
 use crate::{
     Deps, GoWrpc, Identifier, InterfaceName, to_go_ident, to_package_ident, to_upper_camel_case,
@@ -249,8 +249,11 @@ func HandleInterface(ctx {context}.Context, hdr {wrpc}.Header, c *{wrpc}.Framed,
                 self.print_opt_ty(ty, true);
                 self.src.push_str(", ");
             }
-            let async_params = func.params.iter().any(|param| self.is_async(&param.ty));
-            let async_results = func.result.iter().any(|ty| self.is_async(ty));
+            let async_params = func
+                .params
+                .iter()
+                .any(|param| is_async_ty(self.resolve, &param.ty));
+            let async_results = func.result.iter().any(|ty| is_async_ty(self.resolve, ty));
             let returns_invocation = func.result.is_some() && (async_params || async_results);
             if returns_invocation {
                 uwrite!(self.src, "inv__ *{wrpc}.Invocation, ");
@@ -597,7 +600,7 @@ func HandleInterface(ctx {context}.Context, hdr {wrpc}.Header, c *{wrpc}.Framed,
         let mut rxs = Vec::with_capacity(fields.len());
         for (i, (field, ty, desc)) in fields.iter().enumerate() {
             let c = self.codec(ty);
-            let (tx, rx) = if self.is_async(ty) {
+            let (tx, rx) = if is_async_ty(self.resolve, ty) {
                 uwriteln!(enc, "var tx{i} {wrpc}.Transmitter");
                 uwriteln!(dec, "var rx{i} {wrpc}.Receiver");
                 txs.push(format!("tx{i}"));
@@ -621,7 +624,10 @@ func HandleInterface(ctx {context}.Context, hdr {wrpc}.Header, c *{wrpc}.Framed,
 }}"#
             );
         }
-        if fields.iter().any(|(_, ty, _)| self.is_async(ty)) {
+        if fields
+            .iter()
+            .any(|(_, ty, _)| is_async_ty(self.resolve, ty))
+        {
             uwriteln!(
                 enc,
                 "return dst, {wrpc}.NewTransmitters({}), nil",
@@ -829,11 +835,6 @@ func ({name}) Decode(r {wrpc}.ByteReader) ({ty}, {wrpc}.Receiver, error) {{
             return format!("{path}.{name}");
         }
         name
-    }
-
-    fn is_async(&self, ty: &Type) -> bool {
-        let (paths, fut) = async_paths_ty(self.resolve, ty);
-        fut || !paths.is_empty()
     }
 
     fn print_opt_ty(&mut self, ty: &Type, decl: bool) {
