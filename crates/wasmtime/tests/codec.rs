@@ -5,7 +5,7 @@ use tokio_util::codec::Decoder as _;
 use wasmtime::component::{self, Component, Type, types};
 use wasmtime::{Config, Engine, bail};
 use wrpc_core::{pack_with, unpack_with};
-use wrpc_wasmtime::{TupleDecoder, TupleEncoder, Val};
+use wrpc_wasmtime::{TupleDecoder, TupleEncoder, Val, ValDecoder, ValEncoder};
 
 #[test]
 fn plain_values() -> wasmtime::Result<()> {
@@ -67,18 +67,28 @@ fn plain_values() -> wasmtime::Result<()> {
         ),
     ]);
 
-    let tys: Arc<[Type]> = Arc::from([ty, Type::Bool]);
+    let tys: Arc<[Type]> = Arc::from([ty.clone(), Type::Bool]);
     let record = Val::try_from(v.clone())?;
     let vs = vec![record, Val::Bool(true)];
     let mut buf = BytesMut::default();
     pack_with(TupleEncoder::new(Arc::clone(&tys)), vs, &mut buf)?;
     assert_eq!(buf, b"\x2a\x01\x03foo\x01\x01k\x07\x01\x02\x01"[..]);
+    let mut borrowed = BytesMut::default();
+    let vs = [v.clone(), component::Val::Bool(true)];
+    pack_with(TupleEncoder::new(Arc::clone(&tys)), &vs[..], &mut borrowed)?;
+    assert_eq!(borrowed, buf);
     let decoded = unpack_with(TupleDecoder::new(Arc::clone(&tys)), &mut buf)?;
     let decoded = decoded
         .into_iter()
         .map(component::Val::try_from)
         .collect::<wasmtime::Result<Vec<_>>>()?;
-    assert_eq!(decoded, [v, component::Val::Bool(true)]);
+    assert_eq!(decoded, [v.clone(), component::Val::Bool(true)]);
+
+    pack_with(ValEncoder::new(ty.clone()), &v, &mut buf)?;
+    assert_eq!(buf, b"\x2a\x01\x03foo\x01\x01k\x07\x01\x02"[..]);
+    let decoded = unpack_with(ValDecoder::new(ty), &mut buf)?;
+    let decoded = component::Val::try_from(decoded)?;
+    assert_eq!(decoded, v);
 
     let record = |a: &str, c| {
         vec![
@@ -116,6 +126,10 @@ fn plain_values() -> wasmtime::Result<()> {
         let err = unpack_with(dec, &mut buf.into()).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     }
+
+    let v = component::Val::Flags(vec!["x".into()]);
+    let err = pack_with(ValEncoder::new(flags.clone()), &v, &mut buf).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
 
     let dec = TupleDecoder::new(Arc::from([flags]));
     let err = unpack_with(dec, &mut b"\x08"[..].into()).unwrap_err();

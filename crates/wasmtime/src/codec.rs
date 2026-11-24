@@ -19,8 +19,8 @@ use wasm_tokio::{
     DEFAULT_MAX_INITIAL_CAPACITY, Leb128DecoderI16, Leb128DecoderI32, Leb128DecoderI64,
     Leb128DecoderU16, Leb128DecoderU32, Leb128DecoderU64, Leb128Encoder, Utf8Codec,
 };
-use wasmtime::component::Type;
-use wasmtime::component::types::{Case, Field};
+use wasmtime::component::types::{self, Case, Field};
+use wasmtime::component::{self, Type};
 use wasmtime::error::Context as _;
 use wasmtime::{bail, format_err};
 use wrpc_core::{
@@ -30,9 +30,10 @@ use wrpc_core::{
 use crate::Val;
 use crate::codec::receive::{pending_future, pending_stream};
 
+mod borrowed;
 mod receive;
 
-/// Default `max_len` of [`TupleDecoder`]
+/// Default `max_len` of [`TupleDecoder`] and [`ValDecoder`]
 pub const DEFAULT_MAX_LEN: u32 = 1 << 24;
 
 /// Encodes [`Val`]s of types `tys`, e.g. function results.
@@ -66,7 +67,78 @@ impl Encoder<Vec<Val>> for TupleEncoder {
     }
 }
 
+impl Encoder<&[component::Val]> for TupleEncoder {
+    type Error = std::io::Error;
+
+    fn encode(&mut self, vs: &[component::Val], dst: &mut BytesMut) -> Result<(), Self::Error> {
+        if vs.len() != self.tys.len() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "value count mismatch",
+            ));
+        }
+        borrowed::encode_seq(&*self.tys, vs, dst)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+        self.nested = None;
+        Ok(())
+    }
+}
+
 impl Transmit for TupleEncoder {
+    fn poll_transmit(
+        &mut self,
+        cx: &mut Context<'_>,
+        path: &mut Vec<usize>,
+        dst: &mut BytesMut,
+    ) -> Poll<std::io::Result<()>> {
+        match &mut self.nested {
+            Some(nested) => nested.poll_transmit(cx, path, dst),
+            None => Poll::Ready(Ok(())),
+        }
+    }
+
+    fn is_complete(&self) -> bool {
+        self.nested.as_ref().is_none_or(Transmit::is_complete)
+    }
+}
+
+/// Encodes a [`Val`] of type `ty`.
+///
+/// Pending asynchronous values are transmitted using [`Transmit::poll_transmit`].
+pub struct ValEncoder {
+    ty: Type,
+    nested: Option<Box<dyn Transmit + Send>>,
+}
+
+impl ValEncoder {
+    #[must_use]
+    pub fn new(ty: Type) -> Self {
+        Self { ty, nested: None }
+    }
+}
+
+impl Encoder<Val> for ValEncoder {
+    type Error = std::io::Error;
+
+    fn encode(&mut self, v: Val, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        self.nested = encode_value(&self.ty, v, dst)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+        Ok(())
+    }
+}
+
+impl Encoder<&component::Val> for ValEncoder {
+    type Error = std::io::Error;
+
+    fn encode(&mut self, v: &component::Val, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        borrowed::encode_value(&self.ty, v, dst)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+        self.nested = None;
+        Ok(())
+    }
+}
+
+impl Transmit for ValEncoder {
     fn poll_transmit(
         &mut self,
         cx: &mut Context<'_>,
@@ -158,6 +230,62 @@ impl Transmit for PayloadEncoder {
 
 impl Encode for Payload {
     type Encoder = PayloadEncoder;
+}
+
+fn check_fields<'a>(
+    ty: &types::Record,
+    names: impl ExactSizeIterator<Item = &'a str>,
+) -> wasmtime::Result<()> {
+    if names.len() != ty.fields().len() {
+        bail!(
+            "record has {} fields, expected {}",
+            names.len(),
+            ty.fields().len()
+        );
+    }
+    for (name, Field { name: field, .. }) in zip(names, ty.fields()) {
+        if name != field {
+            bail!("record field `{name}` does not match `{field}`");
+        }
+    }
+    Ok(())
+}
+
+fn encode_variant_case(
+    ty: &types::Variant,
+    case: &str,
+    dst: &mut BytesMut,
+) -> wasmtime::Result<Option<Type>> {
+    let (i, ty) = zip(0u32.., ty.cases())
+        .find_map(|(i, Case { name, ty })| (name == case).then_some((i, ty)))
+        .with_context(|| format!("unknown variant case `{case}`"))?;
+    Leb128Encoder.encode(i, dst)?;
+    Ok(ty)
+}
+
+fn encode_enum_case(ty: &types::Enum, case: &str, dst: &mut BytesMut) -> wasmtime::Result<()> {
+    let i = zip(0u32.., ty.names())
+        .find_map(|(i, name)| (name == case).then_some(i))
+        .with_context(|| format!("unknown enum case `{case}`"))?;
+    Leb128Encoder.encode(i, dst)?;
+    Ok(())
+}
+
+fn encode_flags<'a>(
+    ty: &types::Flags,
+    vs: impl IntoIterator<Item = &'a str>,
+    dst: &mut BytesMut,
+) -> wasmtime::Result<()> {
+    let off = dst.len();
+    dst.put_bytes(0, ty.names().len().div_ceil(8).max(1));
+    for v in vs {
+        let i = ty
+            .names()
+            .position(|name| name == v)
+            .with_context(|| format!("unknown flag `{v}`"))?;
+        dst[off + i / 8] |= 1 << (i % 8);
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_lines)]
@@ -261,18 +389,7 @@ fn encode_value(
             encode_seq(iter::repeat(ty.ty()), vs, dst)
         }
         (Val::Record(vs), Type::Record(ty)) => {
-            if vs.len() != ty.fields().len() {
-                bail!(
-                    "record has {} fields, expected {}",
-                    vs.len(),
-                    ty.fields().len()
-                );
-            }
-            for ((name, ..), Field { name: field, .. }) in zip(&vs, ty.fields()) {
-                if name != field {
-                    bail!("record field `{name}` does not match `{field}`");
-                }
-            }
+            check_fields(ty, vs.iter().map(|(name, ..)| name.as_str()))?;
             let tys = ty.fields().map(|Field { ty, .. }| ty);
             encode_seq(tys, vs.into_iter().map(|(.., v)| v), dst)
         }
@@ -287,17 +404,11 @@ fn encode_value(
             encode_seq(ty.types(), vs, dst)
         }
         (Val::Variant(case, v), Type::Variant(ty)) => {
-            let (i, ty) = zip(0u32.., ty.cases())
-                .find_map(|(i, Case { name, ty })| (name == case).then_some((i, ty)))
-                .with_context(|| format!("unknown variant case `{case}`"))?;
-            Leb128Encoder.encode(i, dst)?;
+            let ty = encode_variant_case(ty, &case, dst)?;
             encode_payload(ty, v, dst)
         }
         (Val::Enum(case), Type::Enum(ty)) => {
-            let i = zip(0u32.., ty.names())
-                .find_map(|(i, name)| (name == case).then_some(i))
-                .with_context(|| format!("unknown enum case `{case}`"))?;
-            Leb128Encoder.encode(i, dst)?;
+            encode_enum_case(ty, &case, dst)?;
             Ok(None)
         }
         (Val::Option(None), Type::Option(..)) => {
@@ -317,15 +428,7 @@ fn encode_value(
             encode_payload(ty.err(), v, dst)
         }
         (Val::Flags(vs), Type::Flags(ty)) => {
-            let names = ty.names();
-            let vs: HashSet<&str> = vs.iter().map(String::as_str).collect();
-            let off = dst.len();
-            dst.put_bytes(0, names.len().div_ceil(8).max(1));
-            for (i, name) in names.enumerate() {
-                if vs.contains(name) {
-                    dst[off + i / 8] |= 1 << (i % 8);
-                }
-            }
+            encode_flags(ty, vs.iter().map(String::as_str), dst)?;
             Ok(None)
         }
         (Val::Resource(v), Type::Own(..) | Type::Borrow(..)) => {
@@ -495,6 +598,33 @@ impl TupleDecoder {
             ));
         }
         Ok(Some(usize::try_from(n).unwrap_or(usize::MAX)))
+    }
+
+    fn decode_root<T>(
+        &mut self,
+        src: &mut BytesMut,
+        f: impl FnOnce(
+            &mut Self,
+            &mut BytesMut,
+            &mut Vec<usize>,
+            &mut Vec<Partial>,
+        ) -> std::io::Result<Option<T>>,
+    ) -> std::io::Result<Option<T>> {
+        let n = self.state.is_empty().then_some(src.len());
+        let mut state = mem::take(&mut self.state);
+        let mut path = Vec::default();
+        let v = f(self, src, &mut path, &mut state).map_err(|err| {
+            let kind = err.kind();
+            std::io::Error::new(
+                kind,
+                wasmtime::Error::from(err)
+                    .context(format!("failed to decode value at path {path:?}")),
+            )
+        })?;
+        if n != Some(src.len()) {
+            self.state = state;
+        }
+        Ok(v)
     }
 
     /// Decodes a value of type `ty`, whose pending asynchronous values are received on paths
@@ -814,24 +944,10 @@ impl Decoder for TupleDecoder {
     type Error = std::io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> std::io::Result<Option<Vec<Val>>> {
-        let n = self.state.is_empty().then_some(src.len());
-        let mut state = mem::take(&mut self.state);
-        let mut path = Vec::default();
         let tys = Arc::clone(&self.tys);
-        let vs = self
-            .decode_seq(src, &mut path, &mut state, Some(tys.len()), tys.iter())
-            .map_err(|err| {
-                let kind = err.kind();
-                std::io::Error::new(
-                    kind,
-                    wasmtime::Error::from(err)
-                        .context(format!("failed to decode value at path {path:?}")),
-                )
-            })?;
-        if n != Some(src.len()) {
-            self.state = state;
-        }
-        Ok(vs)
+        self.decode_root(src, |dec, src, path, state| {
+            dec.decode_seq(src, path, state, Some(tys.len()), tys.iter())
+        })
     }
 
     fn decode_eof(&mut self, src: &mut BytesMut) -> std::io::Result<Option<Vec<Val>>> {
@@ -843,5 +959,68 @@ impl Decoder for TupleDecoder {
             ));
         }
         Ok(vs)
+    }
+}
+
+/// Decodes a [`Val`] of type `ty`.
+///
+/// Pending asynchronous values are received using [`Receive::poll_receive`].
+pub struct ValDecoder {
+    ty: Type,
+    dec: TupleDecoder,
+}
+
+impl ValDecoder {
+    #[must_use]
+    pub fn new(ty: Type) -> Self {
+        Self {
+            ty,
+            dec: TupleDecoder::new(Arc::default()),
+        }
+    }
+
+    /// Rejects strings and resource handles longer than `max_len` bytes and lists, maps and
+    /// `stream` chunks longer than `max_len` elements, [`DEFAULT_MAX_LEN`] by default.
+    #[must_use]
+    pub fn with_max_len(mut self, max_len: u32) -> Self {
+        self.dec = self.dec.with_max_len(max_len);
+        self
+    }
+}
+
+impl Receive for ValDecoder {
+    fn poll_receive(
+        &mut self,
+        cx: &mut Context<'_>,
+        path: &[usize],
+        src: &mut BytesMut,
+    ) -> Poll<Result<(), ReceiveError>> {
+        self.dec.poll_receive(cx, path, src)
+    }
+
+    fn is_complete(&self) -> bool {
+        self.dec.is_complete()
+    }
+}
+
+impl Decoder for ValDecoder {
+    type Item = Val;
+    type Error = std::io::Error;
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        self.dec.decode_root(src, |dec, src, path, state| {
+            dec.decode_ty(src, &self.ty, path, state)
+        })
+    }
+
+    fn decode_eof(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        let v = self.decode(src)?;
+        if v.is_none() && (!self.dec.state.is_empty() || !src.is_empty()) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "value incomplete",
+            ));
+        }
+        Ok(v)
     }
 }

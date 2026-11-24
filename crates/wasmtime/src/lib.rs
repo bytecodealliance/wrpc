@@ -3,9 +3,11 @@
 //! wRPC integration for Wasmtime
 //!
 //! [`TupleDecoder`] decodes the parameters of an invocation into store-free [`Val`]s and
-//! [`TupleEncoder`] encodes its results. Values without resources, `future`s and `stream`s convert
-//! from and into [`wasmtime::component::Val`] using [`TryFrom`], the others are moved into a
-//! store by [`lift`] and out of it by [`lower`].
+//! [`TupleEncoder`] encodes its results, [`ValDecoder`] and [`ValEncoder`] do the same for a
+//! single value. Values without resources, `future`s and `stream`s convert from and into
+//! [`wasmtime::component::Val`] using [`TryFrom`], the others are moved into a store by [`lift`]
+//! and out of it by [`lower`]. The encoders also encode borrowed [`wasmtime::component::Val`]s
+//! without resources, `future`s and `stream`s.
 //!
 //! [`Exports`] looks up the component function export by the instance and function names of the
 //! invocation. The host owns the I/O, stores, instances and resource handles and calls the
