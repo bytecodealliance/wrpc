@@ -4,7 +4,7 @@ use bytes::BytesMut;
 use tokio_util::codec::Decoder as _;
 use wasmtime::component::{self, Component, Type, types};
 use wasmtime::{Config, Engine, bail};
-use wrpc_core::{pack_with, unpack_with};
+use wrpc_core::{PackError, UnpackError, pack_with, unpack_with};
 use wrpc_wasmtime::{TupleDecoder, TupleEncoder, Val, ValDecoder, ValEncoder};
 
 #[test]
@@ -114,7 +114,10 @@ fn plain_values() -> wasmtime::Result<()> {
     );
     for vs in [renamed, duplicate] {
         let err = pack_with(TupleEncoder::new(Arc::clone(&tys)), vs, &mut buf).unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(
+            matches!(&err, PackError::Encode(err) if err.kind() == std::io::ErrorKind::InvalidInput),
+            "{err:?}"
+        );
     }
 
     for buf in [
@@ -124,16 +127,25 @@ fn plain_values() -> wasmtime::Result<()> {
     ] {
         let dec = TupleDecoder::new(Arc::clone(&tys)).with_max_len(2);
         let err = unpack_with(dec, &mut buf.into()).unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert!(
+            matches!(&err, UnpackError::Decode(err) if err.kind() == std::io::ErrorKind::InvalidData),
+            "{err:?}"
+        );
     }
 
     let v = component::Val::Flags(vec!["x".into()]);
     let err = pack_with(ValEncoder::new(flags.clone()), &v, &mut buf).unwrap_err();
-    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    assert!(
+        matches!(&err, PackError::Encode(err) if err.kind() == std::io::ErrorKind::InvalidInput),
+        "{err:?}"
+    );
 
     let dec = TupleDecoder::new(Arc::from([flags]));
     let err = unpack_with(dec, &mut b"\x08"[..].into()).unwrap_err();
-    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(
+        matches!(&err, UnpackError::Decode(err) if err.kind() == std::io::ErrorKind::InvalidData),
+        "{err:?}"
+    );
     Ok(())
 }
 

@@ -770,7 +770,7 @@ mod tests {
 
     use super::*;
     use crate::mux::{receive, transmit};
-    use crate::{FrameDecoder, FrameEncoder, FrameRef};
+    use crate::{FrameDecoder, FrameEncoder, FrameRef, UnpackError};
 
     #[test_log::test(tokio::test)]
     async fn roundtrip() -> anyhow::Result<()> {
@@ -968,7 +968,10 @@ mod tests {
             &b"\x02\x01a\x01\x01a\x02"[..],
         ))
         .unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert!(
+            matches!(&err, UnpackError::Decode(err) if err.kind() == std::io::ErrorKind::InvalidData),
+            "{err:?}"
+        );
     }
 
     #[test_log::test(tokio::test)]
@@ -985,8 +988,8 @@ mod tests {
         const LEN: &[u8] = b"\xff\xff\xff\xff\x0f";
 
         let err = crate::unpack::<Vec<String>>(&mut BytesMut::from(LEN)).unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+        assert!(matches!(err, UnpackError::Incomplete), "{err:?}");
         let err = crate::unpack::<Bytes>(&mut BytesMut::from(LEN)).unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+        assert!(matches!(err, UnpackError::Incomplete), "{err:?}");
     }
 }
