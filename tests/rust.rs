@@ -23,7 +23,7 @@ use tokio::time;
 use tokio::{join, spawn, try_join};
 use tokio_util::codec::{Encoder as _, FramedParts, FramedRead, FramedWrite};
 use tracing::instrument;
-use wrpc_core::{
+use wrpc::{
     Decode, Encode, FrameDecoder, FrameEncoder, FrameRef, Framed, Header, HeaderDecoder,
     HeaderEncoder, HeaderRef, InvokeError, Listener, ServeError, invoke, receive, serve, transmit,
 };
@@ -33,19 +33,19 @@ mod sync_bindgen {
     use std::sync::{Arc, Mutex};
 
     use bytes::Bytes;
-    use wrpc_core::{ResourceBorrow, ResourceOwn};
+    use wrpc::{ResourceBorrow, ResourceOwn};
 
     use crate::common::Connection;
 
     pub mod sync_client {
-        wit_bindgen_wrpc::generate!({
+        wrpc::generate!({
             world: "sync-client",
             path: "tests/wit",
         });
     }
 
     pub mod sync_server {
-        wit_bindgen_wrpc::generate!({
+        wrpc::generate!({
             world: "sync-server",
             path: "tests/wit",
         });
@@ -329,7 +329,7 @@ mod async_bindgen {
     use futures::stream::{self, BoxStream};
 
     pub mod bindings {
-        wit_bindgen_wrpc::generate!({
+        wrpc::generate!({
             world: "async-server",
             path: "tests/wit",
         });
@@ -600,8 +600,8 @@ where
             }
 
             let mut buf = BytesMut::default();
-            wrpc_core::pack(sync_values(), &mut buf)?;
-            let unpacked: SyncValues = wrpc_core::unpack(&mut buf)?;
+            wrpc::pack(sync_values(), &mut buf)?;
+            let unpacked: SyncValues = wrpc::unpack(&mut buf)?;
             let (tx, rx) = connect().await?;
             let mut clt = Framed::new(tx, rx);
             for params in [sync_values(), unpacked] {
@@ -937,13 +937,13 @@ async fn rust_http_dynamic() -> anyhow::Result<()> {
     use hyper::server::conn::http2::Builder;
     use hyper::service::service_fn;
     use hyper_util::rt::{TokioExecutor, TokioIo};
-    use wrpc_http::{Body, OutgoingRequest};
+    use wrpc::http::{Body, OutgoingRequest};
 
     let (clt, srv) = duplex(65536);
     let (mut sender, conn) = handshake(TokioExecutor::default(), TokioIo::new(clt)).await?;
     spawn(conn);
     let svc = service_fn(|req: http::Request<Incoming>| async move {
-        let (Header { instance, name }, srv) = wrpc_http::accept(req.into_body()).await?;
+        let (Header { instance, name }, srv) = wrpc::http::accept(req.into_body()).await?;
         match (instance.as_str(), name.as_str()) {
             ("test", "sync") => {
                 let res = serve::<SyncValues, SyncValues, _, _>(srv, async |params| {
@@ -1255,7 +1255,7 @@ async fn rust_oneshot_raw() -> anyhow::Result<()> {
             assert_eq!(&req, b"\0\x01\x2a\0\0");
 
             let mut data = bytes::BytesMut::default();
-            wrpc_core::pack(("test",), &mut data).expect("failed to encode");
+            wrpc::pack(("test",), &mut data).expect("failed to encode");
 
             let mut res = bytes::BytesMut::default();
             FrameEncoder
@@ -1283,7 +1283,7 @@ async fn rust_oneshot_raw() -> anyhow::Result<()> {
 #[instrument(ret)]
 async fn rust_oneshot_raw_strings_invalid_utf8() -> anyhow::Result<()> {
     mod bindings {
-        wit_bindgen_wrpc::generate!({
+        wrpc::generate!({
             inline: "
                 package wrpc-test:raw-strings;
 
@@ -1325,7 +1325,7 @@ async fn rust_oneshot_raw_strings_invalid_utf8() -> anyhow::Result<()> {
 #[instrument(ret)]
 async fn rust_oneshot_raw_strings_invalid_utf8_result() -> anyhow::Result<()> {
     mod bindings {
-        wit_bindgen_wrpc::generate!({
+        wrpc::generate!({
             inline: "
                 package wrpc-test:raw-strings;
 
@@ -1412,7 +1412,7 @@ async fn rust_oneshot_raw_strings_invalid_utf8_result() -> anyhow::Result<()> {
 #[test_log::test(tokio::test)]
 async fn rust_oneshot_borrowed() -> anyhow::Result<()> {
     mod bindings {
-        wit_bindgen_wrpc::generate!({
+        wrpc::generate!({
             inline: "
                 package wrpc-test:borrowed;
 
@@ -1478,7 +1478,7 @@ async fn rust_oneshot_borrowed() -> anyhow::Result<()> {
 #[test_log::test(tokio::test)]
 async fn rust_bindgen_not_send() -> anyhow::Result<()> {
     mod bindings {
-        wit_bindgen_wrpc::generate!({
+        wrpc::generate!({
             inline: "
                 package wrpc-test:not-send;
 
@@ -1538,7 +1538,7 @@ async fn rust_bindgen_not_send() -> anyhow::Result<()> {
 #[test_log::test(tokio::test)]
 async fn rust_bindgen_instance_names() -> anyhow::Result<()> {
     mod bindings {
-        wit_bindgen_wrpc::generate!({
+        wrpc::generate!({
             inline: "
                 package wrpc-test:instance-names@1.2.3+build;
 

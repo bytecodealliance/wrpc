@@ -27,7 +27,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["ansi", "fmt"] }
 wasi = { workspace = true, features = ["std"] }
 wit-bindgen = { workspace = true, features = ["realloc", "macros"] }
-wit-bindgen-wrpc = { workspace = true }
+wrpc = { workspace = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 tokio = { workspace = true, features = ["net"] }

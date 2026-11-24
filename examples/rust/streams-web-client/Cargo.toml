@@ -31,4 +31,4 @@ tracing-subscriber = { workspace = true, features = [
 ] }
 url = { workspace = true }
 web-transport-quinn = { workspace = true, features = ["ring"] }
-wit-bindgen-wrpc = { workspace = true }
+wrpc = { workspace = true }

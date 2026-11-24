@@ -12,10 +12,10 @@ use tokio::task::JoinSet;
 use tokio::{select, signal, spawn};
 use tracing::{debug, error, info, warn};
 use web_transport_quinn::{Request, ServerBuilder, quinn};
-use wit_bindgen_wrpc::wrpc_core::{Header, Listener};
+use wrpc::{Header, Listener};
 
 mod bindings {
-    wit_bindgen_wrpc::generate!({
+    wrpc::generate!({
         with: {
             "wrpc-examples:streams/handler": generate,
         }

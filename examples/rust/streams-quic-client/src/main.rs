@@ -19,7 +19,7 @@ use tokio_stream::wrappers::IntervalStream;
 use tracing::debug;
 
 mod bindings {
-    wit_bindgen_wrpc::generate!({
+    wrpc::generate!({
         with: {
             "wrpc-examples:streams/handler": generate
         }
@@ -27,7 +27,7 @@ mod bindings {
 }
 
 use bindings::wrpc_examples::streams::handler::{Req, echo};
-use wit_bindgen_wrpc::wrpc_core::Framed;
+use wrpc::Framed;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]

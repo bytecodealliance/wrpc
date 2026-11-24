@@ -28,13 +28,13 @@ use tokio::try_join;
 use tokio_util::codec::{Decoder, Encoder};
 use wasmtime::component::{Component, Linker, ResourceTable};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
-use wrpc_core::{
+use wrpc::http::{Body, OutgoingRequest};
+use wrpc::{
     Codec, Encode, Framed, Header, Invoke, InvokeError, Listener, Receive, Serve, Transmit,
 };
-use wrpc_http::{Body, OutgoingRequest};
 
 mod ping_bindings_wrpc {
-    wit_bindgen_wrpc::generate!({
+    wrpc::generate!({
         world: "ping-proxy",
         path: "benches/wit",
     });
@@ -47,7 +47,7 @@ mod ping_bindings_wasmtime {
     });
 }
 mod greet_bindings_wrpc {
-    wit_bindgen_wrpc::generate!({
+    wrpc::generate!({
         world: "greet-proxy",
         path: "benches/wit",
     });
@@ -349,7 +349,7 @@ struct Http1<'a> {
 }
 
 impl<'a, E: Transmit + Send + 'static> Invoke<E> for Http1<'a> {
-    type Invocation<D: Receive> = wrpc_http::Invocation<ResponseFuture, Incoming, D>;
+    type Invocation<D: Receive> = wrpc::http::Invocation<ResponseFuture, Incoming, D>;
 
     fn invoke<D, T>(
         self,
@@ -378,7 +378,7 @@ struct Http2<'a> {
 }
 
 impl<'a, E: Transmit + Send + 'static> Invoke<E> for Http2<'a> {
-    type Invocation<D: Receive> = wrpc_http::Invocation<
+    type Invocation<D: Receive> = wrpc::http::Invocation<
         Pin<Box<dyn Future<Output = hyper::Result<http::Response<Incoming>>> + Send + 'a>>,
         Incoming,
         D,

@@ -50,8 +50,7 @@ tracing-subscriber = { workspace = true, features = [
 url = { workspace = true }
 uuid = { workspace = true, features = ["std", "v7"] }
 web-transport-quinn = { workspace = true, features = ["ring"] }
-wit-bindgen-wrpc = { workspace = true }
-wrpc-core = { workspace = true }
+wrpc = { workspace = true }
 wrpc-wasi-keyvalue = { workspace = true }
 wrpc-wasi-keyvalue-mem = { workspace = true }
 wrpc-wasi-keyvalue-redis = { workspace = true }
