@@ -668,6 +668,20 @@
 /// }
 /// ```
 ///
+/// ## Futures and streams
+///
+/// `future<T>` is bound as `Pin<Box<dyn Future<Output = T> + Send>>` and
+/// `stream<T>` as `Pin<Box<dyn Stream<Item = L> + Send>>`, where `L` is the
+/// binding of `list<T>`, one item per chunk. Imported functions with a result
+/// taking or returning them return the result along with a future, which
+/// transmits the asynchronous parameters and receives the asynchronous results,
+/// others transmit the asynchronous parameters before returning. Received
+/// values are not buffered: poll that future and consume all received futures
+/// and streams concurrently, for example, by joining a future draining each, in
+/// imported and exported functions alike. Reading one stream to its end before
+/// another one stalls the invocation indefinitely, if the peer interleaves them
+/// (see [`wrpc_core`]).
+///
 /// ## Debugging output to `generate!`
 ///
 /// While `wit-bindgen-wrpc` is tested to the best of our ability there are

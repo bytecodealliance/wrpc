@@ -72,6 +72,9 @@ impl From<InvokeError> for std::io::Error {
 
 /// Client invoking functions with parameters encoded by `E`, such as [`Framed`], see
 /// [`Codec::invoke`]
+///
+/// The asynchronous results must be consumed concurrently with each other and with the
+/// [`Invoke::Invocation`], see the [crate docs](crate).
 pub trait Invoke<E: Transmit> {
     /// Future transmitting the asynchronous parameters and receiving the asynchronous results of
     /// an invocation
@@ -156,7 +159,9 @@ where
     /// `params` are encoded before this returns, the invocation header is sent along with the
     /// first frame. Returns the synchronous results along with the [Invocation], which completes
     /// once the asynchronous parameters are transmitted and the asynchronous results are received,
-    /// if there are any. Nothing is transmitted or received unless it is polled.
+    /// if there are any. Nothing is transmitted or received unless it is polled. The asynchronous
+    /// results must be consumed concurrently with each other and with the [Invocation], see the
+    /// [crate docs](crate).
     ///
     /// `tx` is never shut down, but dropped as soon as the parameters are transmitted, which ends
     /// the request of request-response transports.
