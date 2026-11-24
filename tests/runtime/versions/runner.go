@@ -10,7 +10,11 @@ import (
 	v2 "driver/runner/test/dep0_2_0/test"
 )
 
-func Run(ctx context.Context, c wrpc.Invoker) error {
+func Run(ctx context.Context, connect func() (*wrpc.Framed, error)) error {
+	c, err := connect()
+	if err != nil {
+		return err
+	}
 	assertEqual(must(v1.X(ctx, c)), 1.0)
 	assertEqual(must(v1.Y(ctx, c, 1.0)), 2.0)
 

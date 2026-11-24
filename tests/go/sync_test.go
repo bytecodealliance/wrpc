@@ -9,7 +9,6 @@ import (
 	"io"
 	"math"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -24,34 +23,61 @@ import (
 	"wrpc.io/tests/go/bindings/sync_client/wrpc_test/integration/resources"
 	"wrpc.io/tests/go/bindings/sync_client/wrpc_test/integration/sync"
 	"wrpc.io/tests/go/bindings/sync_server"
+	sync_server_foo "wrpc.io/tests/go/bindings/sync_server/exports/foo"
+	sync_server_sync "wrpc.io/tests/go/bindings/sync_server/exports/wrpc_test/integration/sync"
 	"wrpc.io/tests/go/internal"
 )
 
-func serve(t *testing.T, f func(wrpc.Server) (func() error, error)) (context.Context, wrpc.Invoker) {
+func serveSync(t *testing.T, h interface {
+	sync_server_sync.Handler
+	sync_server_foo.Handler
+	sync_server.Handler
+}) (context.Context, func() *wrpc.Framed) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	t.Cleanup(cancel)
-	srv, client := internal.RunTCP(t, ctx)
-	stop, err := f(srv)
-	require.NoError(t, err, "failed to serve world")
-	t.Cleanup(func() { assert.NoError(t, stop(), "failed to stop serving world") })
-	internal.Accept(ctx, srv)
-	return ctx, client
+	rh := &integration.ResourcesHandler{}
+	return ctx, internal.Serve(t, ctx, func(ctx context.Context, hdr wrpc.Header, c *wrpc.Framed) (bool, error) {
+		return sync_server.Handle(ctx, hdr, c, h, h, h, rh, integration.StrangeHandler{Resources: rh})
+	})
+}
+
+func serveRaw(t *testing.T, data string) (context.Context, *wrpc.Framed) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	t.Cleanup(cancel)
+	connect := internal.Serve(t, ctx, func(ctx context.Context, hdr wrpc.Header, c *wrpc.Framed) (bool, error) {
+		for {
+			path, n, err := c.R.Next()
+			if err != nil {
+				return true, err
+			}
+			if _, err := io.Copy(io.Discard, c.R); err != nil {
+				return true, err
+			}
+			if len(path) == 0 && n == 0 {
+				break
+			}
+		}
+		if err := c.W.WriteFrame(nil, []byte(data)); err != nil {
+			return true, err
+		}
+		return true, c.W.WriteFrame(nil, nil)
+	})
+	return ctx, connect()
 }
 
 func TestSync(t *testing.T) {
-	var h integration.SyncHandler
-	rh := &integration.ResourcesHandler{}
-	ctx, client := serve(t, func(s wrpc.Server) (func() error, error) {
-		return sync_server.Serve(s, h, h, h, rh, integration.StrangeHandler{Resources: rh})
-	})
+	ctx, connect := serveSync(t, integration.SyncHandler{})
+	client := connect()
 
 	n, err := foo.F(ctx, client, "f")
 	require.NoError(t, err)
 	assert.Equal(t, uint32(42), n)
 
 	require.NoError(t, foo.Foo(ctx, client, "foo"))
-	require.ErrorIs(t, foo.Foo(ctx, client, "bar"), syscall.ECONNRESET)
+	require.Error(t, foo.Foo(ctx, client, "bar"))
+	client = connect()
 
 	for ok, want := range map[bool]*wrpc.Result[bool, string]{
 		true:  wrpc.Ok[string](true),
@@ -123,6 +149,7 @@ func TestSync(t *testing.T) {
 
 	_, err = resources.Foo_Bar(ctx, client, res.Borrow())
 	assert.Error(t, err)
+	client = connect()
 
 	a, err := resources.NewCounter(ctx, client, 1)
 	require.NoError(t, err)
@@ -154,14 +181,7 @@ func TestFlags(t *testing.T) {
 		{data: "\x08"},
 		{data: "\x80"},
 	} {
-		ctx, client := serve(t, func(s wrpc.Server) (func() error, error) {
-			return s.Serve("wrpc-test:integration/sync", "with-flags", func(ctx context.Context, w wrpc.IndexWriteCloser, r wrpc.IndexReadCloser) {
-				_, _ = io.ReadAll(r)
-				_ = r.Close()
-				_, _ = w.Write([]byte(tc.data))
-				_ = w.Close()
-			})
-		})
+		ctx, client := serveRaw(t, tc.data)
 		flags, err := sync.WithFlags(ctx, client, true, false, true)
 		if tc.want == nil {
 			assert.ErrorContains(t, err, "bit not associated with any flag is set", "%q", tc.data)
@@ -174,16 +194,9 @@ func TestFlags(t *testing.T) {
 }
 
 func TestMapDuplicateKey(t *testing.T) {
-	ctx, client := serve(t, func(s wrpc.Server) (func() error, error) {
-		return s.Serve("test:maps/to-test", "empty-roundtrip", func(ctx context.Context, w wrpc.IndexWriteCloser, r wrpc.IndexReadCloser) {
-			_, _ = io.ReadAll(r)
-			_ = r.Close()
-			_, _ = w.Write([]byte("\x02\x01\x01a\x01\x01b"))
-			_ = w.Close()
-		})
-	})
+	ctx, client := serveRaw(t, "\x02\x01\x01a\x01\x01b")
 	m, err := to_test.EmptyRoundtrip(ctx, client, nil)
-	assert.ErrorContains(t, err, "duplicate map entry 1 key")
+	assert.ErrorContains(t, err, "duplicate key at entry 1")
 	assert.Nil(t, m)
 }
 
@@ -203,10 +216,8 @@ func (h floatsHandler) Numbers(ctx context.Context) (uint8, uint16, uint32, uint
 
 func TestCanonicalNaN(t *testing.T) {
 	h := floatsHandler{floats: make(chan [2]uint64, 1)}
-	rh := &integration.ResourcesHandler{}
-	ctx, client := serve(t, func(s wrpc.Server) (func() error, error) {
-		return sync_server.Serve(s, h, h, h, rh, integration.StrangeHandler{Resources: rh})
-	})
+	ctx, connect := serveSync(t, h)
+	client := connect()
 	const nan32, nan64 = 0x7fc0_0000, 0x7ff8_0000_0000_0000
 	for _, tc := range []struct {
 		bits [2]uint64
@@ -250,16 +261,11 @@ func TestSignedLEB128(t *testing.T) {
 	}{
 		{data: "\x80\x80\x7e" + "\x80\x80\x80\x80\x78" + "\x80\x80\x80\x80\x80\x80\x80\x80\x80\x7f", want: [3]int64{math.MinInt16, math.MinInt32, math.MinInt64}},
 		{data: "\xff\xff\x01" + "\xff\xff\xff\xff\x07" + "\xff\xff\xff\xff\xff\xff\xff\xff\xff\x00", want: [3]int64{math.MaxInt16, math.MaxInt32, math.MaxInt64}},
-		{data: "\x80\x80\x7a" + "\x00" + "\x00", err: "s16 overflows"},
-		{data: "\x00" + "\x80\x80\x80\x80\x08" + "\x00", err: "s32 overflows"},
-		{data: "\x00" + "\x00" + "\x80\x80\x80\x80\x80\x80\x80\x80\x80\x01", err: "s64 overflows"},
+		{data: "\x80\x80\x7a" + "\x00" + "\x00", err: "signed integer overflow"},
+		{data: "\x00" + "\x80\x80\x80\x80\x08" + "\x00", err: "signed integer overflow"},
+		{data: "\x00" + "\x00" + "\x80\x80\x80\x80\x80\x80\x80\x80\x80\x01", err: "signed integer overflow"},
 	} {
-		ctx, client := serve(t, func(s wrpc.Server) (func() error, error) {
-			return s.Serve("wrpc-test:integration/sync", "numbers", func(ctx context.Context, w wrpc.IndexWriteCloser, r wrpc.IndexReadCloser) {
-				_, _ = w.Write([]byte("\x00\x00\x00\x00\x00" + tc.data + strings.Repeat("\x00", 12)))
-				_ = w.Close()
-			})
-		})
+		ctx, client := serveRaw(t, "\x00\x00\x00\x00\x00"+tc.data+strings.Repeat("\x00", 12))
 		_, _, _, _, _, a, b, c, _, _, err := sync.Numbers(ctx, client)
 		if tc.err != "" {
 			assert.ErrorContains(t, err, tc.err, "%q", tc.data)

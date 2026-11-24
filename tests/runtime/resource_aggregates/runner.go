@@ -9,7 +9,11 @@ import (
 	"driver/runner/test/resource_aggregates/to_test"
 )
 
-func Run(ctx context.Context, c wrpc.Invoker) error {
+func Run(ctx context.Context, connect func() (*wrpc.Framed, error)) error {
+	c, err := connect()
+	if err != nil {
+		return err
+	}
 	thing := func(v uint32) wrpc.Own[to_test.Thing] {
 		return must(to_test.NewThing(ctx, c, v))
 	}

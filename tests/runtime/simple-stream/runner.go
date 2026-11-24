@@ -10,7 +10,11 @@ import (
 	"driver/runner/my/test/i"
 )
 
-func Run(ctx context.Context, c wrpc.Invoker) error {
+func Run(ctx context.Context, connect func() (*wrpc.Framed, error)) error {
+	c, err := connect()
+	if err != nil {
+		return err
+	}
 	x := make(chan []struct{})
 	go func() {
 		// write one item
@@ -19,11 +23,7 @@ func Run(ctx context.Context, c wrpc.Invoker) error {
 		x <- []struct{}{{}, {}}
 		close(x)
 	}()
-	errs, err := i.ReadStream(ctx, c, x)
-	if err != nil {
-		return err
-	}
-	for err := range errs {
+	if err := i.ReadStream(ctx, c, x); err != nil {
 		return err
 	}
 	return nil

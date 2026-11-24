@@ -10,7 +10,11 @@ import (
 	"driver/runner/test/resource_borrow_in_record/to_test"
 )
 
-func Run(ctx context.Context, c wrpc.Invoker) error {
+func Run(ctx context.Context, connect func() (*wrpc.Framed, error)) error {
+	c, err := connect()
+	if err != nil {
+		return err
+	}
 	thing1 := must(to_test.NewThing(ctx, c, "Bonjour"))
 	thing2 := must(to_test.NewThing(ctx, c, "mon cher"))
 	things := must(to_test.Test(ctx, c, []*to_test.Foo{

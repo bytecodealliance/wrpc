@@ -9,7 +9,11 @@ import (
 	"driver/runner/test/resource_with_lists/test"
 )
 
-func Run(ctx context.Context, c wrpc.Invoker) error {
+func Run(ctx context.Context, connect func() (*wrpc.Framed, error)) error {
+	c, err := connect()
+	if err != nil {
+		return err
+	}
 	thingInstance := must(test.NewThing(ctx, c, []byte("Hi")))
 	assertEqual(string(must(test.Thing_Foo(ctx, c, thingInstance.Borrow()))), "Hi Thing HostThing HostThing.foo Thing.foo")
 	if err := test.Thing_Bar(ctx, c, thingInstance.Borrow(), []byte("Hola")); err != nil {

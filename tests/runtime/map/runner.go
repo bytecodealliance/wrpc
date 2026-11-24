@@ -11,7 +11,11 @@ import (
 	"driver/runner/test/maps/to_test"
 )
 
-func Run(ctx context.Context, c wrpc.Invoker) error {
+func Run(ctx context.Context, connect func() (*wrpc.Framed, error)) error {
+	c, err := connect()
+	if err != nil {
+		return err
+	}
 	testNamedRoundtrip(ctx, c)
 	testBytesRoundtrip(ctx, c)
 	testEmptyRoundtrip(ctx, c)
@@ -28,7 +32,7 @@ func Run(ctx context.Context, c wrpc.Invoker) error {
 	return nil
 }
 
-func testNamedRoundtrip(ctx context.Context, c wrpc.Invoker) {
+func testNamedRoundtrip(ctx context.Context, c *wrpc.Framed) {
 	input := to_test.NamesById{
 		1: "uno",
 		2: "two",
@@ -38,7 +42,7 @@ func testNamedRoundtrip(ctx context.Context, c wrpc.Invoker) {
 	assertEqual(result["two"], uint32(2))
 }
 
-func testBytesRoundtrip(ctx context.Context, c wrpc.Invoker) {
+func testBytesRoundtrip(ctx context.Context, c *wrpc.Framed) {
 	input := to_test.BytesByName{
 		"hello": []uint8("world"),
 		"bin":   {0, 1, 2},
@@ -48,12 +52,12 @@ func testBytesRoundtrip(ctx context.Context, c wrpc.Invoker) {
 	assertSliceEqual(result["bin"], []uint8{0, 1, 2})
 }
 
-func testEmptyRoundtrip(ctx context.Context, c wrpc.Invoker) {
+func testEmptyRoundtrip(ctx context.Context, c *wrpc.Framed) {
 	result := must(to_test.EmptyRoundtrip(ctx, c, to_test.NamesById{}))
 	assertEqual(len(result), 0)
 }
 
-func testOptionRoundtrip(ctx context.Context, c wrpc.Invoker) {
+func testOptionRoundtrip(ctx context.Context, c *wrpc.Framed) {
 	input := map[string]*uint32{
 		"some": ptr[uint32](42),
 		"none": nil,
@@ -64,7 +68,7 @@ func testOptionRoundtrip(ctx context.Context, c wrpc.Invoker) {
 	assertNil(result["none"])
 }
 
-func testRecordRoundtrip(ctx context.Context, c wrpc.Invoker) {
+func testRecordRoundtrip(ctx context.Context, c *wrpc.Framed) {
 	entry := &to_test.LabeledEntry{
 		Label: "test-label",
 		Values: to_test.NamesById{
@@ -79,7 +83,7 @@ func testRecordRoundtrip(ctx context.Context, c wrpc.Invoker) {
 	assertEqual(result.Values[20], "twenty")
 }
 
-func testInlineRoundtrip(ctx context.Context, c wrpc.Invoker) {
+func testInlineRoundtrip(ctx context.Context, c *wrpc.Framed) {
 	input := map[uint32]string{
 		1: "one",
 		2: "two",
@@ -90,7 +94,7 @@ func testInlineRoundtrip(ctx context.Context, c wrpc.Invoker) {
 	assertEqual(result["two"], uint32(2))
 }
 
-func testLargeRoundtrip(ctx context.Context, c wrpc.Invoker) {
+func testLargeRoundtrip(ctx context.Context, c *wrpc.Framed) {
 	input := make(to_test.NamesById)
 	for i := uint32(0); i < 100; i++ {
 		input[i] = fmt.Sprintf("value-%d", i)
@@ -102,7 +106,7 @@ func testLargeRoundtrip(ctx context.Context, c wrpc.Invoker) {
 	}
 }
 
-func testMultiParamRoundtrip(ctx context.Context, c wrpc.Invoker) {
+func testMultiParamRoundtrip(ctx context.Context, c *wrpc.Framed) {
 	names := to_test.NamesById{
 		1: "one",
 		2: "two",
@@ -118,7 +122,7 @@ func testMultiParamRoundtrip(ctx context.Context, c wrpc.Invoker) {
 	assertSliceEqual(bytesOut["key"], []uint8{42})
 }
 
-func testNestedRoundtrip(ctx context.Context, c wrpc.Invoker) {
+func testNestedRoundtrip(ctx context.Context, c *wrpc.Framed) {
 	input := map[string]map[uint32]string{
 		"group-a": {
 			1: "one",
@@ -135,7 +139,7 @@ func testNestedRoundtrip(ctx context.Context, c wrpc.Invoker) {
 	assertEqual(result["group-b"][10], "ten")
 }
 
-func testVariantRoundtrip(ctx context.Context, c wrpc.Invoker) {
+func testVariantRoundtrip(ctx context.Context, c *wrpc.Framed) {
 	m := to_test.NamesById{1: "one"}
 	asMap := must(to_test.VariantRoundtrip(ctx, c, to_test.NewMapOrStringAsMap(m)))
 	gotMap, ok := asMap.GetAsMap()
@@ -148,7 +152,7 @@ func testVariantRoundtrip(ctx context.Context, c wrpc.Invoker) {
 	assertEqual(gotStr, "hello")
 }
 
-func testResultRoundtrip(ctx context.Context, c wrpc.Invoker) {
+func testResultRoundtrip(ctx context.Context, c *wrpc.Framed) {
 	m := to_test.NamesById{5: "five"}
 	okResult := must(to_test.ResultRoundtrip(ctx, c, wrpc.Ok[string](m)))
 	assertEqual((*okResult.Ok)[5], "five")
@@ -157,7 +161,7 @@ func testResultRoundtrip(ctx context.Context, c wrpc.Invoker) {
 	assertEqual(*errResult.Err, "bad input")
 }
 
-func testTupleRoundtrip(ctx context.Context, c wrpc.Invoker) {
+func testTupleRoundtrip(ctx context.Context, c *wrpc.Framed) {
 	m := to_test.NamesById{7: "seven"}
 	resultMap, resultNum := must2(to_test.TupleRoundtrip(ctx, c, &wrpc.Tuple2[to_test.NamesById, uint64]{V0: m, V1: 42}))
 	assertEqual(len(resultMap), 1)
@@ -165,7 +169,7 @@ func testTupleRoundtrip(ctx context.Context, c wrpc.Invoker) {
 	assertEqual(resultNum, uint64(42))
 }
 
-func testSingleEntryRoundtrip(ctx context.Context, c wrpc.Invoker) {
+func testSingleEntryRoundtrip(ctx context.Context, c *wrpc.Framed) {
 	input := to_test.NamesById{99: "ninety-nine"}
 	result := must(to_test.SingleEntryRoundtrip(ctx, c, input))
 	assertEqual(len(result), 1)

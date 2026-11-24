@@ -9,7 +9,11 @@ import (
 	"driver/runner/test/records/to_test"
 )
 
-func Run(ctx context.Context, c wrpc.Invoker) error {
+func Run(ctx context.Context, connect func() (*wrpc.Framed, error)) error {
+	c, err := connect()
+	if err != nil {
+		return err
+	}
 	a, b := must2(to_test.MultipleResults(ctx, c))
 	assertEqual(a, 4)
 	assertEqual(b, 5)

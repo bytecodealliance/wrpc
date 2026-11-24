@@ -10,15 +10,23 @@ import (
 )
 
 type handler struct {
-	c wrpc.Invoker
+	connect func() (*wrpc.Framed, error)
 }
 
-func NewHandler(c wrpc.Invoker) handler {
-	return handler{c}
+func NewHandler(connect func() (*wrpc.Framed, error)) handler {
+	return handler{connect}
+}
+
+func (h handler) conn() *wrpc.Framed {
+	c, err := h.connect()
+	if err != nil {
+		panic(err)
+	}
+	return c
 }
 
 func (h handler) Thing(ctx context.Context, l []byte) (wrpc.Own[export.Thing], error) {
-	result, err := test.NewThing(ctx, h.c, append(l, " Thing"...))
+	result, err := test.NewThing(ctx, h.conn(), append(l, " Thing"...))
 	if err != nil {
 		return nil, err
 	}
@@ -26,7 +34,7 @@ func (h handler) Thing(ctx context.Context, l []byte) (wrpc.Own[export.Thing], e
 }
 
 func (h handler) Thing_Foo(ctx context.Context, self wrpc.Borrow[export.Thing]) ([]byte, error) {
-	list, err := test.Thing_Foo(ctx, h.c, wrpc.Borrow[test.Thing](self))
+	list, err := test.Thing_Foo(ctx, h.conn(), wrpc.Borrow[test.Thing](self))
 	if err != nil {
 		return nil, err
 	}
@@ -34,11 +42,11 @@ func (h handler) Thing_Foo(ctx context.Context, self wrpc.Borrow[export.Thing]) 
 }
 
 func (h handler) Thing_Bar(ctx context.Context, self wrpc.Borrow[export.Thing], l []byte) error {
-	return test.Thing_Bar(ctx, h.c, wrpc.Borrow[test.Thing](self), append(l, " Thing.bar"...))
+	return test.Thing_Bar(ctx, h.conn(), wrpc.Borrow[test.Thing](self), append(l, " Thing.bar"...))
 }
 
 func (h handler) Thing_Baz(ctx context.Context, l []byte) ([]byte, error) {
-	list2, err := test.Thing_Baz(ctx, h.c, append(l, " Thing.baz"...))
+	list2, err := test.Thing_Baz(ctx, h.conn(), append(l, " Thing.baz"...))
 	if err != nil {
 		return nil, err
 	}

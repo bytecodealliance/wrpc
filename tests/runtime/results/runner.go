@@ -9,7 +9,11 @@ import (
 	"driver/runner/test/results/test"
 )
 
-func Run(ctx context.Context, c wrpc.Invoker) error {
+func Run(ctx context.Context, connect func() (*wrpc.Framed, error)) error {
+	c, err := connect()
+	if err != nil {
+		return err
+	}
 	assertEqual(*must(test.StringError(ctx, c, 0.0)).Err, "zero")
 	assertEqual(*must(test.StringError(ctx, c, 1.0)).Ok, 1.0)
 

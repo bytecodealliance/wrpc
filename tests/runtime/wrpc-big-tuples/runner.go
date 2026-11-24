@@ -9,7 +9,11 @@ import (
 	"driver/runner/wrpc_test/big_tuples/to_test"
 )
 
-func Run(ctx context.Context, c wrpc.Invoker) error {
+func Run(ctx context.Context, connect func() (*wrpc.Framed, error)) error {
+	c, err := connect()
+	if err != nil {
+		return err
+	}
 	a := &to_test.T17{V0: 0, V1: 1, V2: 2, V3: 3, V4: 4, V5: 5, V6: 6, V7: 7, V8: 8, V9: 9, V10: 10, V11: 11, V12: 12, V13: 13, V14: 14, V15: 15, V16: "foo"}
 	res, err := to_test.Roundtrip(ctx, c, []*to_test.T17{a})
 	if err != nil {
@@ -22,7 +26,7 @@ func Run(ctx context.Context, c wrpc.Invoker) error {
 	fut := make(chan uint8, 1)
 	fut <- 16
 	close(fut)
-	rx, errs, err := to_test.NestedFuture(ctx, c, &struct {
+	rx, inv, err := to_test.NestedFuture(ctx, c, &struct {
 		V0  uint8
 		V1  uint8
 		V2  uint8
@@ -44,10 +48,12 @@ func Run(ctx context.Context, c wrpc.Invoker) error {
 	if err != nil {
 		return err
 	}
+	done := make(chan error, 1)
+	go func() { done <- inv.Wait() }()
 	if v := <-rx; v != 16 {
 		return fmt.Errorf("unexpected future value: %d", v)
 	}
-	for err := range errs {
+	if err := <-done; err != nil {
 		return err
 	}
 

@@ -9,7 +9,11 @@ import (
 	"driver/runner/test/list_in_variant/to_test"
 )
 
-func Run(ctx context.Context, c wrpc.Invoker) error {
+func Run(ctx context.Context, connect func() (*wrpc.Framed, error)) error {
+	c, err := connect()
+	if err != nil {
+		return err
+	}
 	assertEqual(must(to_test.ListInOption(ctx, c, []string{"hello", "world"})), "hello,world")
 	assertEqual(must(to_test.ListInOption(ctx, c, nil)), "none")
 

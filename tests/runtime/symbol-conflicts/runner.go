@@ -11,7 +11,11 @@ import (
 	"driver/runner/my/inline/foo2"
 )
 
-func Run(ctx context.Context, c wrpc.Invoker) error {
+func Run(ctx context.Context, connect func() (*wrpc.Framed, error)) error {
+	c, err := connect()
+	if err != nil {
+		return err
+	}
 	if err := foo1.Foo(ctx, c); err != nil {
 		return err
 	}
@@ -21,6 +25,6 @@ func Run(ctx context.Context, c wrpc.Invoker) error {
 	if _, err := bar1.Bar(ctx, c); err != nil {
 		return err
 	}
-	_, err := bar2.Bar(ctx, c)
+	_, err = bar2.Bar(ctx, c)
 	return err
 }

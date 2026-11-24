@@ -9,7 +9,11 @@ import (
 	"driver/runner/test/options/to_test"
 )
 
-func Run(ctx context.Context, c wrpc.Invoker) error {
+func Run(ctx context.Context, connect func() (*wrpc.Framed, error)) error {
+	c, err := connect()
+	if err != nil {
+		return err
+	}
 	must0(to_test.OptionNoneParam(ctx, c, nil))
 	must0(to_test.OptionSomeParam(ctx, c, ptr("foo")))
 	assert(must(to_test.OptionNoneResult(ctx, c)) == nil)

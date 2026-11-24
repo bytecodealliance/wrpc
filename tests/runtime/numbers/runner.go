@@ -9,7 +9,11 @@ import (
 	wrpc "wrpc.io/go"
 )
 
-func Run(ctx context.Context, c wrpc.Invoker) error {
+func Run(ctx context.Context, connect func() (*wrpc.Framed, error)) error {
+	c, err := connect()
+	if err != nil {
+		return err
+	}
 	assertEqual(must(numbers.RoundtripU8(ctx, c, 1)), 1)
 	assertEqual(must(numbers.RoundtripU8(ctx, c, 0)), 0)
 	assertEqual(must(numbers.RoundtripU8(ctx, c, math.MaxUint8)), math.MaxUint8)

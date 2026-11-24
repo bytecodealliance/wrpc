@@ -8,7 +8,11 @@ import (
 	"driver/runner/my/inline/foo"
 )
 
-func Run(ctx context.Context, c wrpc.Invoker) error {
-	_, err := foo.NewBar(ctx, c)
+func Run(ctx context.Context, connect func() (*wrpc.Framed, error)) error {
+	c, err := connect()
+	if err != nil {
+		return err
+	}
+	_, err = foo.NewBar(ctx, c)
 	return err
 }

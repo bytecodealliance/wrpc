@@ -1,5 +1,6 @@
 use core::iter;
 
+use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::mem;
 
@@ -105,2239 +106,11 @@ pub struct InterfaceGenerator<'a> {
     pub(super) r#gen: &'a mut GoWrpc,
     pub resolve: &'a Resolve,
     pub deps: Deps,
+    pub(super) helpers: Source,
+    pub(super) helper_names: HashMap<String, String>,
 }
 
 impl InterfaceGenerator<'_> {
-    // s{16,32,64} decoding adapted from
-    // https://github.com/go-delve/delve/blob/26799555e5518e8a9fe2d68e02379257ebda4dd2/pkg/dwarf/leb128/decode.go#L51-L81
-    //
-    // s{16,32,64} encoding adapted from
-    // https://github.com/go-delve/delve/blob/26799555e5518e8a9fe2d68e02379257ebda4dd2/pkg/dwarf/leb128/encode.go#L23-L42
-
-    fn print_read_bool(&mut self, reader: &str) {
-        let fmt = self.deps.fmt();
-        let io = self.deps.io();
-        let slog = self.deps.slog();
-        uwrite!(
-            self.src,
-            r#"func(r {io}.ByteReader) (bool, error) {{
-    {slog}.Debug("reading bool byte")
-    v, err := r.ReadByte()
-    if err != nil {{
-        {slog}.Debug("reading bool", "value", false)
-        return false, {fmt}.Errorf("failed to read bool byte: %w", err)
-    }}
-    switch v {{
-        case 0:
-            return false, nil
-        case 1:
-            return true, nil
-        default:
-            return false, {fmt}.Errorf("invalid bool value %d", v)
-    }}
-}}({reader})"#,
-        );
-    }
-
-    fn print_read_u8(&mut self, reader: &str) {
-        let fmt = self.deps.fmt();
-        let io = self.deps.io();
-        let slog = self.deps.slog();
-        uwrite!(
-            self.src,
-            r#"func(r {io}.ByteReader) (uint8, error) {{
-    {slog}.Debug("reading u8 byte")
-    v, err := r.ReadByte()
-    if err != nil {{
-        return 0, {fmt}.Errorf("failed to read u8 byte: %w", err)
-    }}
-    return v, nil
-}}({reader})"#,
-        );
-    }
-
-    fn print_read_u16(&mut self, reader: &str) {
-        let fmt = self.deps.fmt();
-        let errors = self.deps.errors();
-        let io = self.deps.io();
-        let slog = self.deps.slog();
-        uwrite!(
-            self.src,
-            r#"func(r {io}.ByteReader) (uint16, error) {{
-    var x uint16
-    var s uint8
-    for i := 0; i < 3; i++ {{
-        {slog}.Debug("reading u16 byte", "i", i)
-        b, err := r.ReadByte()
-        if err != nil {{
-            if i > 0 && err == {io}.EOF {{
-                err = {io}.ErrUnexpectedEOF
-            }}
-            return x, {fmt}.Errorf("failed to read u16 byte: %w", err)
-        }}
-        if s == 14 && b > 0x03 {{
-            return x, {errors}.New("varint overflows a 16-bit integer")
-        }}
-        if b < 0x80 {{
-            return x | uint16(b)<<s, nil
-        }}
-        x |= uint16(b&0x7f) << s
-        s += 7
-    }}
-    return x, {errors}.New("varint overflows a 16-bit integer")
-}}({reader})"#,
-        );
-    }
-
-    fn print_read_u32(&mut self, reader: &str) {
-        let fmt = self.deps.fmt();
-        let errors = self.deps.errors();
-        let io = self.deps.io();
-        let slog = self.deps.slog();
-        uwrite!(
-            self.src,
-            r#"func(r {io}.ByteReader) (uint32, error) {{
-    var x uint32
-    var s uint8
-    for i := 0; i < 5; i++ {{
-        {slog}.Debug("reading u32 byte", "i", i)
-        b, err := r.ReadByte()
-        if err != nil {{
-            if i > 0 && err == {io}.EOF {{
-                err = {io}.ErrUnexpectedEOF
-            }}
-            return x, {fmt}.Errorf("failed to read u32 byte: %w", err)
-        }}
-        if s == 28 && b > 0x0f {{
-            return x, {errors}.New("varint overflows a 32-bit integer")
-        }}
-        if b < 0x80 {{
-            return x | uint32(b)<<s, nil
-        }}
-        x |= uint32(b&0x7f) << s
-        s += 7
-    }}
-    return x, {errors}.New("varint overflows a 32-bit integer")
-}}({reader})"#,
-        );
-    }
-
-    fn print_read_u64(&mut self, reader: &str) {
-        let fmt = self.deps.fmt();
-        let errors = self.deps.errors();
-        let io = self.deps.io();
-        let slog = self.deps.slog();
-        uwrite!(
-            self.src,
-            r#"func(r {io}.ByteReader) (uint64, error) {{
-    var x uint64
-    var s uint8
-    for i := 0; i < 10; i++ {{
-        {slog}.Debug("reading u64 byte", "i", i)
-        b, err := r.ReadByte()
-        if err != nil {{
-            if i > 0 && err == {io}.EOF {{
-                err = {io}.ErrUnexpectedEOF
-            }}
-            return x, {fmt}.Errorf("failed to read u64 byte: %w", err)
-        }}
-        if s == 63 && b > 0x01 {{
-            return x, {errors}.New("varint overflows a 64-bit integer")
-        }}
-        if b < 0x80 {{
-            return x | uint64(b)<<s, nil
-        }}
-        x |= uint64(b&0x7f) << s
-        s += 7
-    }}
-    return x, {errors}.New("varint overflows a 64-bit integer")
-}}({reader})"#,
-        );
-    }
-
-    fn print_read_s8(&mut self, reader: &str) {
-        let fmt = self.deps.fmt();
-        let io = self.deps.io();
-        let slog = self.deps.slog();
-        uwrite!(
-            self.src,
-            r#"func(r {io}.ByteReader) (int8, error) {{
-    {slog}.Debug("reading s8 byte")
-    v, err := r.ReadByte()
-    if err != nil {{
-        return 0, {fmt}.Errorf("failed to read s8 byte: %w", err)
-    }}
-    return int8(v), nil
-}}({reader})"#,
-        );
-    }
-
-    fn print_read_s16(&mut self, reader: &str) {
-        let fmt = self.deps.fmt();
-        let io = self.deps.io();
-        let slog = self.deps.slog();
-        let errors = self.deps.errors();
-        uwrite!(
-            self.src,
-            r#"func(r {io}.ByteReader) (int16, error) {{
-    var (
-        b          byte
-        err        error
-        result     int16
-        shift      uint16
-        length     uint32
-        endReached bool
-    )
-    const lenCeiling = 3
-    for i := 0; i < lenCeiling; i++ {{
-        {slog}.Debug("reading s16 byte")
-        b, err = r.ReadByte()
-        if err != nil {{
-            return 0, {fmt}.Errorf("failed to read s16 byte: %w", err)
-        }}
-        if i == lenCeiling-1 {{
-            if rest := (b & 0x7f) >> 1; rest != 0 && rest != 0x7f>>1 {{
-                return 0, {errors}.New("s16 overflows a 16-bit integer")
-            }}
-        }}
-        length++
-
-        result |= (int16(b) & 0x7f) << shift
-        shift += 7
-        if b&0x80 == 0 {{
-            endReached = true
-            break
-        }}
-    }}
-    if !endReached {{
-        return 0, {errors}.New("cannot decode s16 past the length limit")
-    }}
-    if (shift < 8*uint16(length)) && (b&0x40 > 0) {{
-        result |= -(1 << shift)
-    }}
-    return result, nil
-}}({reader})"#,
-        );
-    }
-
-    fn print_read_s32(&mut self, reader: &str) {
-        let fmt = self.deps.fmt();
-        let io = self.deps.io();
-        let slog = self.deps.slog();
-        let errors = self.deps.errors();
-        uwrite!(
-            self.src,
-            r#"func(r {io}.ByteReader) (int32, error) {{
-    var (
-        b          byte
-        err        error
-        result     int32
-        shift      uint32
-        length     uint32
-        endReached bool
-    )
-    const lenCeiling = 5
-    for i := 0; i < lenCeiling; i++ {{
-        {slog}.Debug("reading s32 byte")
-        b, err = r.ReadByte()
-        if err != nil {{
-            return 0, {fmt}.Errorf("failed to read s32 byte: %w", err)
-        }}
-        if i == lenCeiling-1 {{
-            if rest := (b & 0x7f) >> 3; rest != 0 && rest != 0x7f>>3 {{
-                return 0, {errors}.New("s32 overflows a 32-bit integer")
-            }}
-        }}
-        length++
-
-        result |= (int32(b) & 0x7f) << shift
-        shift += 7
-        if b&0x80 == 0 {{
-            endReached = true
-            break
-        }}
-    }}
-    if !endReached {{
-        return 0, {errors}.New("cannot decode s32 past the length limit")
-    }}
-    if (shift < 8*uint32(length)) && (b&0x40 > 0) {{
-        result |= -(1 << shift)
-    }}
-    return result, nil
-}}({reader})"#,
-        );
-    }
-
-    fn print_read_s64(&mut self, reader: &str) {
-        let fmt = self.deps.fmt();
-        let io = self.deps.io();
-        let slog = self.deps.slog();
-        let errors = self.deps.errors();
-        uwrite!(
-            self.src,
-            r#"func(r {io}.ByteReader) (int64, error) {{
-    var (
-        b          byte
-        err        error
-        result     int64
-        shift      uint64
-        length     uint32
-        endReached bool
-    )
-    const lenCeiling = 10
-    for i := 0; i < lenCeiling; i++ {{
-        {slog}.Debug("reading s64 byte")
-        b, err = r.ReadByte()
-        if err != nil {{
-            return 0, {fmt}.Errorf("failed to read s64 byte: %w", err)
-        }}
-        if i == lenCeiling-1 {{
-            if rest := b & 0x7f; rest != 0 && rest != 0x7f {{
-                return 0, {errors}.New("s64 overflows a 64-bit integer")
-            }}
-        }}
-        length++
-
-        result |= (int64(b) & 0x7f) << shift
-        shift += 7
-        if b&0x80 == 0 {{
-            endReached = true
-            break
-        }}
-    }}
-    if !endReached {{
-        return 0, {errors}.New("cannot decode s64 past the length limit")
-    }}
-    if (shift < 8*uint64(length)) && (b&0x40 > 0) {{
-        result |= -(1 << shift)
-    }}
-    return result, nil
-}}({reader})"#,
-        );
-    }
-
-    fn print_read_f32(&mut self, reader: &str) {
-        let binary = self.deps.binary();
-        let fmt = self.deps.fmt();
-        let io = self.deps.io();
-        let math = self.deps.math();
-        let slog = self.deps.slog();
-        uwrite!(
-            self.src,
-            r#"func(r {io}.Reader) (float32, error) {{
-    var b [4]byte
-    {slog}.Debug("reading f32 bytes")
-    if _, err := {io}.ReadFull(r, b[:]); err != nil {{
-        return 0, {fmt}.Errorf("failed to read f32: %w", err)
-    }}
-    return {math}.Float32frombits({binary}.LittleEndian.Uint32(b[:])), nil
-}}({reader})"#,
-        );
-    }
-
-    fn print_read_f64(&mut self, reader: &str) {
-        let binary = self.deps.binary();
-        let fmt = self.deps.fmt();
-        let io = self.deps.io();
-        let math = self.deps.math();
-        let slog = self.deps.slog();
-        uwrite!(
-            self.src,
-            r#"func(r {io}.Reader) (float64, error) {{
-    var b [8]byte
-    {slog}.Debug("reading f64 bytes")
-    if _, err := {io}.ReadFull(r, b[:]); err != nil {{
-        return 0, {fmt}.Errorf("failed to read f64: %w", err)
-    }}
-    return {math}.Float64frombits({binary}.LittleEndian.Uint64(b[:])), nil
-}}({reader})"#,
-        );
-    }
-
-    fn print_read_char(&mut self, reader: &str) {
-        let errors = self.deps.errors();
-        let fmt = self.deps.fmt();
-        let io = self.deps.io();
-        let slog = self.deps.slog();
-        let utf8 = self.deps.utf8();
-        uwrite!(
-            self.src,
-            r#"func(r {io}.ByteReader) (rune, error) {{
-    {slog}.Debug("reading char byte", "i", 0)
-    b, err := r.ReadByte()
-    if err != nil {{
-        return {utf8}.RuneError, {fmt}.Errorf("failed to read char byte: %w", err)
-    }}
-    var n int
-    switch {{
-    case b < 0x80:
-        return rune(b), nil
-    case b&0xe0 == 0xc0:
-        n = 2
-    case b&0xf0 == 0xe0:
-        n = 3
-    case b&0xf8 == 0xf0:
-        n = 4
-    default:
-        return {utf8}.RuneError, {errors}.New("char is not valid UTF-8")
-    }}
-    var buf [{utf8}.UTFMax]byte
-    buf[0] = b
-    for i := 1; i < n; i++ {{
-        {slog}.Debug("reading char byte", "i", i)
-        buf[i], err = r.ReadByte()
-        if err != nil {{
-            if err == {io}.EOF {{
-                err = {io}.ErrUnexpectedEOF
-            }}
-            return {utf8}.RuneError, {fmt}.Errorf("failed to read char byte: %w", err)
-        }}
-    }}
-    v, size := {utf8}.DecodeRune(buf[:n])
-    if size != n {{
-        return {utf8}.RuneError, {errors}.New("char is not valid UTF-8")
-    }}
-    return v, nil
-}}({reader})"#,
-        );
-    }
-
-    fn print_read_string(&mut self, reader: &str) {
-        let errors = self.deps.errors();
-        let fmt = self.deps.fmt();
-        let io = self.deps.io();
-        let slog = self.deps.slog();
-        let wrpc = self.deps.wrpc();
-        let utf8 = self.deps.utf8();
-        uwrite!(
-            self.src,
-            r#"func(r interface {{ {io}.ByteReader; {io}.Reader }}) (string, error) {{
-    var x uint32
-    var s uint8
-    for i := 0; i < 5; i++ {{
-        {slog}.Debug("reading string length byte", "i", i)
-        b, err := r.ReadByte()
-        if err != nil {{
-            if i > 0 && err == {io}.EOF {{
-                err = {io}.ErrUnexpectedEOF
-            }}
-            return "", {fmt}.Errorf("failed to read string length byte: %w", err)
-        }}
-        if s == 28 && b > 0x0f {{
-            return "", {errors}.New("string length overflows a 32-bit integer")
-        }}
-        if b < 0x80 {{
-            x = x | uint32(b)<<s
-            if x == 0 {{
-                return "", nil
-            }}
-            {slog}.Debug("reading string bytes", "len", x)
-            buf, err := {wrpc}.ReadBytes(r, x)
-            if err != nil {{
-                return "", {fmt}.Errorf("failed to read string bytes: %w", err)
-            }}
-            if !{utf8}.Valid(buf) {{
-                return string(buf), {errors}.New("string is not valid UTF-8")
-            }}
-            return string(buf), nil
-        }}
-        x |= uint32(b&0x7f) << s
-        s += 7
-    }}
-    return "", {errors}.New("string length overflows a 32-bit integer")
-}}({reader})"#,
-        );
-    }
-
-    fn print_read_byte_list(&mut self, reader: &str) {
-        let errors = self.deps.errors();
-        let fmt = self.deps.fmt();
-        let io = self.deps.io();
-        let slog = self.deps.slog();
-        let wrpc = self.deps.wrpc();
-        uwrite!(
-            self.src,
-            r#"func(r interface {{ {io}.ByteReader; {io}.Reader }}) ([]byte, error) {{
-    var x uint32
-    var s uint
-    for i := 0; i < 5; i++ {{
-        {slog}.Debug("reading byte list length", "i", i)
-        b, err := r.ReadByte()
-        if err != nil {{
-            if i > 0 && err == {io}.EOF {{
-                err = {io}.ErrUnexpectedEOF
-            }}
-            return nil, {fmt}.Errorf("failed to read byte list length byte: %w", err)
-        }}
-        if s == 28 && b > 0x0f {{
-            return nil, {errors}.New("byte list length overflows a 32-bit integer")
-        }}
-        if b < 0x80 {{
-            x = x | uint32(b)<<s
-            if x == 0 {{
-                return []byte{{}}, nil
-            }}
-            {slog}.Debug("reading byte list contents", "len", x)
-            buf, err := {wrpc}.ReadBytes(r, x)
-            if err != nil {{
-                return nil, {fmt}.Errorf("failed to read byte list contents: %w", err)
-            }}
-            return buf, nil
-        }}
-        x |= uint32(b&0x7f) << s
-        s += 7
-    }}
-    return nil, {errors}.New("byte length overflows a 32-bit integer")
-}}({reader})"#,
-        );
-    }
-
-    fn print_read_list(&mut self, ty: &Type, reader: &str, path: &str) {
-        if is_ty(self.resolve, Type::U8, ty) {
-            self.print_read_byte_list(reader);
-            return;
-        }
-        let fmt = self.deps.fmt();
-        let io = self.deps.io();
-        let errors = self.deps.errors();
-        let slog = self.deps.slog();
-        let wrpc = self.deps.wrpc();
-        let deferred = self.is_async(ty);
-        let d = if deferred { "nil, " } else { "" };
-        uwrite!(self.src, "func(r {wrpc}.IndexReadCloser, path ...uint32) (");
-        self.print_list(ty);
-        self.print_deferred_ret(deferred);
-        uwrite!(
-            self.src,
-            r#", error) {{
-    var x uint32
-    var s uint
-    for i := 0; i < 5; i++ {{
-        {slog}.Debug("reading list length byte", "i", i)
-        b, err := r.ReadByte()
-        if err != nil {{
-            if i > 0 && err == {io}.EOF {{
-                err = {io}.ErrUnexpectedEOF
-            }}
-            return nil, {d}{fmt}.Errorf("failed to read list length byte: %w", err)
-        }}
-        if s == 28 && b > 0x0f {{
-            return nil, {d}{errors}.New("list length overflows a 32-bit integer")
-        }}
-        if b < 0x80 {{
-            x = x | uint32(b)<<s
-            vs := make("#,
-        );
-        self.print_list(ty);
-        uwrite!(self.src, ", 0)\n");
-        if deferred {
-            let context = self.deps.context();
-            uwrite!(self.src, "var ds []func({context}.Context) error\n");
-        }
-        uwrite!(
-            self.src,
-            r#"for i := range x {{
-                {slog}.Debug("reading list element", "i", i)
-                v, "#,
-        );
-        if deferred {
-            self.push_str("d, ");
-        }
-        self.push_str("err := ");
-        self.print_read_ty(ty, "r", "append(path, uint32(i))");
-        self.push_str("\n");
-        uwrite!(
-            self.src,
-            r#"if err != nil {{
-                    return nil, {d}{fmt}.Errorf("failed to read list element %d: %w", i, err)
-                }}
-                vs = append(vs, v)
-"#,
-        );
-        if deferred {
-            uwrite!(
-                self.src,
-                r#"ds = append(ds, d)
-            }}
-            return vs, {wrpc}.JoinDeferred(ds...), nil
-"#
-            );
-        } else {
-            self.push_str("}\nreturn vs, nil\n");
-        }
-        uwrite!(
-            self.src,
-            r#"}}
-        x |= uint32(b&0x7f) << s
-        s += 7
-    }}
-    return nil, {d}{errors}.New("list length overflows a 32-bit integer")
-}}({reader}"#,
-        );
-        if !path.is_empty() {
-            self.src.push_str(", ");
-            self.src.push_str(path);
-            self.src.push_str("...");
-        }
-        self.src.push_str(")");
-    }
-
-    fn print_read_fixed_length_list(&mut self, ty: &Type, size: u32, reader: &str, path: &str) {
-        let fmt = self.deps.fmt();
-        let slog = self.deps.slog();
-        if is_ty(self.resolve, Type::U8, ty) {
-            let io = self.deps.io();
-            uwrite!(
-                self.src,
-                r#"func(r {io}.Reader) (v [{size}]byte, err error) {{
-    {slog}.Debug("reading byte array")
-    if _, err = {io}.ReadFull(r, v[:]); err != nil {{
-        return v, {fmt}.Errorf("failed to read byte array: %w", err)
-    }}
-    return v, nil
-}}({reader})"#,
-            );
-            return;
-        }
-        let wrpc = self.deps.wrpc();
-        let deferred = self.is_async(ty);
-        let d = if deferred { "nil, " } else { "" };
-        uwrite!(self.src, "func(r {wrpc}.IndexReadCloser, path ...uint32) (");
-        self.print_fixed_length_list(ty, size);
-        self.print_deferred_ret(deferred);
-        self.push_str(", error) {\nvar vs ");
-        self.print_fixed_length_list(ty, size);
-        self.push_str("\n");
-        if deferred {
-            let context = self.deps.context();
-            uwrite!(self.src, "var ds []func({context}.Context) error\n");
-        }
-        uwrite!(
-            self.src,
-            r#"for i := range vs {{
-        {slog}.Debug("reading list element", "i", i)
-        v, "#,
-        );
-        if deferred {
-            self.push_str("d, ");
-        }
-        self.push_str("err := ");
-        self.print_read_ty(ty, "r", "append(path, uint32(i))");
-        uwrite!(
-            self.src,
-            r#"
-        if err != nil {{
-            return vs, {d}{fmt}.Errorf("failed to read list element %d: %w", i, err)
-        }}
-        vs[i] = v
-"#,
-        );
-        if deferred {
-            uwrite!(
-                self.src,
-                r#"ds = append(ds, d)
-    }}
-    return vs, {wrpc}.JoinDeferred(ds...), nil
-"#
-            );
-        } else {
-            self.push_str("}\nreturn vs, nil\n");
-        }
-        uwrite!(self.src, "}}({reader}");
-        if !path.is_empty() {
-            self.src.push_str(", ");
-            self.src.push_str(path);
-            self.src.push_str("...");
-        }
-        self.src.push_str(")");
-    }
-
-    fn print_read_map(&mut self, key: &Type, value: &Type, reader: &str, path: &str) {
-        let fmt = self.deps.fmt();
-        let io = self.deps.io();
-        let errors = self.deps.errors();
-        let slog = self.deps.slog();
-        let wrpc = self.deps.wrpc();
-        let deferred = self.is_async(value);
-        let d = if deferred { "nil, " } else { "" };
-        uwrite!(self.src, "func(r {wrpc}.IndexReadCloser, path ...uint32) (");
-        self.print_map(key, value);
-        self.print_deferred_ret(deferred);
-        uwrite!(
-            self.src,
-            r#", error) {{
-    var x uint32
-    var s uint
-    for i := 0; i < 5; i++ {{
-        {slog}.Debug("reading map length byte", "i", i)
-        b, err := r.ReadByte()
-        if err != nil {{
-            if i > 0 && err == {io}.EOF {{
-                err = {io}.ErrUnexpectedEOF
-            }}
-            return nil, {d}{fmt}.Errorf("failed to read map length byte: %w", err)
-        }}
-        if s == 28 && b > 0x0f {{
-            return nil, {d}{errors}.New("map length overflows a 32-bit integer")
-        }}
-        if b < 0x80 {{
-            x = x | uint32(b)<<s
-            vs := make("#,
-        );
-        self.print_map(key, value);
-        self.push_str(")\n");
-        if deferred {
-            let context = self.deps.context();
-            uwrite!(self.src, "var ds []func({context}.Context) error\n");
-        }
-        uwrite!(
-            self.src,
-            r#"for i := range x {{
-                {slog}.Debug("reading map entry key", "i", i)
-                k, err := "#,
-        );
-        self.print_read_ty(key, "r", "");
-        uwrite!(
-            self.src,
-            r#"
-                if err != nil {{
-                    return nil, {d}{fmt}.Errorf("failed to read map entry %d key: %w", i, err)
-                }}
-                if _, ok := vs[k]; ok {{
-                    return nil, {d}{fmt}.Errorf("duplicate map entry %d key", i)
-                }}
-                {slog}.Debug("reading map entry value", "i", i)
-                v, "#,
-        );
-        if deferred {
-            self.push_str("d, ");
-        }
-        self.push_str("err := ");
-        self.print_read_ty(value, "r", "append(path, uint32(i), 1)");
-        self.push_str("\n");
-        uwrite!(
-            self.src,
-            r#"if err != nil {{
-                    return nil, {d}{fmt}.Errorf("failed to read map entry %d value: %w", i, err)
-                }}
-                vs[k] = v
-"#,
-        );
-        if deferred {
-            uwrite!(
-                self.src,
-                r#"ds = append(ds, d)
-            }}
-            return vs, {wrpc}.JoinDeferred(ds...), nil
-"#
-            );
-        } else {
-            self.push_str("}\nreturn vs, nil\n");
-        }
-        uwrite!(
-            self.src,
-            r#"}}
-        x |= uint32(b&0x7f) << s
-        s += 7
-    }}
-    return nil, {d}{errors}.New("map length overflows a 32-bit integer")
-}}({reader}"#,
-        );
-        if !path.is_empty() {
-            self.src.push_str(", ");
-            self.src.push_str(path);
-            self.src.push_str("...");
-        }
-        self.src.push_str(")");
-    }
-
-    fn print_read_option(&mut self, ty: &Type, reader: &str, path: &str) {
-        let fmt = self.deps.fmt();
-        let slog = self.deps.slog();
-        let wrpc = self.deps.wrpc();
-        let deferred = self.is_async(ty);
-        let (d, dv) = if deferred { ("nil, ", "d, ") } else { ("", "") };
-        uwrite!(self.src, "func(r {wrpc}.IndexReadCloser, path ...uint32) (");
-        self.print_option(ty, true);
-        self.print_deferred_ret(deferred);
-        uwrite!(
-            self.src,
-            r#", error) {{
-    {slog}.Debug("reading option status byte")
-    status, err := r.ReadByte()
-    if err != nil {{
-        return nil, {d}{fmt}.Errorf("failed to read option status byte: %w", err)
-    }}
-    switch status {{
-    case 0:
-        return nil, {d}nil
-    case 1:
-        {slog}.Debug("reading `option::some` payload")
-        v, {dv}err := "#,
-        );
-        self.print_read_ty(ty, "r", "path");
-        self.push_str("\n");
-        uwrite!(
-            self.src,
-            r#"if err != nil {{
-            return nil, {d}{fmt}.Errorf("failed to read `option::some` value: %w", err)
-        }}
-        return "#,
-        );
-        self.print_nillable_ptr(ty, false, false);
-        uwrite!(
-            self.src,
-            r#"v, {dv}nil
-    default:
-        return nil, {d}{fmt}.Errorf("invalid option status byte %d", status)
-    }}
-}}({reader}"#,
-        );
-        if !path.is_empty() {
-            self.src.push_str(", ");
-            self.src.push_str(path);
-            self.src.push_str("...");
-        }
-        self.src.push_str(")");
-    }
-
-    fn print_read_result(&mut self, ty: &Result_, reader: &str, path: &str) {
-        let fmt = self.deps.fmt();
-        let slog = self.deps.slog();
-        let wrpc = self.deps.wrpc();
-        let deferred = ty.ok.iter().chain(&ty.err).any(|ty| self.is_async(ty));
-        let d = if deferred { "nil, " } else { "" };
-        uwrite!(
-            self.src,
-            "func(r {wrpc}.IndexReadCloser, path ...uint32) (*"
-        );
-        self.print_result(ty);
-        self.print_deferred_ret(deferred);
-        uwriteln!(
-            self.src,
-            r#", error) {{
-    {slog}.Debug("reading result status byte")
-    status, err := r.ReadByte()
-    if err != nil {{
-        return nil, {d}{fmt}.Errorf("failed to read result status byte: %w", err)
-    }}"#,
-        );
-        self.push_str("switch status {\n");
-        for (i, (case, field, payload)) in [("ok", "Ok", &ty.ok), ("err", "Err", &ty.err)]
-            .into_iter()
-            .enumerate()
-        {
-            uwriteln!(self.src, "case {i}:");
-            let mut ret = d;
-            if let Some(payload) = payload {
-                uwriteln!(
-                    self.src,
-                    r#"{slog}.Debug("reading `result::{case}` payload")"#
-                );
-                if self.is_async(payload) {
-                    self.push_str("v, d, err := ");
-                    ret = "d, ";
-                } else {
-                    self.push_str("v, err := ");
-                }
-                self.print_read_ty(payload, "r", "path");
-                self.push_str("\n");
-                uwriteln!(
-                    self.src,
-                    r#"if err != nil {{
-            return nil, {d}{fmt}.Errorf("failed to read `result::{case}` value: %w", err)
-        }}"#,
-                );
-                self.push_str("return &");
-                self.print_result(ty);
-                uwrite!(self.src, "{{ {field}: ");
-                self.print_nillable_ptr(payload, true, false);
-            } else {
-                self.push_str("var v struct{}\n");
-                self.push_str("return &");
-                self.print_result(ty);
-                uwrite!(self.src, "{{ {field}: &");
-            }
-            uwriteln!(self.src, "v }}, {ret}nil");
-        }
-        uwrite!(
-            self.src,
-            r#"default:
-        return nil, {d}{fmt}.Errorf("invalid result status byte %d", status)
-    }}
-}}({reader}"#
-        );
-        if !path.is_empty() {
-            self.src.push_str(", ");
-            self.src.push_str(path);
-            self.src.push_str("...");
-        }
-        self.src.push_str(")");
-    }
-
-    fn print_read_record(
-        &mut self,
-        Record { fields, .. }: &Record,
-        reader: &str,
-        path: &str,
-        name: &str,
-    ) {
-        let wrpc = self.deps.wrpc();
-        let deferred = fields.iter().any(|Field { ty, .. }| self.is_async(ty));
-        let d = if deferred { "nil, " } else { "" };
-        uwrite!(
-            self.src,
-            "func(r {wrpc}.IndexReadCloser, path ...uint32) (*{name}"
-        );
-        self.print_deferred_ret(deferred);
-        uwriteln!(
-            self.src,
-            r#", error) {{
-    v := &{name}{{}}
-    var err error"#
-        );
-        if deferred {
-            let context = self.deps.context();
-            uwrite!(
-                self.src,
-                "var d func({context}.Context) error\nvar ds []func({context}.Context) error\n"
-            );
-        }
-        for (i, Field { name, ty, .. }) in fields.iter().enumerate() {
-            let fmt = self.deps.fmt();
-            let slog = self.deps.slog();
-            let ident = name.to_upper_camel_case();
-            let field_deferred = self.is_async(ty);
-            uwrite!(
-                self.src,
-                r#"{slog}.Debug("reading field", "name", "{name}")
-    v.{ident}, "#
-            );
-            if field_deferred {
-                self.push_str("d, ");
-            }
-            self.push_str("err = ");
-            self.print_read_ty(ty, "r", &format!("append(path, {i})"));
-            self.push_str("\n");
-            uwriteln!(
-                self.src,
-                r#"if err != nil {{
-            return nil, {d}{fmt}.Errorf("failed to read `{name}` field: %w", err)
-        }}"#
-            );
-            if field_deferred {
-                self.push_str("ds = append(ds, d)\n");
-            }
-        }
-        if deferred {
-            uwriteln!(self.src, "return v, {wrpc}.JoinDeferred(ds...), nil");
-        } else {
-            self.push_str("return v, nil\n");
-        }
-        uwrite!(self.src, "}}({reader}");
-        if !path.is_empty() {
-            self.src.push_str(", ");
-            self.src.push_str(path);
-            self.src.push_str("...");
-        }
-        self.src.push_str(")");
-    }
-
-    fn print_read_flags(&mut self, reader: &str, name: &str) {
-        let wrpc = self.deps.wrpc();
-
-        uwrite!(
-            self.src,
-            r#"func(r {wrpc}.IndexReader) (*{name}, error) {{
-    v := {name}{{}}
-    if err := v.ReadFromIndex(r); err != nil {{
-        return nil, err
-    }}
-    return &v, nil
-}}({reader})
-"#
-        );
-    }
-
-    fn print_read_enum(&mut self, ty: &Enum, reader: &str, name: &str) {
-        let fmt = self.deps.fmt();
-        let io = self.deps.io();
-
-        uwrite!(
-            self.src,
-            r#"func(r {io}.ByteReader) (v {name}, err error) {{
-    n, err := "#
-        );
-        self.print_read_discriminant(ty.tag(), "r");
-        self.push_str("\n");
-        self.push_str("if err != nil {\n");
-        self.push_str("return v, ");
-        self.push_str(fmt);
-        self.push_str(".Errorf(\"failed to read discriminant: %w\", err)\n}\n");
-        uwriteln!(self.src, "switch {name}(n) {{");
-        for EnumCase {
-            name: case_name, ..
-        } in &ty.cases
-        {
-            self.push_str("case ");
-            self.push_str(name);
-            self.push_str("_");
-            self.push_str(&case_name.to_upper_camel_case());
-            self.push_str(":\n");
-            self.push_str("return ");
-            self.push_str(name);
-            self.push_str("_");
-            self.push_str(&case_name.to_upper_camel_case());
-            self.push_str(", nil\n");
-        }
-        uwriteln!(
-            self.src,
-            r#"default: return v, {fmt}.Errorf("unknown discriminant value %d", n) }}"#
-        );
-        uwrite!(self.src, "}}({reader})");
-    }
-
-    fn print_read_variant(&mut self, ty: &Variant, reader: &str, path: &str, name: &str) {
-        let fmt = self.deps.fmt();
-        let wrpc = self.deps.wrpc();
-        let deferred = ty
-            .cases
-            .iter()
-            .any(|Case { ty, .. }| ty.as_ref().is_some_and(|ty| self.is_async(ty)));
-        let d = if deferred { "nil, " } else { "" };
-        uwrite!(
-            self.src,
-            "func(r {wrpc}.IndexReadCloser, path ...uint32) (*{name}"
-        );
-        self.print_deferred_ret(deferred);
-        uwrite!(
-            self.src,
-            r#", error) {{
-    v := &{name}{{}}
-    n, err := "#
-        );
-        self.print_read_discriminant(ty.tag(), "r");
-        self.push_str("\n");
-        uwriteln!(
-            self.src,
-            r#"if err != nil {{
-        return nil, {d}{fmt}.Errorf("failed to read discriminant: %w", err)
-    }}"#
-        );
-        uwriteln!(self.src, "switch {name}Discriminant(n) {{");
-        for Case {
-            name: case_name,
-            ty,
-            ..
-        } in &ty.cases
-        {
-            let camel = case_name.to_upper_camel_case();
-            uwriteln!(self.src, "case {name}{camel}:");
-            if let Some(ty) = ty {
-                let ret = if self.is_async(ty) {
-                    self.push_str("payload, d, err := ");
-                    "d, "
-                } else {
-                    self.push_str("payload, err := ");
-                    d
-                };
-                self.print_read_ty(ty, "r", "path");
-                self.push_str("\n");
-                uwriteln!(
-                    self.src,
-                    r#"if err != nil {{ return nil, {d}{fmt}.Errorf("failed to read `{case_name}` payload: %w", err) }}"#
-                );
-                uwriteln!(self.src, "return v.Set{camel}(payload), {ret}nil");
-            } else {
-                uwriteln!(self.src, "return v.Set{camel}(), {d}nil");
-            }
-        }
-        uwriteln!(
-            self.src,
-            r#"default: return nil, {d}{fmt}.Errorf("unknown discriminant value %d", n) }}"#
-        );
-        uwrite!(self.src, "}}({reader}");
-        if !path.is_empty() {
-            self.src.push_str(", ");
-            self.src.push_str(path);
-            self.src.push_str("...");
-        }
-        self.src.push_str(")");
-    }
-
-    fn print_read_tuple(&mut self, ty: &Tuple, reader: &str, path: &str) {
-        match ty.types.as_slice() {
-            [] => self.push_str("struct{}{}, nil"),
-            [ty] => {
-                if path.is_empty() {
-                    self.print_read_ty(ty, reader, "0");
-                } else {
-                    self.print_read_ty(ty, reader, &format!("append({path}, 0)"));
-                }
-            }
-            _ => {
-                let wrpc = self.deps.wrpc();
-                let deferred = ty.types.iter().any(|ty| self.is_async(ty));
-                let d = if deferred { "nil, " } else { "" };
-                uwrite!(
-                    self.src,
-                    "func(r {wrpc}.IndexReadCloser, path ...uint32) (*"
-                );
-                self.print_tuple(ty, true);
-                self.print_deferred_ret(deferred);
-                self.push_str(", error) {\n");
-                self.push_str("v := &");
-                self.print_tuple(ty, false);
-                self.push_str("{}\n");
-                self.push_str("var err error\n");
-                if deferred {
-                    let context = self.deps.context();
-                    uwrite!(
-                        self.src,
-                        "var d func({context}.Context) error\nvar ds []func({context}.Context) error\n"
-                    );
-                }
-                for (i, ty) in ty.types.iter().enumerate() {
-                    let fmt = self.deps.fmt();
-                    let slog = self.deps.slog();
-                    let elem_deferred = self.is_async(ty);
-                    uwrite!(
-                        self.src,
-                        r#"{slog}.Debug("reading tuple element {i}")
-        v.V{i}, "#
-                    );
-                    if elem_deferred {
-                        self.push_str("d, ");
-                    }
-                    self.push_str("err = ");
-                    self.print_read_ty(ty, "r", &format!("append(path, {i})"));
-                    self.push_str("\n");
-                    uwriteln!(
-                        self.src,
-                        r#"if err != nil {{
-            return nil, {d}{fmt}.Errorf("failed to read tuple element {i}: %w", err)
-        }}"#
-                    );
-                    if elem_deferred {
-                        self.push_str("ds = append(ds, d)\n");
-                    }
-                }
-                if deferred {
-                    uwriteln!(self.src, "return v, {wrpc}.JoinDeferred(ds...), nil");
-                } else {
-                    self.push_str("return v, nil\n");
-                }
-                uwrite!(self.src, "}}({reader}");
-                if !path.is_empty() {
-                    self.src.push_str(", ");
-                    self.src.push_str(path);
-                    self.src.push_str("...");
-                }
-                self.src.push_str(")");
-            }
-        }
-    }
-
-    fn print_read_future(&mut self, ty: &Option<Type>, reader: &str, path: &str) {
-        let wrpc = self.deps.wrpc();
-        if let Some(ty) = ty {
-            uwrite!(self.src, "{wrpc}.ReadFuture({reader}, ");
-            self.print_read_element(ty);
-        } else {
-            uwrite!(self.src, "{wrpc}.ReadFutureUnit({reader}");
-        }
-        if !path.is_empty() {
-            self.src.push_str(", ");
-            self.src.push_str(path);
-            self.src.push_str("...");
-        }
-        self.src.push_str(")");
-    }
-
-    fn print_read_element(&mut self, ty: &Type) {
-        let wrpc = self.deps.wrpc();
-        uwrite!(self.src, "func(r {wrpc}.IndexReadCloser, path ...uint32) (");
-        self.print_opt_ty(ty, true);
-        let context = self.deps.context();
-        uwrite!(self.src, ", func({context}.Context) error, error) {{\n");
-        if self.is_async(ty) {
-            self.push_str("return ");
-            self.print_read_ty(ty, "r", "path");
-            self.push_str("\n");
-        } else {
-            self.push_str("v, err := ");
-            self.print_read_ty(ty, "r", "path");
-            self.push_str("\nreturn v, nil, err\n");
-        }
-        self.push_str("}");
-    }
-
-    fn print_read_stream(&mut self, element: &Option<Type>, reader: &str, path: &str) {
-        let wrpc = self.deps.wrpc();
-        match element {
-            Some(ty) if is_ty(self.resolve, Type::U8, ty) => {
-                uwrite!(self.src, "{wrpc}.ReadByteStream({reader}");
-            }
-            Some(ty) => {
-                uwrite!(self.src, "{wrpc}.ReadStream({reader}, ");
-                self.print_read_element(ty);
-            }
-            None => panic!("streams with no element types are not supported"),
-        }
-        if !path.is_empty() {
-            self.src.push_str(", ");
-            self.src.push_str(path);
-            self.src.push_str("...");
-        }
-        self.src.push_str(")");
-    }
-
-    fn print_read_own(&mut self, reader: &str, id: TypeId) {
-        let errors = self.deps.errors();
-        let fmt = self.deps.fmt();
-        let io = self.deps.io();
-        let slog = self.deps.slog();
-        let wrpc = self.deps.wrpc();
-        uwrite!(
-            self.src,
-            "func(r interface {{ {io}.ByteReader; {io}.Reader }}) (",
-        );
-        self.print_own(id);
-        uwrite!(
-            self.src,
-            r#", error) {{
-    var x uint32
-    var s uint
-    for i := 0; i < 5; i++ {{
-        {slog}.Debug("reading owned resource handle length byte", "i", i)
-        b, err := r.ReadByte()
-        if err != nil {{
-            if i > 0 && err == {io}.EOF {{
-                err = {io}.ErrUnexpectedEOF
-            }}
-            return nil, {fmt}.Errorf("failed to read owned resource handle length byte: %w", err)
-        }}
-        if b < 0x80 {{
-            if i == 4 && b > 0x0f {{
-                return nil, {errors}.New("owned resource handle length overflows a 32-bit integer")
-            }}
-            x = x | uint32(b)<<s
-            {slog}.Debug("reading owned resource handle bytes", "len", x)
-            buf, err := {wrpc}.ReadBytes(r, x)
-            if err != nil {{
-                return nil, {fmt}.Errorf("failed to read owned resource handle bytes: %w", err)
-            }}
-            return "#,
-        );
-        self.print_own(id);
-        uwrite!(
-            self.src,
-            r#"(buf), nil
-        }}
-        x |= uint32(b&0x7f) << s
-        s += 7
-    }}
-    return nil, {errors}.New("owned resource handle length overflows a 32-bit integer")
-}}({reader})"#,
-        );
-    }
-
-    fn print_read_borrow(&mut self, reader: &str, id: TypeId) {
-        let errors = self.deps.errors();
-        let fmt = self.deps.fmt();
-        let io = self.deps.io();
-        let slog = self.deps.slog();
-        let wrpc = self.deps.wrpc();
-        uwrite!(
-            self.src,
-            "func(r interface {{ {io}.ByteReader; {io}.Reader }}) (",
-        );
-        self.print_borrow(id);
-        uwrite!(
-            self.src,
-            r#", error) {{
-    var x uint32
-    var s uint
-    for i := 0; i < 5; i++ {{
-        {slog}.Debug("reading borrowed resource handle length byte", "i", i)
-        b, err := r.ReadByte()
-        if err != nil {{
-            if i > 0 && err == {io}.EOF {{
-                err = {io}.ErrUnexpectedEOF
-            }}
-            return nil, {fmt}.Errorf("failed to read borrowed resource handle length byte: %w", err)
-        }}
-        if b < 0x80 {{
-            if i == 4 && b > 0x0f {{
-                return nil, {errors}.New("borrowed resource handle length overflows a 32-bit integer")
-            }}
-            x = x | uint32(b)<<s
-            {slog}.Debug("reading borrowed resource handle bytes", "len", x)
-            buf, err := {wrpc}.ReadBytes(r, x)
-            if err != nil {{
-                return nil, {fmt}.Errorf("failed to read borrowed resource handle bytes: %w", err)
-            }}
-            return "#,
-        );
-        self.print_borrow(id);
-        uwrite!(
-            self.src,
-            r#"(buf), nil
-        }}
-        x |= uint32(b&0x7f) << s
-        s += 7
-    }}
-    return nil, {errors}.New("borrowed resource handle length overflows a 32-bit integer")
-}}({reader})"#,
-        );
-    }
-
-    fn print_read_ty(&mut self, ty: &Type, reader: &str, path: &str) {
-        match ty {
-            Type::Id(ty) => self.print_read_tyid(*ty, reader, path),
-            Type::Bool => self.print_read_bool(reader),
-            Type::U8 => self.print_read_u8(reader),
-            Type::U16 => self.print_read_u16(reader),
-            Type::U32 => self.print_read_u32(reader),
-            Type::U64 => self.print_read_u64(reader),
-            Type::S8 => self.print_read_s8(reader),
-            Type::S16 => self.print_read_s16(reader),
-            Type::S32 => self.print_read_s32(reader),
-            Type::S64 => self.print_read_s64(reader),
-            Type::F32 => self.print_read_f32(reader),
-            Type::F64 => self.print_read_f64(reader),
-            Type::Char => self.print_read_char(reader),
-            Type::String => self.print_read_string(reader),
-            Type::ErrorContext => panic!("error-context is not supported"),
-        }
-    }
-
-    fn print_read_tyid(&mut self, id: TypeId, reader: &str, path: &str) {
-        let ty = &self.resolve.types[id];
-        let name = ty
-            .name
-            .as_ref()
-            .map(|name| self.type_path_with_name(id, to_upper_camel_case(name)));
-        match &ty.kind {
-            TypeDefKind::Record(ty) => {
-                self.print_read_record(ty, reader, path, &name.expect("record missing a name"));
-            }
-            TypeDefKind::Resource => unreachable!(),
-            TypeDefKind::Handle(Handle::Own(id)) => self.print_read_own(reader, *id),
-            TypeDefKind::Handle(Handle::Borrow(id)) => self.print_read_borrow(reader, *id),
-            TypeDefKind::Flags(_ty) => {
-                self.print_read_flags(reader, &name.expect("flag missing a name"));
-            }
-            TypeDefKind::Tuple(ty) => self.print_read_tuple(ty, reader, path),
-            TypeDefKind::Variant(ty) => {
-                self.print_read_variant(ty, reader, path, &name.expect("variant missing a name"));
-            }
-            TypeDefKind::Enum(ty) => {
-                self.print_read_enum(ty, reader, &name.expect("enum missing a name"));
-            }
-            TypeDefKind::Option(ty) => self.print_read_option(ty, reader, path),
-            TypeDefKind::Result(ty) => self.print_read_result(ty, reader, path),
-            TypeDefKind::List(ty) => self.print_read_list(ty, reader, path),
-            TypeDefKind::FixedLengthList(ty, size) => {
-                self.print_read_fixed_length_list(ty, *size, reader, path)
-            }
-            TypeDefKind::Map(key, value) => self.print_read_map(key, value, reader, path),
-            TypeDefKind::Future(ty) => self.print_read_future(ty, reader, path),
-            TypeDefKind::Stream(ty) => self.print_read_stream(ty, reader, path),
-            TypeDefKind::Type(ty) => {
-                if let Some(name) = name {
-                    let deferred = self.is_async(ty);
-                    self.push_str("func() (");
-                    self.print_opt_ptr(ty, true);
-                    self.push_str(&name);
-                    self.print_deferred_ret(deferred);
-                    self.push_str(", error) {\n");
-                    if deferred {
-                        self.push_str("v, d, err :=");
-                    } else {
-                        self.push_str("v, err :=");
-                    }
-                    self.print_read_ty(ty, reader, path);
-                    self.push_str("\n");
-                    self.push_str("return (");
-                    self.print_opt_ptr(ty, true);
-                    self.push_str(&name);
-                    if deferred {
-                        self.push_str(")(v), d, err\n");
-                    } else {
-                        self.push_str(")(v), err\n");
-                    }
-                    self.push_str("}()\n");
-                } else {
-                    self.print_read_ty(ty, reader, path);
-                }
-            }
-            TypeDefKind::Unknown => unreachable!(),
-        }
-    }
-
-    fn print_write_bool(&mut self, name: &str, writer: &str) {
-        let io = self.deps.io();
-        let slog = self.deps.slog();
-        uwrite!(
-            self.src,
-            r#"func(v bool, w {io}.ByteWriter) error {{
-                if !v {{
-                    {slog}.Debug("writing `false` byte")
-                    return w.WriteByte(0)
-                }}
-                {slog}.Debug("writing `true` byte")
-                return w.WriteByte(1)
-            }}({name}, {writer})"#,
-        );
-    }
-
-    fn print_write_u8(&mut self, name: &str, writer: &str) {
-        let io = self.deps.io();
-        let slog = self.deps.slog();
-        uwrite!(
-            self.src,
-            r#"func(v uint8, w {io}.ByteWriter) error {{
-                {slog}.Debug("writing u8 byte")
-                return w.WriteByte(v)
-            }}({name}, {writer})"#,
-        );
-    }
-
-    fn print_write_u16(&mut self, name: &str, writer: &str) {
-        let binary = self.deps.binary();
-        let io = self.deps.io();
-        let slog = self.deps.slog();
-        uwrite!(
-            self.src,
-            r#"func(v uint16, w {io}.Writer) (err error) {{
-                b := make([]byte, {binary}.MaxVarintLen16)
-                i := {binary}.PutUvarint(b, uint64(v))
-                {slog}.Debug("writing u16")
-                _, err = w.Write(b[:i])
-                return err
-            }}({name}, {writer})"#,
-        );
-    }
-
-    fn print_write_u32(&mut self, name: &str, writer: &str) {
-        let binary = self.deps.binary();
-        let io = self.deps.io();
-        let slog = self.deps.slog();
-        uwrite!(
-            self.src,
-            r#"func(v uint32, w {io}.Writer) (err error) {{
-                b := make([]byte, {binary}.MaxVarintLen32)
-                i := {binary}.PutUvarint(b, uint64(v))
-                {slog}.Debug("writing u32")
-                _, err = w.Write(b[:i])
-                return err
-            }}({name}, {writer})"#,
-        );
-    }
-
-    fn print_write_u64(&mut self, name: &str, writer: &str) {
-        let binary = self.deps.binary();
-        let io = self.deps.io();
-        let slog = self.deps.slog();
-        uwrite!(
-            self.src,
-            r#"func(v uint64, w {io}.Writer) (err error) {{
-                b := make([]byte, {binary}.MaxVarintLen64)
-                i := {binary}.PutUvarint(b, uint64(v))
-                {slog}.Debug("writing u64")
-                _, err = w.Write(b[:i])
-                return err
-            }}({name}, {writer})"#,
-        );
-    }
-
-    fn print_write_s8(&mut self, name: &str, writer: &str) {
-        let io = self.deps.io();
-        let slog = self.deps.slog();
-        uwrite!(
-            self.src,
-            r#"func(v int8, w {io}.ByteWriter) error {{
-                {slog}.Debug("writing s8 byte")
-                return w.WriteByte(byte(v))
-            }}({name}, {writer})"#,
-        );
-    }
-
-    fn print_write_s16(&mut self, name: &str, writer: &str) {
-        let io = self.deps.io();
-        let fmt = self.deps.fmt();
-        let slog = self.deps.slog();
-        uwrite!(
-            self.src,
-            r#"func(v int16, w {io}.ByteWriter) (err error) {{
-                for {{
-                    b := byte(v & 0x7f)
-                    v >>= 7
-
-                    signb := b & 0x40
-
-                    last := false
-                    if (v == 0 && signb == 0) || (v == -1 && signb != 0) {{
-                        last = true
-                    }} else {{
-                        b = b | 0x80
-                    }}
-                    {slog}.Debug("writing s16 byte")
-                    if err = w.WriteByte(b); err != nil {{
-                        return {fmt}.Errorf("failed to write `s16` byte: %w", err)
-                    }}
-                    if last {{
-                        return nil
-                    }}
-                }}
-            }}({name}, {writer})"#,
-        );
-    }
-
-    fn print_write_s32(&mut self, name: &str, writer: &str) {
-        let io = self.deps.io();
-        let fmt = self.deps.fmt();
-        let slog = self.deps.slog();
-        uwrite!(
-            self.src,
-            r#"func(v int32, w {io}.ByteWriter) (err error) {{
-                for {{
-                    b := byte(v & 0x7f)
-                    v >>= 7
-
-                    signb := b & 0x40
-
-                    last := false
-                    if (v == 0 && signb == 0) || (v == -1 && signb != 0) {{
-                        last = true
-                    }} else {{
-                        b = b | 0x80
-                    }}
-                    {slog}.Debug("writing s32 byte")
-                    if err = w.WriteByte(b); err != nil {{
-                        return {fmt}.Errorf("failed to write `s32` byte: %w", err)
-                    }}
-                    if last {{
-                        return nil
-                    }}
-                }}
-            }}({name}, {writer})"#,
-        );
-    }
-
-    fn print_write_s64(&mut self, name: &str, writer: &str) {
-        let io = self.deps.io();
-        let fmt = self.deps.fmt();
-        let slog = self.deps.slog();
-        uwrite!(
-            self.src,
-            r#"func(v int64, w {io}.ByteWriter) (err error) {{
-                for {{
-                    b := byte(v & 0x7f)
-                    v >>= 7
-
-                    signb := b & 0x40
-
-                    last := false
-                    if (v == 0 && signb == 0) || (v == -1 && signb != 0) {{
-                        last = true
-                    }} else {{
-                        b = b | 0x80
-                    }}
-                    {slog}.Debug("writing s64 byte")
-                    if err = w.WriteByte(b); err != nil {{
-                        return {fmt}.Errorf("failed to write `s64` byte: %w", err)
-                    }}
-                    if last {{
-                        return nil
-                    }}
-                }}
-            }}({name}, {writer})"#,
-        );
-    }
-
-    fn print_write_f32(&mut self, name: &str, writer: &str) {
-        let io = self.deps.io();
-        let slog = self.deps.slog();
-        let wrpc = self.deps.wrpc();
-        uwrite!(
-            self.src,
-            r#"func(v float32, w {io}.Writer) (err error) {{
-                b := make([]byte, 4)
-                {wrpc}.PutFloat32(b, v)
-                {slog}.Debug("writing f32")
-                _, err = w.Write(b)
-                return err
-            }}({name}, {writer})"#,
-        );
-    }
-
-    fn print_write_f64(&mut self, name: &str, writer: &str) {
-        let io = self.deps.io();
-        let slog = self.deps.slog();
-        let wrpc = self.deps.wrpc();
-        uwrite!(
-            self.src,
-            r#"func(v float64, w {io}.Writer) (err error) {{
-                b := make([]byte, 8)
-                {wrpc}.PutFloat64(b, v)
-                {slog}.Debug("writing f64")
-                _, err = w.Write(b)
-                return err
-            }}({name}, {writer})"#,
-        );
-    }
-
-    fn print_write_char(&mut self, name: &str, writer: &str) {
-        let errors = self.deps.errors();
-        let io = self.deps.io();
-        let slog = self.deps.slog();
-        let utf8 = self.deps.utf8();
-        uwrite!(
-            self.src,
-            r#"func(v rune, w {io}.Writer) (err error) {{
-                if !{utf8}.ValidRune(v) {{
-                    return {errors}.New("char is not a valid Unicode scalar value")
-                }}
-                {slog}.Debug("writing char")
-                _, err = w.Write({utf8}.AppendRune(make([]byte, 0, {utf8}.UTFMax), v))
-                return err
-            }}({name}, {writer})"#,
-        );
-    }
-
-    fn print_write_string(&mut self, name: &str, writer: &str) {
-        let binary = self.deps.binary();
-        let errors = self.deps.errors();
-        let io = self.deps.io();
-        let fmt = self.deps.fmt();
-        let math = self.deps.math();
-        let slog = self.deps.slog();
-        let utf8 = self.deps.utf8();
-        uwrite!(
-            self.src,
-            r#"func(v string, w {io}.Writer) (err error) {{
-                if !{utf8}.ValidString(v) {{
-                    return {errors}.New("string is not valid UTF-8")
-                }}
-                n := len(v)
-                if n > {math}.MaxUint32 {{
-                    return {fmt}.Errorf("string byte length of %d overflows a 32-bit integer", n)
-                }}
-                if err = func(v int, w {io}.Writer) error {{
-                    b := make([]byte, {binary}.MaxVarintLen32)
-                    i := {binary}.PutUvarint(b, uint64(v))
-                    {slog}.Debug("writing string byte length", "len", n)
-                    _, err = w.Write(b[:i])
-                    return err
-                }}(n, w); err != nil {{
-                    return {fmt}.Errorf("failed to write string byte length of %d: %w", n, err)
-                }}
-                {slog}.Debug("writing string bytes")
-                _, err = w.Write([]byte(v))
-                if err != nil {{
-                    return {fmt}.Errorf("failed to write string bytes: %w", err)
-                }}
-                return nil
-            }}({name}, {writer})"#,
-        );
-    }
-
-    fn print_write_list(&mut self, ty: &Type, name: &str, writer: &str) {
-        let binary = self.deps.binary();
-        let context = self.deps.context();
-        let fmt = self.deps.fmt();
-        let io = self.deps.io();
-        let math = self.deps.math();
-        let slog = self.deps.slog();
-        let wrpc = self.deps.wrpc();
-
-        self.push_str("func(v ");
-        self.print_list(ty);
-        uwrite!(
-            self.src,
-            r#", w interface {{ {io}.ByteWriter; {io}.Writer }}) (write func({context}.Context, {wrpc}.IndexWriter) error, err error) {{
-        n := len(v)
-        if n > {math}.MaxUint32 {{
-            return nil, {fmt}.Errorf("list length of %d overflows a 32-bit integer", n)
-        }}
-        if err = func(v int, w {io}.Writer) error {{
-            b := make([]byte, {binary}.MaxVarintLen32)
-            i := {binary}.PutUvarint(b, uint64(v))
-            {slog}.Debug("writing list length", "len", n)
-            _, err = w.Write(b[:i])
-            return err
-        }}(n, w); err != nil {{
-            return nil, {fmt}.Errorf("failed to write list length of %d: %w", n, err)
-        }}
-        {slog}.Debug("writing list elements")
-        writes := make(map[uint32]func({context}.Context, {wrpc}.IndexWriter) error, n)
-        for i, e := range v {{
-            write, err := "#
-        );
-        self.print_write_ty(ty, "e", "w");
-        uwrite!(
-            self.src,
-            r#"
-            if err != nil {{
-                return nil, {fmt}.Errorf("failed to write list element %d: %w", i, err)
-            }}
-            if write != nil {{
-                writes[uint32(i)] = write
-            }}
-        }}
-        return {wrpc}.JoinWrites(writes), nil
-    }}({name}, {writer})"#
-        );
-    }
-
-    fn print_write_fixed_length_list(&mut self, ty: &Type, size: u32, name: &str, writer: &str) {
-        let context = self.deps.context();
-        let io = self.deps.io();
-        let slog = self.deps.slog();
-        let wrpc = self.deps.wrpc();
-
-        if is_ty(self.resolve, Type::U8, ty) {
-            self.print_nil_write();
-            uwrite!(
-                self.src,
-                r#"func(v [{size}]byte, w {io}.Writer) error {{
-                {slog}.Debug("writing byte array")
-                _, err := w.Write(v[:])
-                return err
-            }}({name}, {writer})"#,
-            );
-            return;
-        }
-        let fmt = self.deps.fmt();
-        self.push_str("func(v ");
-        self.print_fixed_length_list(ty, size);
-        uwrite!(
-            self.src,
-            r#", w interface {{ {io}.ByteWriter; {io}.Writer }}) (write func({context}.Context, {wrpc}.IndexWriter) error, err error) {{
-        {slog}.Debug("writing list elements")
-        writes := make(map[uint32]func({context}.Context, {wrpc}.IndexWriter) error)
-        for i, e := range v {{
-            write, err := "#
-        );
-        self.print_write_ty(ty, "e", "w");
-        uwrite!(
-            self.src,
-            r#"
-            if err != nil {{
-                return nil, {fmt}.Errorf("failed to write list element %d: %w", i, err)
-            }}
-            if write != nil {{
-                writes[uint32(i)] = write
-            }}
-        }}
-        return {wrpc}.JoinWrites(writes), nil
-    }}({name}, {writer})"#
-        );
-    }
-
-    fn print_write_map(&mut self, key: &Type, value: &Type, name: &str, writer: &str) {
-        let binary = self.deps.binary();
-        let context = self.deps.context();
-        let fmt = self.deps.fmt();
-        let io = self.deps.io();
-        let math = self.deps.math();
-        let slog = self.deps.slog();
-        let wrpc = self.deps.wrpc();
-
-        self.push_str("func(v ");
-        self.print_map(key, value);
-        uwrite!(
-            self.src,
-            r#", w interface {{ {io}.ByteWriter; {io}.Writer }}) (write func({context}.Context, {wrpc}.IndexWriter) error, err error) {{
-        n := len(v)
-        if n > {math}.MaxUint32 {{
-            return nil, {fmt}.Errorf("map length of %d overflows a 32-bit integer", n)
-        }}
-        if err = func(v int, w {io}.Writer) error {{
-            b := make([]byte, {binary}.MaxVarintLen32)
-            i := {binary}.PutUvarint(b, uint64(v))
-            {slog}.Debug("writing map length", "len", n)
-            _, err = w.Write(b[:i])
-            return err
-        }}(n, w); err != nil {{
-            return nil, {fmt}.Errorf("failed to write map length of %d: %w", n, err)
-        }}
-        {slog}.Debug("writing map entries")
-        writes := make(map[uint32]func({context}.Context, {wrpc}.IndexWriter) error, n)
-        var i uint32
-        for k, e := range v {{
-            _, err := "#
-        );
-        self.print_write_ty(key, "k", "w");
-        uwrite!(
-            self.src,
-            r#"
-            if err != nil {{
-                return nil, {fmt}.Errorf("failed to write map entry %d key: %w", i, err)
-            }}
-            write, err := "#
-        );
-        self.print_write_ty(value, "e", "w");
-        uwrite!(
-            self.src,
-            r#"
-            if err != nil {{
-                return nil, {fmt}.Errorf("failed to write map entry %d value: %w", i, err)
-            }}
-            if write != nil {{
-                writes[i] = {wrpc}.IndexWrite(write, 1)
-            }}
-            i++
-        }}
-        return {wrpc}.JoinWrites(writes), nil
-    }}({name}, {writer})"#
-        );
-    }
-
-    fn print_write_option(&mut self, ty: &Type, name: &str, writer: &str) {
-        let context = self.deps.context();
-        let fmt = self.deps.fmt();
-        let io = self.deps.io();
-        let slog = self.deps.slog();
-        let wrpc = self.deps.wrpc();
-
-        self.push_str("func(v ");
-        self.print_option(ty, true);
-        uwrite!(
-            self.src,
-            r#", w interface {{ {io}.ByteWriter; {io}.Writer }}) (func({context}.Context, {wrpc}.IndexWriter) error, error) {{
-        if v == nil {{
-            {slog}.Debug("writing `option::none` status byte")
-            if err := w.WriteByte(0); err != nil {{
-                return nil, {fmt}.Errorf("failed to write `option::none` byte: %w", err)
-            }}
-            return nil, nil
-        }}
-        {slog}.Debug("writing `option::some` status byte")
-        if err := w.WriteByte(1); err != nil {{
-            return nil, {fmt}.Errorf("failed to write `option::some` status byte: %w", err)
-        }}
-        {slog}.Debug("writing `option::some` payload")
-        write, err := "#
-        );
-        let ptr = self.nillable_ptr(ty, false, true);
-        let param = format!("{ptr}v");
-        self.print_write_ty(ty, &param, "w");
-        uwrite!(
-            self.src,
-            r#"
-        if err != nil {{
-            return nil, {fmt}.Errorf("failed to write `option::some` payload: %w", err)
-        }}
-        return write, nil
-    }}({name}, {writer})"#
-        );
-    }
-
-    fn print_write_result(&mut self, ty: &Result_, name: &str, writer: &str) {
-        let context = self.deps.context();
-        let errors = self.deps.errors();
-        let fmt = self.deps.fmt();
-        let io = self.deps.io();
-        let slog = self.deps.slog();
-        let wrpc = self.deps.wrpc();
-
-        self.push_str("func(v *");
-        self.print_result(ty);
-        uwriteln!(
-            self.src,
-            r#", w interface {{ {io}.ByteWriter; {io}.Writer }}) (func({context}.Context, {wrpc}.IndexWriter) error, error) {{
-        switch {{
-            case v.Ok == nil && v.Err == nil:
-                return nil, {errors}.New("both result variants cannot be nil")
-            case v.Ok != nil && v.Err != nil:
-                return nil, {errors}.New("exactly one result variant must non-nil")"#
-        );
-        uwriteln!(
-            self.src,
-            r#"
-            case v.Ok != nil:
-                {slog}.Debug("writing `result::ok` status byte")
-                if err := w.WriteByte(0); err != nil {{
-                    return nil, {fmt}.Errorf("failed to write `result::ok` status byte: %w", err)
-                }}"#
-        );
-        if let Some(ref ty) = ty.ok {
-            uwrite!(
-                self.src,
-                r#"{slog}.Debug("writing `result::ok` payload")
-                    write, err := "#
-            );
-            let ptr = self.nillable_ptr(ty, true, true);
-            let param = format!("{ptr}v.Ok");
-            self.print_write_ty(ty, &param, "w");
-            uwriteln!(
-                self.src,
-                r#"
-                    if err != nil {{
-                        return nil, {fmt}.Errorf("failed to write `result::ok` payload: %w", err)
-                    }}
-                    if write != nil {{
-                        return write, nil
-                    }}"#
-            );
-        }
-        uwriteln!(
-            self.src,
-            r#"return nil, nil
-            default:
-                {slog}.Debug("writing `result::err` status byte")
-                if err := w.WriteByte(1); err != nil {{
-                    return nil, {fmt}.Errorf("failed to write `result::err` status byte: %w", err)
-                }}"#
-        );
-        if let Some(ref ty) = ty.err {
-            uwrite!(
-                self.src,
-                r#"{slog}.Debug("writing `result::err` payload")
-                write, err := "#
-            );
-            let ptr = self.nillable_ptr(ty, true, true);
-            let param = format!("{ptr}v.Err");
-            self.print_write_ty(ty, &param, "w");
-            uwriteln!(
-                self.src,
-                r#"
-                if err != nil {{
-                    return nil, {fmt}.Errorf("failed to write `result::err` payload: %w", err)
-                }}
-                if write != nil {{
-                    return write, nil
-                }}"#
-            );
-        }
-        uwrite!(
-            self.src,
-            r#"return nil, nil
-        }}
-    }}({name}, {writer})"#
-        );
-    }
-
-    fn print_write_tuple(&mut self, ty: &Tuple, name: &str, writer: &str) {
-        match ty.types.as_slice() {
-            [] => {
-                let context = self.deps.context();
-                let wrpc = self.deps.wrpc();
-                uwrite!(
-                    self.src,
-                    "(func({context}.Context, {wrpc}.IndexWriter) error)(nil), error(nil)"
-                );
-            }
-            [ty] => {
-                let context = self.deps.context();
-                let fmt = self.deps.fmt();
-                let io = self.deps.io();
-                let slog = self.deps.slog();
-                let wrpc = self.deps.wrpc();
-
-                self.push_str("func(v ");
-                self.print_opt_ty(ty, true);
-                uwrite!(
-                    self.src,
-                    r#", w interface {{ {io}.ByteWriter; {io}.Writer }}) (func({context}.Context, {wrpc}.IndexWriter) error, error) {{
-        {slog}.Debug("writing tuple element 0")
-        write, err := "#
-                );
-                self.print_write_ty(ty, "v", "w");
-                uwrite!(
-                    self.src,
-                    r#"
-        if err != nil {{
-            return nil, {fmt}.Errorf("failed to write tuple element 0: %w", err)
-        }}
-        return {wrpc}.IndexWrite(write, 0), nil
-    }}({name}, {writer})"#
-                );
-            }
-            _ => {
-                let context = self.deps.context();
-                let fmt = self.deps.fmt();
-                let io = self.deps.io();
-                let wrpc = self.deps.wrpc();
-
-                self.push_str("func(v *");
-                self.print_tuple(ty, true);
-                uwriteln!(
-                    self.src,
-                    r", w interface {{ {io}.ByteWriter; {io}.Writer }}) (func({context}.Context, {wrpc}.IndexWriter) error, error) {{
-        writes := make(map[uint32]func({context}.Context, {wrpc}.IndexWriter) error, {})",
-                    ty.types.len(),
-                );
-                for (i, ty) in ty.types.iter().enumerate() {
-                    let slog = self.deps.slog();
-                    uwrite!(
-                        self.src,
-                        r#"{slog}.Debug("writing tuple element {i}")
-        write{i}, err := "#
-                    );
-                    self.print_write_ty(ty, &format!("v.V{i}"), "w");
-                    uwriteln!(
-                        self.src,
-                        r#"
-        if err != nil {{
-            return nil, {fmt}.Errorf("failed to write tuple element {i}: %w", err)
-        }}
-        if write{i} != nil {{
-                writes[{i}] = write{i}
-        }}"#
-                    );
-                }
-                uwrite!(
-                    self.src,
-                    r#"return {wrpc}.JoinWrites(writes), nil
-    }}({name}, {writer})"#
-                );
-            }
-        }
-    }
-
-    fn print_write_future(&mut self, ty: &Option<Type>, name: &str, writer: &str) {
-        let wrpc = self.deps.wrpc();
-        if let Some(ty) = ty {
-            uwrite!(self.src, "{wrpc}.WriteFuture({name}, {writer}, ");
-            self.print_write_element(ty);
-            self.push_str(")");
-        } else {
-            uwrite!(self.src, "{wrpc}.WriteFutureUnit({name}, {writer})");
-        }
-    }
-
-    fn print_write_element(&mut self, ty: &Type) {
-        let context = self.deps.context();
-        let wrpc = self.deps.wrpc();
-        self.push_str("func(v ");
-        self.print_opt_ty(ty, true);
-        uwrite!(
-            self.src,
-            ", w {wrpc}.ByteWriter) (func({context}.Context, {wrpc}.IndexWriter) error, error) {{\nreturn "
-        );
-        self.print_write_ty(ty, "v", "w");
-        self.push_str("\n}");
-    }
-
-    fn print_write_stream(&mut self, element: &Option<Type>, name: &str, writer: &str) {
-        let wrpc = self.deps.wrpc();
-        match element {
-            Some(ty) if is_ty(self.resolve, Type::U8, ty) => {
-                uwrite!(self.src, "{wrpc}.WriteByteStream({name}, {writer})");
-            }
-            Some(ty) => {
-                uwrite!(self.src, "{wrpc}.WriteStream({name}, {writer}, ");
-                self.print_write_element(ty);
-                self.push_str(")");
-            }
-            None => panic!("streams with no element types are not supported"),
-        }
-    }
-
-    fn print_write_ty(&mut self, ty: &Type, name: &str, writer: &str) {
-        match ty {
-            Type::Id(t) => self.print_write_tyid(*t, name, writer),
-            Type::Bool => {
-                self.print_nil_write();
-                self.print_write_bool(name, writer);
-            }
-            Type::U8 => {
-                self.print_nil_write();
-                self.print_write_u8(name, writer);
-            }
-            Type::U16 => {
-                self.print_nil_write();
-                self.print_write_u16(name, writer);
-            }
-            Type::U32 => {
-                self.print_nil_write();
-                self.print_write_u32(name, writer);
-            }
-            Type::U64 => {
-                self.print_nil_write();
-                self.print_write_u64(name, writer);
-            }
-            Type::S8 => {
-                self.print_nil_write();
-                self.print_write_s8(name, writer);
-            }
-            Type::S16 => {
-                self.print_nil_write();
-                self.print_write_s16(name, writer);
-            }
-            Type::S32 => {
-                self.print_nil_write();
-                self.print_write_s32(name, writer);
-            }
-            Type::S64 => {
-                self.print_nil_write();
-                self.print_write_s64(name, writer);
-            }
-            Type::F32 => {
-                self.print_nil_write();
-                self.print_write_f32(name, writer);
-            }
-            Type::F64 => {
-                self.print_nil_write();
-                self.print_write_f64(name, writer);
-            }
-            Type::Char => {
-                self.print_nil_write();
-                self.print_write_char(name, writer);
-            }
-            Type::String => {
-                self.print_nil_write();
-                self.print_write_string(name, writer);
-            }
-            Type::ErrorContext => panic!("error-context is not supported"),
-        }
-    }
-
-    fn print_write_tyid(&mut self, id: TypeId, name: &str, writer: &str) {
-        let ty = &self.resolve.types[id];
-        match &ty.kind {
-            TypeDefKind::Handle(..) => {
-                let wrpc = self.deps.wrpc();
-                self.print_nil_write();
-                uwrite!(
-                    self.src,
-                    r#"func(v []byte, w {wrpc}.ByteWriter) error {{
-                _, err := {wrpc}.WriteByteList(v, w)
-                return err
-            }}({name}, {writer})"#,
-                );
-            }
-            TypeDefKind::Tuple(ty) => self.print_write_tuple(ty, name, writer),
-            TypeDefKind::Option(ty) => self.print_write_option(ty, name, writer),
-            TypeDefKind::Result(ty) => self.print_write_result(ty, name, writer),
-            TypeDefKind::List(ty) => self.print_write_list(ty, name, writer),
-            TypeDefKind::FixedLengthList(ty, size) => {
-                self.print_write_fixed_length_list(ty, *size, name, writer)
-            }
-            TypeDefKind::Map(key, value) => self.print_write_map(key, value, name, writer),
-            TypeDefKind::Future(ty) => self.print_write_future(ty, name, writer),
-            TypeDefKind::Stream(ty) => self.print_write_stream(ty, name, writer),
-            TypeDefKind::Type(ty) => self.print_write_ty(ty, name, writer),
-            TypeDefKind::Resource => unreachable!(),
-            _ => {
-                if ty.name.is_some() {
-                    uwrite!(self.src, "({name}).WriteToIndex({writer})");
-                    return;
-                }
-                match &ty.kind {
-                    TypeDefKind::Record(_) => {
-                        panic!("unsupported anonymous type reference: record")
-                    }
-                    TypeDefKind::Flags(_) => panic!("unsupported anonymous type reference: flags"),
-                    TypeDefKind::Variant(_) => panic!("unsupported anonymous variant"),
-                    TypeDefKind::Enum(_) => panic!("unsupported anonymous type reference: enum"),
-                    _ => unreachable!(),
-                }
-            }
-        }
-    }
-
-    fn print_read_discriminant(&mut self, repr: Int, reader: &str) {
-        match repr {
-            Int::U8 => {
-                uwrite!(
-                    self.src,
-                    r#"func(r {io}.ByteReader) (uint8, error) {{
-    var x uint8
-    var s uint
-    for i := 0; i < 2; i++ {{
-        {slog}.Debug("reading u8 discriminant byte", "i", i)
-        b, err := r.ReadByte()
-        if err != nil {{
-            if i > 0 && err == {io}.EOF {{
-                err = {io}.ErrUnexpectedEOF
-            }}
-            return x, {fmt}.Errorf("failed to read u8 discriminant byte: %w", err)
-        }}
-        if s == 7 && b > 0x01 {{
-            return x, {errors}.New("discriminant overflows an 8-bit integer")
-        }}
-        if b < 0x80 {{
-            return x | uint8(b)<<s, nil
-        }}
-        x |= uint8(b&0x7f) << s
-        s += 7
-    }}
-    return x, {errors}.New("discriminant overflows an 8-bit integer")
-}}({reader})"#,
-                    errors = self.deps.errors(),
-                    fmt = self.deps.fmt(),
-                    io = self.deps.io(),
-                    slog = self.deps.slog(),
-                );
-            }
-            Int::U16 => self.print_read_u16(reader),
-            Int::U32 => self.print_read_u32(reader),
-            Int::U64 => self.print_read_u64(reader),
-        }
-    }
-
-    fn print_write_discriminant(&mut self, repr: Int, name: &str, writer: &str) {
-        match repr {
-            Int::U8 => uwrite!(
-                self.src,
-                r#"func(v uint8, w {io}.Writer) error {{
-                b := make([]byte, 2)
-                i := {binary}.PutUvarint(b, uint64(v))
-                {slog}.Debug("writing u8 discriminant")
-                _, err := w.Write(b[:i])
-                return err
-            }}(uint8({name}), {writer})"#,
-                binary = self.deps.binary(),
-                io = self.deps.io(),
-                slog = self.deps.slog(),
-            ),
-            Int::U16 => uwrite!(
-                self.src,
-                r#"func(v uint16, w {io}.Writer) error {{
-                b := make([]byte, {binary}.MaxVarintLen16)
-                i := {binary}.PutUvarint(b, uint64(v))
-                {slog}.Debug("writing u16 discriminant")
-                _, err := w.Write(b[:i])
-                return err
-            }}(uint16({name}), {writer})"#,
-                binary = self.deps.binary(),
-                io = self.deps.io(),
-                slog = self.deps.slog(),
-            ),
-            Int::U32 => uwrite!(
-                self.src,
-                r#"func(v uint32, w {io}.Writer) error {{
-                b := make([]byte, {binary}.MaxVarintLen32)
-                i := {binary}.PutUvarint(b, uint64(v))
-                {slog}.Debug("writing u32 discriminant")
-                _, err := w.Write(b[:i])
-                return err
-            }}(uint32({name}), {writer})"#,
-                binary = self.deps.binary(),
-                io = self.deps.io(),
-                slog = self.deps.slog(),
-            ),
-            Int::U64 => uwrite!(
-                self.src,
-                r#"func(v uint64, w {io}.Writer) error {{
-                b := make([]byte, {binary}.MaxVarintLen64)
-                i := {binary}.PutUvarint(b, uint64(v))
-                {slog}.Debug("writing u64 discriminant")
-                _, err := w.Write(b[:i])
-                return err
-            }}(uint64({name}), {writer})"#,
-                binary = self.deps.binary(),
-                io = self.deps.io(),
-                slog = self.deps.slog(),
-            ),
-        }
-    }
-
     pub(super) fn generate_exports<'a>(
         &mut self,
         identifier: Identifier<'a>,
@@ -2376,290 +149,77 @@ impl InterfaceGenerator<'_> {
             self.src,
             "// Handler handles invocations of the exported functions.
 //
-// The context passed to a method is cancelled once the invocation completes.
-// `context.Cause` then returns `context.Canceled` if the invocation succeeded,
-// or the error that failed it, such as a pending parameter that could not be
-// received. The channel of such a parameter is never closed, so a method
-// waiting on it must also wait on the context's `Done` channel.
+// The context passed to a method is cancelled once the invocation completes or fails,
+// for example, if a pending parameter could not be received. The channel
+// of such a parameter is never closed, so a method waiting on it must also
+// wait on the context's `Done` channel.
 type Handler interface {{"
         );
         for method in &methods {
             self.src.push_str(method);
         }
-        uwriteln!(
-            self.src,
-            "
-}}
-
-func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {{
-    stops := make([]func() error, 0, {})
-    stop = func() error {{
-        for _, stop := range stops {{
-            if err := stop(); err != nil {{
-                return err
-            }}
-        }}
-        return nil
-    }}",
-            funcs_to_export.len(),
-            wrpc = self.deps.wrpc(),
-        );
+        let context = self.deps.context();
+        let wrpc = self.deps.wrpc();
         let instance = match identifier {
             Identifier::Interface(.., name) => self.resolve.name_canonicalized_world_key(name),
-            Identifier::World => String::new(),
+            Identifier::World => String::default(),
         };
-        for (i, func) in funcs_to_export.iter().enumerate() {
-            let name = rpc_func_name(func);
-            let fqn = if instance.is_empty() {
-                name.to_string()
-            } else {
-                format!("{instance}.{name}")
-            };
+        uwriteln!(
+            self.src,
+            r#"
+}}
 
-            let bytes = self.deps.bytes();
-            let context = self.deps.context();
-            let fmt = self.deps.fmt();
-            let slog = self.deps.slog();
-            let wrpc = self.deps.wrpc();
+// HandleInterface serves the invocation with header `hdr` over `c` using `h`.
+// It returns false if the function is not exported by this interface.
+func HandleInterface(ctx {context}.Context, hdr {wrpc}.Header, c *{wrpc}.Framed, h Handler) (bool, error) {{
+    if hdr.Instance != "{instance}" {{
+        return false, nil
+    }}
+    switch hdr.Name {{"#,
+        );
+        for func in funcs_to_export {
+            let name = rpc_func_name(func);
+            let (pt, pc) = self.params_tuple(func);
+            let (rt, rc, inner) = self.results_tuple(func);
+            let p = if func.params.is_empty() { "_" } else { "p" };
             uwrite!(
                 self.src,
                 r#"
-    stop{i}, err := s.Serve("{instance}", "{name}", func(ctx {context}.Context, w {wrpc}.IndexWriteCloser, r {wrpc}.IndexReadCloser) {{"#,
+    case "{name}":
+        return true, {wrpc}.Serve[{pt}, {rt}](ctx, c, {pc}, {rc}, func(ctx {context}.Context, {p} {pt}) ({rt}, error) {{
+            "#,
             );
-            let errors = self.deps.errors();
-            let sync = self.deps.sync();
-            uwrite!(
-                self.src,
-                r#"
-        ctx, cancel := {context}.WithCancelCause(ctx)
-        var ok bool
-        defer func() {{
-            var err error
-            if !ok {{
-                err = {context}.Cause(ctx)
-                if err == nil {{
-                    err = {errors}.New("invocation failed")
-                }}
-            }}
-            if err := {wrpc}.CloseWithError(w, err); err != nil {{
-                {slog}.DebugContext(ctx, "failed to close writer", "instance", "{instance}", "name", "{name}", "err", err)
-            }}
-        }}()
-        var wg {sync}.WaitGroup
-        defer func() {{
-            go func() {{
-                wg.Wait()
-                cancel(nil)
-            }}()
-        }}()"#,
-            );
-            for (i, Param { ty, .. }) in func.params.iter().enumerate() {
-                let d = if self.is_async(ty) {
-                    format!("d{i}, ")
-                } else {
-                    String::new()
-                };
-                uwrite!(
-                    self.src,
-                    r#"
-        {slog}.DebugContext(ctx, "reading parameter", "i", {i})
-        p{i}, {d}err := "#
-                );
-                self.print_read_ty(ty, "r", &format!("[]uint32{{ {i} }}"));
-                self.push_str("\n");
-                uwrite!(
-                    self.src,
-                    r#"
-        if err != nil {{
-            {slog}.WarnContext(ctx, "failed to read parameter", "i", {i}, "instance", "{instance}", "name", "{name}", "err", err)
-            cancel(err)
-            if err := r.Close(); err != nil {{
-                {slog}.ErrorContext(ctx, "failed to close reader", "instance", "{instance}", "name", "{name}", "err", err)
-            }}
-            return
-        }}"#,
-                );
-            }
-            for (i, Param { ty, .. }) in func.params.iter().enumerate() {
-                if self.is_async(ty) {
-                    uwrite!(
-                        self.src,
-                        r#"
-        if d{i} != nil {{
-            wg.Add(1)
-            go func() {{
-                defer wg.Done()
-                if err := d{i}(ctx); err != nil {{
-                    {slog}.WarnContext(ctx, "failed to read deferred parameter", "i", {i}, "instance", "{instance}", "name", "{name}", "err", err)
-                    cancel(err)
-                    if err := {wrpc}.CloseWithError(w, err); err != nil {{
-                        {slog}.DebugContext(ctx, "failed to close writer", "instance", "{instance}", "name", "{name}", "err", err)
-                    }}
-                }}
-            }}()
-        }}"#,
-                    );
-                }
-            }
-            uwriteln!(
-                self.src,
-                r#"
-        {slog}.DebugContext(ctx, "calling `{fqn}` handler")"#,
-            );
-            let results: Box<[Type]> = func
+            let results = func
                 .result
                 .iter()
                 .flat_map(|ty| flatten_ty(self.resolve, ty))
-                .collect();
-            for (i, _) in results.iter().enumerate() {
+                .count();
+            for i in 0..results {
                 uwrite!(self.src, "r{i}, ");
             }
-            self.push_str("err ");
-            if !results.is_empty() {
-                self.push_str(":");
+            uwrite!(self.src, "err := h.{}(ctx", go_func_name(func));
+            for i in 0..func.params.len() {
+                uwrite!(self.src, ", p.V{i}");
             }
-            self.push_str("= h.");
-            self.push_str(&go_func_name(func));
-            self.push_str("(ctx");
-            for (i, _) in func.params.iter().enumerate() {
-                uwrite!(self.src, ", p{i}");
-            }
+            self.push_str(")\n");
+            let rv = match (&func.result, inner) {
+                (None, ..) => "struct{}{}".to_string(),
+                (Some(..), Some(inner)) => {
+                    let members = (0..results)
+                        .map(|i| format!("V{i}: r{i}"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!("{rt}{{V0: {inner}{{{members}}}}}")
+                }
+                (Some(..), None) => format!("{rt}{{V0: r0}}"),
+            };
             uwriteln!(
                 self.src,
-                r#")
-        if cErr := r.Close(); cErr != nil {{
-            {slog}.ErrorContext(ctx, "failed to close reader", "instance", "{instance}", "name", "{name}", "err", cErr)
-        }}
-        if err != nil {{
-            {slog}.WarnContext(ctx, "failed to handle invocation", "instance", "{instance}", "name", "{name}", "err", err)
-            cancel(err)
-            return
-        }}
-
-        var buf {bytes}.Buffer
-        writes := make(map[uint32]func({context}.Context, {wrpc}.IndexWriter) error, {})"#,
-                results.len()
-            );
-            for (i, ty) in results.iter().enumerate() {
-                uwrite!(
-                    self.src,
-                    r#"
-        write{i}, err := "#
-                );
-                self.print_write_ty(ty, &format!("r{i}"), "&buf");
-                uwrite!(
-                    self.src,
-                    r#"
-        if err != nil {{
-            {slog}.WarnContext(ctx, "failed to write result value", "i", {i}, "instance", "{instance}", "name", "{name}", "err", err)
-            cancel(err)
-            return
-        }}
-        if write{i} != nil {{
-            writes[{i}] = write{i}
-        }}"#,
-                );
-            }
-            uwrite!(
-                self.src,
-                r#"
-        {slog}.DebugContext(ctx, "transmitting `{fqn}` result")
-        _, err = w.Write(buf.Bytes())
-        if err != nil {{
-            {slog}.WarnContext(ctx, "failed to write result", "instance", "{instance}", "name", "{name}", "err", err)
-            cancel(err)
-            return
-        }}
-        if len(writes) > 0 {{
-            for index, write := range writes {{
-                _ = write
-                switch index {{"#
-            );
-
-            let mut idx = 0usize;
-            for (i, ty) in func.result.iter().enumerate() {
-                for (j, _) in flatten_ty(self.resolve, ty).enumerate() {
-                    uwrite!(
-                        self.src,
-                        r#"
-                    case {idx}:
-                        w, err := w.Index({i}"#,
-                    );
-                    if is_tuple(self.resolve, ty) {
-                        uwrite!(self.src, ", {j}");
-                    }
-                    uwrite!(
-                        self.src,
-                        r#")
-                        if err != nil {{
-                            {slog}.ErrorContext(ctx, "failed to index result writer", "instance", "{instance}", "name", "{name}", "err", err)
-                            cancel(err)
-                            return
-                        }}
-                        write := write"#,
-                    );
-                    self.push_str(
-                        r#"
-                        wg.Add(1)
-                        go func() {
-                            defer wg.Done()"#,
-                    );
-                    uwrite!(
-                        self.src,
-                        r#"
-                            err := write(ctx, w)
-                            if err != nil {{
-                                {slog}.WarnContext(ctx, "failed to write nested result value", "instance", "{instance}", "name", "{name}", "err", err)
-                                cancel(err)
-                            }}
-                            if err := {wrpc}.CloseWithError(w, err); err != nil {{
-                                {slog}.DebugContext(ctx, "failed to close nested result writer", "instance", "{instance}", "name", "{name}", "err", err)
-                            }}
-                        }}()"#,
-                    );
-                    idx = idx.saturating_add(1);
-                }
-            }
-
-            uwrite!(
-                self.src,
-                r#"
-                }}
-            }}
-        }}
-        ok = true
-    }}, "#,
-            );
-            for (i, Param { ty, .. }) in func.params.iter().enumerate() {
-                let (nested, fut) = async_paths_ty(self.resolve, ty);
-                for path in nested {
-                    self.push_str(wrpc);
-                    self.push_str(".NewSubscribePath().Index(");
-                    uwrite!(self.src, "{i})");
-                    for p in path {
-                        if let Some(p) = p {
-                            uwrite!(self.src, ".Index({p})");
-                        } else {
-                            self.push_str(".Wildcard()");
-                        }
-                    }
-                    self.push_str(", ");
-                }
-                if fut {
-                    uwrite!(self.src, "{wrpc}.NewSubscribePath().Index({i}), ");
-                }
-            }
-            uwriteln!(
-                self.src,
-                r#")
-             if err != nil {{
-                 return nil, {fmt}.Errorf("failed to serve `{fqn}`: %w", err)
-             }}
-             stops = append(stops, stop{i})"#,
+                r#"            return {rv}, err
+        }})"#
             );
         }
-        self.push_str("return stop, nil\n");
-        self.push_str("}\n");
+        self.push_str("}\nreturn false, nil\n}\n");
         true
     }
 
@@ -2674,8 +234,6 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
                 continue;
             }
 
-            let context = self.deps.context();
-            let fmt = self.deps.fmt();
             let wrpc = self.deps.wrpc();
 
             self.print_docs_and_params(func);
@@ -2691,301 +249,439 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
                 self.print_opt_ty(ty, true);
                 self.src.push_str(", ");
             }
-
             let async_params = func.params.iter().any(|param| self.is_async(&param.ty));
-            let async_results = results.iter().filter(|ty| self.is_async(ty)).count();
-            if async_params || async_results > 0 {
-                self.push_str("errs__ <-chan error, ");
+            let async_results = func.result.iter().any(|ty| self.is_async(ty));
+            let returns_invocation = func.result.is_some() && (async_params || async_results);
+            if returns_invocation {
+                uwrite!(self.src, "inv__ *{wrpc}.Invocation, ");
             }
-            self.push_str("err__ error) {");
-            if !func.params.is_empty() {
-                let bytes = self.deps.bytes();
-                uwrite!(
-                    self.src,
-                    r"
-    var buf__ {bytes}.Buffer",
-                );
-                if async_params {
-                    uwrite!(
-                        self.src,
-                        r"
-    var writeCount__ uint32"
-                    );
-                }
-                for (i, Param { name, ty, .. }) in func.params.iter().enumerate() {
-                    uwrite!(
-                        self.src,
-                        r"
-    write{i}__, err__ :="
-                    );
-                    self.print_write_ty(ty, &to_go_ident(name), "&buf__");
-                    uwrite!(
-                        self.src,
-                        r#"
-    if err__ != nil {{
-        err__ = {fmt}.Errorf("failed to write `{name}` parameter: %w", err__)
-        return
-    }}"#,
-                    );
-                    if async_params {
-                        uwrite!(
-                            self.src,
-                            r"
-    if write{i}__ != nil {{ 
-        writeCount__++
-    }}"
-                        );
-                    }
-                }
-                if async_params {
-                    uwrite!(
-                        self.src,
-                        r"
-    writes__ := make(map[uint32]func({context}.Context, {wrpc}.IndexWriter) error, uint(writeCount__))",
-                    );
-                }
-                for (i, Param { name, .. }) in func.params.iter().enumerate() {
-                    uwrite!(
-                        self.src,
-                        r"
-    if write{i}__ != nil {{"
-                    );
-                    if async_params {
-                        uwrite!(
-                            self.src,
-                            r"
-        writes__[{i}] = write{i}__",
-                        );
-                    } else {
-                        uwrite!(
-                            self.src,
-                            r#"
-        err__ = {errors}.New("unexpected deferred write for synchronous `{name}` parameter")
-        return"#,
-                            errors = self.deps.errors(),
-                        );
-                    }
-                    uwrite!(
-                        self.src,
-                        r#"
-    }}"#,
-                    );
-                }
-            }
-            uwrite!(
-                self.src,
-                r#"
-    var w__ {wrpc}.IndexWriteCloser
-    var r__ {wrpc}.IndexReadCloser
-    w__, r__, err__ = wrpc__.Invoke(ctx__, "{instance}", ""#
-            );
-            self.src.push_str(rpc_func_name(func));
-            self.src.push_str("\",\n");
-            for (i, ty) in func.result.iter().enumerate() {
-                let (nested, fut) = async_paths_ty(self.resolve, ty);
-                for path in nested {
-                    uwrite!(self.src, "{wrpc}.NewSubscribePath().Index({i})");
-                    for p in path {
-                        if let Some(p) = p {
-                            uwrite!(self.src, ".Index({p})");
-                        } else {
-                            self.push_str(".Wildcard()");
-                        }
-                    }
-                    self.push_str(", ");
-                }
-                if fut {
-                    uwrite!(self.src, "{wrpc}.NewSubscribePath().Index({i}), ");
-                }
-            }
-            let slog = self.deps.slog();
-            uwrite!(
-                self.src,
-                r#"
-    )
-    if err__ != nil {{
-        err__ = {fmt}.Errorf("failed to invoke `{name}`: %w", err__)
-        return
-    }}
-    defer func() {{
-        if err__ != nil && ctx__.Err() == nil {{
-            if err := {wrpc}.CloseWithError(w__, err__); err != nil {{
-                {slog}.DebugContext(ctx__, "failed to close outgoing stream", "instance", "{instance}", "name", "{name}", "err", err)
-            }}
-        }}
-        if err := r__.Close(); err != nil {{
-            {slog}.ErrorContext(ctx__, "failed to close reader", "instance", "{instance}", "name", "{name}", "err", err)
-        }}
-    }}()"#,
-                name = func.name,
-            );
-            if !func.params.is_empty() {
-                uwrite!(
-                    self.src,
-                    r#"
-    _, err__ = w__.Write(buf__.Bytes())
-    if err__ != nil {{
-        err__ = {fmt}.Errorf("failed to write parameters: %w", err__)
-        return
-    }}"#,
-                );
-            }
-            uwrite!(
-                self.src,
-                r#"
-    err__ = w__.ClosePath()
-    if err__ != nil {{
-        err__ = {fmt}.Errorf("failed to close parameters: %w", err__)
-        return
-    }}"#,
-            );
-            if async_params || async_results > 0 {
-                let sync = self.deps.sync();
-                let count = if async_params {
-                    format!("uint(writeCount__) + {async_results}")
-                } else {
-                    async_results.to_string()
-                };
-                uwrite!(
-                    self.src,
-                    r#"
-    errCh__ := make(chan error, {count})
-    errs__ = errCh__
-    var wg__ {sync}.WaitGroup
-    defer func() {{
-        go func() {{
-            wg__.Wait()
-            close(errCh__)
-        }}()
-    }}()"#
-                );
-            }
-            if async_params {
-                uwrite!(
-                    self.src,
-                    r#"
-    if writeCount__ > 0 {{
-        for index, write := range writes__ {{
-            w, err := w__.Index(index)
-            if err != nil {{
-                err__ = {fmt}.Errorf("failed to index param writer at index `%v`: %w", index, err)
-                return
-            }}
-            wg__.Add(1)
-            write := write
-            go func() {{
-                defer wg__.Done()
-                err := write(ctx__, w)
-                if err != nil {{
-                    errCh__ <- err
-                }}
-                if err := {wrpc}.CloseWithError(w, err); err != nil {{
-                    {slog}.DebugContext(ctx__, "failed to close nested param writer", "instance", "{instance}", "name", "{0}", "err", err)
-                }}
-            }}()
-        }}
-    }}"#,
-                    func.name,
-                );
-            }
-            uwrite!(
-                self.src,
-                r#"
-    if cErr__ := w__.Close(); cErr__ != nil {{
-        {slog}.DebugContext(ctx__, "failed to close outgoing stream", "instance", "{instance}", "name", "{}", "err", cErr__)
-    }}"#,
-                func.name,
-            );
+            self.push_str("err__ error) {\n");
 
-            let mut idx = 0usize;
-            let mut deferreds = Vec::default();
-            for (i, rty) in func.result.iter().enumerate() {
-                for (j, ty) in flatten_ty(self.resolve, rty).enumerate() {
-                    let deferred = self.is_async(&ty);
-                    if deferred {
-                        let context = self.deps.context();
-                        uwrite!(
-                            self.src,
-                            "
-    var d{idx}__ func({context}.Context) error
-    r{idx}__, d{idx}__, err__ = "
-                        );
-                    } else {
-                        uwrite!(
-                            self.src,
-                            "
-    r{idx}__, err__ = "
-                        );
-                    }
-                    let path = if is_tuple(self.resolve, rty) {
-                        format!("[]uint32{{ {i}, {j} }}")
-                    } else {
-                        format!("[]uint32{{ {idx} }}")
-                    };
-                    self.print_read_ty(&ty, "r__", &path);
-                    uwrite!(
-                        self.src,
-                        r#"
-    if err__ != nil {{
-        err__ = {fmt}.Errorf("failed to read result {idx}: %w", err__)
-        return 
-    }}"#,
-                    );
-                    if deferred {
-                        deferreds.push(idx);
-                    }
-                    idx = idx.saturating_add(1);
+            let (pt, pc) = self.params_tuple(func);
+            let (rt, rc, inner) = self.results_tuple(func);
+            let pv = match func.params.as_slice() {
+                [] => "struct{}{}".to_string(),
+                params => {
+                    let members = params
+                        .iter()
+                        .enumerate()
+                        .map(|(i, Param { name, .. })| format!("V{i}: {}", to_go_ident(name)))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!("{pt}{{{members}}}")
                 }
-            }
-            for idx in deferreds {
-                uwrite!(
-                    self.src,
-                    r#"
-    if d{idx}__ != nil {{
-        wg__.Add(1)
-        go func() {{
-            defer wg__.Done()
-            if err := d{idx}__(ctx__); err != nil {{
-                errCh__ <- err
-                if ctx__.Err() == nil {{
-                    if err := {wrpc}.CloseWithError(w__, err); err != nil {{
-                        {slog}.DebugContext(ctx__, "failed to close outgoing stream", "instance", "{instance}", "name", "{name}", "err", err)
-                    }}
-                }}
-            }}
-        }}()
-    }}"#,
-                    name = func.name,
-                );
-            }
-            if func.result.is_none() {
-                // A function with no results still completes with an (empty)
-                // result transmission; await it so the call is synchronous and
-                // the invocation's server-side effects are observable on return.
-                let io = self.deps.io();
-                let fmt = self.deps.fmt();
-                uwrite!(
-                    self.src,
-                    r#"
-    if _, err__ = {io}.ReadAll(r__); err__ != nil {{
-        err__ = {fmt}.Errorf("failed to await `{name}` completion: %w", err__)
-        return
-    }}
-    err__ = nil"#,
-                    name = func.name,
-                );
-            }
+            };
+            let res = if results.is_empty() { "_" } else { "res__" };
+            let name = rpc_func_name(func);
             uwriteln!(
                 self.src,
-                r#"
-    return
-}}"#,
+                r#"{res}, inv__, err__ := {wrpc}.Invoke[{pt}, {rt}](ctx__, c__, "{instance}", "{name}", {pc}, {rc}, {pv})
+    if err__ != nil {{
+        return
+    }}"#,
             );
+            if !returns_invocation {
+                self.push_str(
+                    r"if err__ = inv__.Wait(); err__ != nil {
+        return
+    }
+",
+                );
+            }
+            self.push_str("return ");
+            for i in 0..results.len() {
+                if inner.is_some() {
+                    uwrite!(self.src, "res__.V0.V{i}, ");
+                } else {
+                    self.push_str("res__.V0, ");
+                }
+            }
+            if returns_invocation {
+                self.push_str("inv__, ");
+            }
+            self.push_str("nil\n}\n");
         }
     }
 
+    /// Returns the type and codec of the parameters of `func`
+    fn params_tuple(&mut self, func: &Function) -> (String, String) {
+        let types = func.params.iter().map(|Param { ty, .. }| *ty).collect();
+        self.root_tuple(types)
+    }
+
+    /// Returns the type and codec of the results of `func` and, if the result is a tuple, the type of it
+    fn results_tuple(&mut self, func: &Function) -> (String, String, Option<String>) {
+        let wrpc = self.deps.wrpc();
+        match &func.result {
+            None => (
+                "struct{}".to_string(),
+                format!("{wrpc}.UnitCodec{{}}"),
+                None,
+            ),
+            Some(ty) if is_tuple(self.resolve, ty) => {
+                let (t, c) = self.root_tuple(flatten_ty(self.resolve, ty).collect());
+                (
+                    format!("{wrpc}.Tuple1[{t}]"),
+                    format!("{wrpc}.Tuple1Codec[{t}]{{C0: {c}}}"),
+                    Some(t),
+                )
+            }
+            Some(ty) => {
+                let t = self.opt_ty(ty);
+                let c = self.codec(ty);
+                (
+                    format!("{wrpc}.Tuple1[{t}]"),
+                    format!("{wrpc}.Tuple1Codec[{t}]{{C0: {c}}}"),
+                    None,
+                )
+            }
+        }
+    }
+
+    /// Returns the type and codec of a tuple of `types`, where a single type is a `wrpc.Tuple1`
+    fn root_tuple(&mut self, types: Vec<Type>) -> (String, String) {
+        let wrpc = self.deps.wrpc();
+        match types.as_slice() {
+            [] => ("struct{}".to_string(), format!("{wrpc}.UnitCodec{{}}")),
+            [ty] => {
+                let t = self.opt_ty(ty);
+                let c = self.codec(ty);
+                (
+                    format!("{wrpc}.Tuple1[{t}]"),
+                    format!("{wrpc}.Tuple1Codec[{t}]{{C0: {c}}}"),
+                )
+            }
+            _ => {
+                let tuple = Tuple { types };
+                let t = self.type_string(|g| g.print_tuple(&tuple, true));
+                let c = self.tuple_codec(&tuple);
+                (t, c)
+            }
+        }
+    }
+
+    fn type_string(&mut self, f: impl FnOnce(&mut Self)) -> String {
+        let prev = mem::take(&mut self.src);
+        f(self);
+        mem::replace(&mut self.src, prev).into()
+    }
+
+    fn opt_ty(&mut self, ty: &Type) -> String {
+        self.type_string(|g| g.print_opt_ty(ty, true))
+    }
+
+    fn value_ty(&mut self, ty: &Type) -> String {
+        self.type_string(|g| g.print_ty(ty, true))
+    }
+
+    /// Returns the codec of values of type `ty` as printed by `print_opt_ty`
+    fn codec(&mut self, ty: &Type) -> String {
+        if let Type::Id(id) = ty {
+            match &self.resolve.types[*id].kind {
+                TypeDefKind::Type(ty) => return self.codec(ty),
+                TypeDefKind::Record(..)
+                | TypeDefKind::Variant(..)
+                | TypeDefKind::Flags(..)
+                | TypeDefKind::Result(..)
+                | TypeDefKind::Resource => {}
+                TypeDefKind::Tuple(Tuple { types }) if types.len() >= 2 => {}
+                _ => return self.value_codec(ty),
+            }
+            let wrpc = self.deps.wrpc();
+            let t = self.type_string(|g| g.print_tyid(*id, true));
+            let c = self.value_codec(ty);
+            return format!("{wrpc}.PtrCodec[{t}]{{Elem: {c}}}");
+        }
+        self.value_codec(ty)
+    }
+
+    /// Returns the codec of values of type `ty` as printed by `print_ty`
+    fn value_codec(&mut self, ty: &Type) -> String {
+        let wrpc = self.deps.wrpc();
+        let id = match ty {
+            Type::Bool => return format!("{wrpc}.BoolCodec{{}}"),
+            Type::U8 => return format!("{wrpc}.U8Codec{{}}"),
+            Type::U16 => return format!("{wrpc}.U16Codec{{}}"),
+            Type::U32 => return format!("{wrpc}.U32Codec{{}}"),
+            Type::U64 => return format!("{wrpc}.U64Codec{{}}"),
+            Type::S8 => return format!("{wrpc}.S8Codec{{}}"),
+            Type::S16 => return format!("{wrpc}.S16Codec{{}}"),
+            Type::S32 => return format!("{wrpc}.S32Codec{{}}"),
+            Type::S64 => return format!("{wrpc}.S64Codec{{}}"),
+            Type::F32 => return format!("{wrpc}.F32Codec{{}}"),
+            Type::F64 => return format!("{wrpc}.F64Codec{{}}"),
+            Type::Char => return format!("{wrpc}.CharCodec{{}}"),
+            Type::String => return format!("{wrpc}.StringCodec{{}}"),
+            Type::ErrorContext => panic!("error-context is not supported"),
+            Type::Id(id) => *id,
+        };
+        let ty = &self.resolve.types[id];
+        match &ty.kind {
+            TypeDefKind::Record(..)
+            | TypeDefKind::Variant(..)
+            | TypeDefKind::Flags(..)
+            | TypeDefKind::Enum(..) => {
+                let name = ty.name.as_ref().expect("type missing a name");
+                let name = format!("{}Codec", to_upper_camel_case(name));
+                let name = self.type_path_with_name(id, name);
+                format!("{name}{{}}")
+            }
+            TypeDefKind::Resource => unreachable!(),
+            TypeDefKind::Handle(Handle::Own(id)) => {
+                let t = self.type_string(|g| g.print_tyid(*id, true));
+                format!("{wrpc}.OwnCodec[{t}]{{}}")
+            }
+            TypeDefKind::Handle(Handle::Borrow(id)) => {
+                let t = self.type_string(|g| g.print_tyid(*id, true));
+                format!("{wrpc}.BorrowCodec[{t}]{{}}")
+            }
+            TypeDefKind::Tuple(ty) => self.tuple_codec(ty),
+            TypeDefKind::Option(ty) => self.option_codec(ty),
+            TypeDefKind::Result(Result_ { ok, err }) => {
+                let o = self.type_string(|g| g.print_optional_ty(ok.as_ref()));
+                let e = self.type_string(|g| g.print_optional_ty(err.as_ref()));
+                let oc = ok.as_ref().map_or_else(
+                    || format!("{wrpc}.UnitCodec{{}}"),
+                    |ty| self.value_codec(ty),
+                );
+                let ec = err.as_ref().map_or_else(
+                    || format!("{wrpc}.UnitCodec{{}}"),
+                    |ty| self.value_codec(ty),
+                );
+                format!("{wrpc}.ResultCodec[{o}, {e}]{{Ok: {oc}, Err: {ec}}}")
+            }
+            TypeDefKind::List(ty) if is_ty(self.resolve, Type::U8, ty) => {
+                format!("{wrpc}.BytesCodec{{}}")
+            }
+            TypeDefKind::List(ty) => {
+                let t = self.opt_ty(ty);
+                let c = self.codec(ty);
+                format!("{wrpc}.ListCodec[{t}]{{Elem: {c}}}")
+            }
+            TypeDefKind::FixedLengthList(ty, size) => {
+                let elem = self.opt_ty(ty);
+                let t = format!("[{size}]{elem}");
+                let c = self.codec(ty);
+                self.helper("fixedListCodec", &t, &c, |_| {
+                    (
+                        format!("return {wrpc}.EncodeFixedList({c}, v[:], dst)\n"),
+                        format!(
+                            "var v {t}\nrx, err := {wrpc}.DecodeFixedList({c}, r, v[:])\nreturn v, rx, err\n"
+                        ),
+                    )
+                })
+            }
+            TypeDefKind::Map(key, value) => {
+                let kt = self.opt_ty(key);
+                let vt = self.opt_ty(value);
+                let kc = self.codec(key);
+                let vc = self.codec(value);
+                format!("{wrpc}.MapCodec[{kt}, {vt}]{{Key: {kc}, Value: {vc}}}")
+            }
+            TypeDefKind::Future(None) => {
+                format!("{wrpc}.FutureCodec[struct{{}}]{{Elem: {wrpc}.UnitCodec{{}}}}")
+            }
+            TypeDefKind::Future(Some(ty)) => {
+                let t = self.opt_ty(ty);
+                let c = self.codec(ty);
+                format!("{wrpc}.FutureCodec[{t}]{{Elem: {c}}}")
+            }
+            TypeDefKind::Stream(None) => {
+                format!("{wrpc}.StreamCodec[struct{{}}]{{Elem: {wrpc}.UnitCodec{{}}}}")
+            }
+            TypeDefKind::Stream(Some(ty)) if is_ty(self.resolve, Type::U8, ty) => {
+                format!("{wrpc}.ByteStreamCodec{{}}")
+            }
+            TypeDefKind::Stream(Some(ty)) => {
+                let t = self.opt_ty(ty);
+                let c = self.codec(ty);
+                format!("{wrpc}.StreamCodec[{t}]{{Elem: {c}}}")
+            }
+            TypeDefKind::Type(ty) => self.value_codec(ty),
+            TypeDefKind::Unknown => unreachable!(),
+        }
+    }
+
+    /// Returns the codec of `option<ty>` values as printed by `print_option`
+    fn option_codec(&mut self, ty: &Type) -> String {
+        let wrpc = self.deps.wrpc();
+        let t = self.value_ty(ty);
+        let mut inner = ty;
+        while let Type::Id(id) = inner
+            && let TypeDefKind::Type(ty) = &self.resolve.types[*id].kind
+        {
+            inner = ty;
+        }
+        if let Type::Id(id) = inner
+            && let TypeDefKind::List(..)
+            | TypeDefKind::Map(..)
+            | TypeDefKind::Future(..)
+            | TypeDefKind::Stream(..) = self.resolve.types[*id].kind
+        {
+            let c = self.value_codec(ty);
+            return self.helper("optionCodec", &t, &c, |_| {
+                (
+                    format!(
+                        "if v == nil {{\nreturn append(dst, 0), nil, nil\n}}\nreturn ({c}).Encode(v, append(dst, 1))\n"
+                    ),
+                    format!(
+                        "v, rx, err := ({wrpc}.OptionCodec[{t}]{{Elem: {c}}}).Decode(r)\nif err != nil || v == nil {{\nreturn nil, nil, err\n}}\nreturn *v, rx, nil\n"
+                    ),
+                )
+            });
+        }
+        let c = self.value_codec(ty);
+        format!("{wrpc}.OptionCodec[{t}]{{Elem: {c}}}")
+    }
+
+    /// Returns the codec of tuple values as printed by `print_tuple`
+    fn tuple_codec(&mut self, tuple: &Tuple) -> String {
+        let wrpc = self.deps.wrpc();
+        match tuple.types.as_slice() {
+            [] => format!("{wrpc}.UnitCodec{{}}"),
+            [ty] => {
+                let t = self.opt_ty(ty);
+                let c = self.codec(ty);
+                self.helper("tupleCodec", &t, &c, |_| {
+                    (
+                        format!(
+                            "dst, tx, err := ({c}).Encode(v, dst)\nif err != nil {{\nreturn nil, nil, err\n}}\nreturn dst, {wrpc}.NewTransmitters(tx), nil\n"
+                        ),
+                        format!(
+                            "v, rx, err := ({c}).Decode(r)\nif err != nil {{\nreturn v, nil, err\n}}\nreturn v, {wrpc}.NewReceivers(rx), nil\n"
+                        ),
+                    )
+                })
+            }
+            types if types.len() > 16 => {
+                let t = self.type_string(|g| g.print_tuple(tuple, true));
+                let cs = types
+                    .iter()
+                    .map(|ty| self.codec(ty))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                self.helper("tupleCodec", &t, &cs, |g| {
+                    let fields = types
+                        .iter()
+                        .enumerate()
+                        .map(|(i, ty)| (format!("V{i}"), *ty, format!("member {i}")))
+                        .collect::<Vec<_>>();
+                    g.struct_codec(&t, &fields)
+                })
+            }
+            types => {
+                let ts = types
+                    .iter()
+                    .map(|ty| self.opt_ty(ty))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let cs = types
+                    .iter()
+                    .enumerate()
+                    .map(|(i, ty)| format!("C{i}: {}", self.codec(ty)))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{wrpc}.Tuple{}Codec[{ts}]{{{cs}}}", types.len())
+            }
+        }
+    }
+
+    /// Returns the bodies of `Encode` and `Decode` of a codec of struct `ty` with `fields`,
+    /// which are the field name, type and its description in errors
+    fn struct_codec(&mut self, ty: &str, fields: &[(String, Type, String)]) -> (String, String) {
+        let wrpc = self.deps.wrpc();
+        let fmt = self.deps.fmt();
+        let mut enc = String::from("var err error\n");
+        let mut dec = format!("var v {ty}\nvar err error\n");
+        let mut txs = Vec::with_capacity(fields.len());
+        let mut rxs = Vec::with_capacity(fields.len());
+        for (i, (field, ty, desc)) in fields.iter().enumerate() {
+            let c = self.codec(ty);
+            let (tx, rx) = if self.is_async(ty) {
+                uwriteln!(enc, "var tx{i} {wrpc}.Transmitter");
+                uwriteln!(dec, "var rx{i} {wrpc}.Receiver");
+                txs.push(format!("tx{i}"));
+                rxs.push(format!("rx{i}"));
+                (format!("tx{i}"), format!("rx{i}"))
+            } else {
+                txs.push("nil".to_string());
+                rxs.push("nil".to_string());
+                ("_".to_string(), "_".to_string())
+            };
+            uwriteln!(
+                enc,
+                r#"if dst, {tx}, err = ({c}).Encode(v.{field}, dst); err != nil {{
+    return nil, nil, {fmt}.Errorf("failed to encode {desc}: %w", err)
+}}"#
+            );
+            uwriteln!(
+                dec,
+                r#"if v.{field}, {rx}, err = ({c}).Decode(r); err != nil {{
+    return v, nil, {fmt}.Errorf("failed to decode {desc}: %w", err)
+}}"#
+            );
+        }
+        if fields.iter().any(|(_, ty, _)| self.is_async(ty)) {
+            uwriteln!(
+                enc,
+                "return dst, {wrpc}.NewTransmitters({}), nil",
+                txs.join(", ")
+            );
+            uwriteln!(
+                dec,
+                "return v, {wrpc}.NewReceivers({}), nil",
+                rxs.join(", ")
+            );
+        } else {
+            enc.push_str("return dst, nil, nil\n");
+            dec.push_str("return v, nil, nil\n");
+        }
+        (enc, dec)
+    }
+
+    /// Returns the definition of codec type `name` of values of type `ty` with the bodies of
+    /// its `Encode` and `Decode` methods
+    fn codec_type(&mut self, name: &str, ty: &str, (enc, dec): (String, String)) -> String {
+        let wrpc = self.deps.wrpc();
+        format!(
+            r#"
+type {name} struct{{}}
+
+func ({name}) Encode(v {ty}, dst []byte) ([]byte, {wrpc}.Transmitter, error) {{
+{enc}}}
+
+func ({name}) Decode(r {wrpc}.ByteReader) ({ty}, {wrpc}.Receiver, error) {{
+{dec}}}
+"#
+        )
+    }
+
+    /// Returns a codec of values of type `ty` built from the codecs `inner`, defining it using `f`
+    /// unless it is already defined
+    fn helper(
+        &mut self,
+        prefix: &str,
+        ty: &str,
+        inner: &str,
+        f: impl FnOnce(&mut Self) -> (String, String),
+    ) -> String {
+        let key = format!("{prefix} {ty} {inner}");
+        if let Some(name) = self.helper_names.get(&key) {
+            return format!("{name}{{}}");
+        }
+        let name = format!("{prefix}{}", self.r#gen.helper_count);
+        self.r#gen.helper_count += 1;
+        self.helper_names.insert(key, name.clone());
+        let bodies = f(self);
+        let def = self.codec_type(&name, ty, bodies);
+        self.helpers.push_str(&def);
+        format!("{name}{{}}")
+    }
+
     pub fn finish(&mut self) -> String {
-        mem::take(&mut self.src).into()
+        let mut src: String = mem::take(&mut self.src).into();
+        src.push_str(&mem::take(&mut self.helpers));
+        src
     }
 
     pub fn start_append_submodule(&mut self, name: &WorldKey) -> (String, Vec<String>) {
@@ -3085,7 +781,7 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
         uwrite!(self.src, "(ctx__ {context}.Context, ");
         if self.in_import {
             let wrpc = self.deps.wrpc();
-            uwrite!(self.src, "wrpc__ {wrpc}.Invoker, ");
+            uwrite!(self.src, "c__ *{wrpc}.Framed, ");
         }
         for Param {
             name, ty: param, ..
@@ -3135,85 +831,9 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
         name
     }
 
-    fn print_nil_write(&mut self) {
-        let context = self.deps.context();
-        let wrpc = self.deps.wrpc();
-        uwrite!(
-            self.src,
-            "(func({context}.Context, {wrpc}.IndexWriter) error)(nil), "
-        );
-    }
-
-    fn print_deferred_ret(&mut self, deferred: bool) {
-        if deferred {
-            let context = self.deps.context();
-            uwrite!(self.src, ", func({context}.Context) error");
-        }
-    }
-
     fn is_async(&self, ty: &Type) -> bool {
         let (paths, fut) = async_paths_ty(self.resolve, ty);
         fut || !paths.is_empty()
-    }
-
-    fn nillable_ptr(&self, ty: &Type, result: bool, decl: bool) -> &'static str {
-        if let Type::Id(id) = ty {
-            match &self.resolve.types[*id].kind {
-                TypeDefKind::Option(..)
-                | TypeDefKind::Enum(..)
-                | TypeDefKind::Resource
-                | TypeDefKind::Handle(..)
-                | TypeDefKind::FixedLengthList(..) => {}
-                TypeDefKind::List(..)
-                | TypeDefKind::Map(..)
-                | TypeDefKind::Future(..)
-                | TypeDefKind::Stream(..)
-                    if result => {}
-                TypeDefKind::Tuple(Tuple { types }) if types.len() == 1 => {
-                    return self.nillable_ptr(&types[0], result, decl);
-                }
-                TypeDefKind::Type(ty) => return self.nillable_ptr(ty, result, decl),
-                _ => return "",
-            }
-        }
-        if decl { "*" } else { "&" }
-    }
-
-    fn print_nillable_ptr(&mut self, ty: &Type, result: bool, decl: bool) {
-        let ptr = self.nillable_ptr(ty, result, decl);
-        if !ptr.is_empty() {
-            self.push_str(ptr);
-        }
-    }
-
-    fn print_opt_ptr(&mut self, ty: &Type, decl: bool) {
-        if let Type::Id(id) = ty {
-            let ty = &self.resolve.types[*id];
-            match &ty.kind {
-                TypeDefKind::Record(..)
-                | TypeDefKind::Flags(..)
-                | TypeDefKind::Variant(..)
-                | TypeDefKind::Result(..) => {
-                    if decl {
-                        self.push_str("*");
-                    } else {
-                        self.push_str("&");
-                    }
-                }
-                TypeDefKind::Tuple(ty) if ty.types.len() == 1 => {
-                    self.print_opt_ptr(&ty.types[0], decl);
-                }
-                TypeDefKind::Tuple(ty) if ty.types.len() >= 2 => {
-                    if decl {
-                        self.push_str("*");
-                    } else {
-                        self.push_str("&");
-                    }
-                }
-                TypeDefKind::Type(ty) => self.print_opt_ptr(ty, decl),
-                _ => {}
-            }
-        }
     }
 
     fn print_opt_ty(&mut self, ty: &Type, decl: bool) {
@@ -3353,11 +973,11 @@ func ServeInterface(s {wrpc}.Server, h Handler) (stop func() error, err error) {
     }
 
     fn print_stream(&mut self, element: &Option<Type>) {
-        let Some(ty) = element else {
-            panic!("streams with no element types are not supported")
-        };
         self.push_str("<-chan ");
-        self.print_list(ty);
+        match element {
+            Some(ty) => self.print_list(ty),
+            None => self.push_str("[]struct{}"),
+        }
     }
 
     fn print_own(&mut self, id: TypeId) {
@@ -3469,44 +1089,10 @@ impl<'a> wit_bindgen_core::InterfaceGenerator<'a> for InterfaceGenerator<'a> {
             }
             self.push_str("}\n");
 
-            let context = self.deps.context();
-            let wrpc = self.deps.wrpc();
-
             // TODO: Print something more useful
             uwriteln!(
                 self.src,
-                r#"func (v *{name}) String() string {{ return "{name}" }}
-
-func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({context}.Context, {wrpc}.IndexWriter) error, error) {{
-    writes := make(map[uint32]func({context}.Context, {wrpc}.IndexWriter) error, {})"#,
-                fields.len(),
-            );
-            for (i, Field { name, ty, .. }) in fields.iter().enumerate() {
-                let fmt = self.deps.fmt();
-                let slog = self.deps.slog();
-                uwrite!(
-                    self.src,
-                    r#"{slog}.Debug("writing field", "name", "{name}")
-    write{i}, err := "#
-                );
-                let ident = name.to_upper_camel_case();
-                self.print_write_ty(ty, &format!("v.{ident}"), "w");
-                uwriteln!(
-                    self.src,
-                    r#"
-    if err != nil {{
-        return nil, {fmt}.Errorf("failed to write `{name}` field: %w", err)
-    }}
-    if write{i} != nil {{
-        writes[{i}] = write{i}
-    }}"#
-                );
-            }
-            uwriteln!(
-                self.src,
-                r#"
-    return {wrpc}.JoinWrites(writes), nil
-}}"#
+                r#"func (v *{name}) String() string {{ return "{name}" }}"#
             );
             if info.error {
                 uwriteln!(
@@ -3514,6 +1100,16 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({context}.Context, {wrp
                     r#"func (v *{name}) Error() string {{ return v.String() }}"#
                 );
             }
+
+            let fields = fields
+                .iter()
+                .map(|Field { name, ty, .. }| {
+                    (name.to_upper_camel_case(), *ty, format!("field `{name}`"))
+                })
+                .collect::<Vec<_>>();
+            let bodies = self.struct_codec(&name, &fields);
+            let def = self.codec_type(&format!("{name}Codec"), &name, bodies);
+            self.push_str(&def);
         }
     }
 
@@ -3539,10 +1135,6 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({context}.Context, {wrp
         let info = self.info(id);
         if let Some(name) = self.name_of(id) {
             let strings = self.deps.strings();
-            let context = self.deps.context();
-            let wrpc = self.deps.wrpc();
-            let errors = self.deps.errors();
-            let io = self.deps.io();
 
             // Struct
             self.godoc(docs);
@@ -3567,82 +1159,6 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({context}.Context, {wrp
             uwriteln!(self.src, r#"return {strings}.Join(flags, " | ")"#);
             self.push_str("}\n\n");
 
-            // WriteToIndex()
-            let mut buf_len = ty.flags.len() / 8;
-            if !ty.flags.len().is_multiple_of(8) {
-                buf_len += 1;
-            }
-
-            uwriteln!(
-                self.src,
-                r#"func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({context}.Context, {wrpc}.IndexWriter) error, error) {{
-                    var p [{buf_len}]byte
-"#
-            );
-
-            for (i, Flag { name, .. }) in ty.flags.iter().enumerate() {
-                self.push_str("if v.");
-                self.push_str(&name.to_upper_camel_case());
-                uwriteln!(
-                    self.src,
-                    r#"{{
-        p[{}] |= 1 << {}                
-    }}"#,
-                    i / 8,
-                    i % 8
-                );
-            }
-            uwriteln!(
-                self.src,
-                r#"
-    _, err := w.Write(p[:])
-    return nil, err
-}}
-                "#,
-            );
-
-            // ReadFromIndex()
-            uwrite!(
-                self.src,
-                r#"func (v *{name}) ReadFromIndex(r {wrpc}.IndexReader) error {{
-        var p [{buf_len}]byte
-        if _, err := {io}.ReadFull(r, p[:]); err != nil {{
-            return err
-        }}
-    
-    "#
-            );
-
-            for (i, Flag { name, .. }) in ty.flags.iter().enumerate() {
-                uwriteln!(
-                    self.src,
-                    "v.{} = p[{}] & (1 << {}) > 0",
-                    name.to_upper_camel_case(),
-                    i / 8,
-                    i % 8
-                );
-            }
-
-            // Number of meaningful bits in the final byte. When the flag count
-            // is an exact multiple of 8 the last byte is fully used, so the
-            // shift must be 8 (not `len % 8 == 0`, which would reject every
-            // set bit in that byte as "unassociated").
-            let last_byte_bits = if ty.flags.is_empty() {
-                0
-            } else {
-                (ty.flags.len() - 1) % 8 + 1
-            };
-            uwriteln!(
-                self.src,
-                r#"
-    if (p[{}] >> {}) > 0 {{
-        return {errors}.New("bit not associated with any flag is set")
-    }}"#,
-                buf_len - 1,
-                last_byte_bits,
-            );
-            self.push_str("return nil\n}\n");
-
             // Error()
             if info.error {
                 uwriteln!(
@@ -3650,6 +1166,39 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({context}.Context, {wrp
                     r#"func (v *{name}) Error() string {{ return v.String() }}"#
                 );
             }
+
+            let wrpc = self.deps.wrpc();
+            let n = ty.flags.len();
+            if n > 64 {
+                panic!("unsupported number of flags: {n}");
+            }
+            let mut enc = String::from("var bits uint64\n");
+            let mut dec = String::default();
+            if n == 0 {
+                uwriteln!(
+                    dec,
+                    "if _, _, err := ({wrpc}.FlagsCodec{{N: 0}}).Decode(r); err != nil {{\nreturn {name}{{}}, nil, err\n}}\nreturn {name}{{}}, nil, nil"
+                );
+            } else {
+                uwriteln!(
+                    dec,
+                    "bits, _, err := ({wrpc}.FlagsCodec{{N: {n}}}).Decode(r)\nif err != nil {{\nreturn {name}{{}}, nil, err\n}}\nreturn {name}{{"
+                );
+            }
+            for (i, Flag { name, .. }) in ty.flags.iter().enumerate() {
+                let field = name.to_upper_camel_case();
+                uwriteln!(enc, "if v.{field} {{\nbits |= 1 << {i}\n}}");
+                uwriteln!(dec, "{field}: bits&(1<<{i}) != 0,");
+            }
+            uwriteln!(
+                enc,
+                "return ({wrpc}.FlagsCodec{{N: {n}}}).Encode(bits, dst)"
+            );
+            if n > 0 {
+                dec.push_str("}, nil, nil\n");
+            }
+            let def = self.codec_type(&format!("{name}Codec"), &name, (enc, dec));
+            self.push_str(&def);
         }
     }
 
@@ -3768,51 +1317,66 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({context}.Context, {wrp
                 );
             }
 
-            let context = self.deps.context();
+            let errors = self.deps.errors();
             let fmt = self.deps.fmt();
             let wrpc = self.deps.wrpc();
-            uwriteln!(
-                self.src,
-                "func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({context}.Context, {wrpc}.IndexWriter) error, error) {{",
+            let mut enc = format!(
+                "dst = {wrpc}.AppendUint32(dst, uint32(v.discriminant))\nswitch v.discriminant {{\n"
             );
-            self.push_str("if err := ");
-            self.print_write_discriminant(variant.tag(), "v.discriminant", "w");
-            self.push_str("; err != nil { return nil, ");
-            self.push_str(fmt);
-            self.push_str(".Errorf(\"failed to write discriminant: %w\", err)\n}\n");
-            let errors = self.deps.errors();
-            self.push_str("switch v.discriminant {\n");
-            for Case {
-                name: case_name,
-                ty,
-                ..
-            } in &variant.cases
+            let mut dec = format!(
+                "var v {name}\nn, err := {wrpc}.ReadUint32(r)\nif err != nil {{\nreturn v, nil, err\n}}\nswitch n {{\n"
+            );
+            for (
+                i,
+                Case {
+                    name: case_name,
+                    ty,
+                    ..
+                },
+            ) in variant.cases.iter().enumerate()
             {
-                self.push_str("case ");
-                self.push_str(&name);
-                self.push_str(&case_name.to_upper_camel_case());
-                self.push_str(":\n");
+                let camel = case_name.to_upper_camel_case();
+                uwriteln!(enc, "case {name}{camel}:");
+                uwriteln!(dec, "case {i}:");
                 if let Some(ty) = ty {
-                    self.push_str("payload, ok := v.payload.(");
-                    self.print_opt_ty(ty, true);
-                    self.push_str(")\n");
-                    self.push_str("if !ok { return nil, ");
-                    self.push_str(errors);
-                    self.push_str(".New(\"invalid payload\") }\n");
-                    self.push_str("write, err := ");
-                    self.print_write_ty(ty, "payload", "w");
-                    self.push_str("\n");
-                    self.push_str("if err != nil { return nil, ");
-                    self.push_str(fmt);
-                    self.push_str(".Errorf(\"failed to write payload: %w\", err)\n}\n");
-                    self.push_str("return write, nil\n");
+                    let t = self.opt_ty(ty);
+                    let c = self.codec(ty);
+                    uwriteln!(
+                        enc,
+                        r#"payload, ok := v.payload.({t})
+if !ok {{
+    return nil, nil, {errors}.New("invalid `{case_name}` payload")
+}}
+return ({c}).Encode(payload, dst)"#
+                    );
+                    uwriteln!(
+                        dec,
+                        r#"payload, rx, err := ({c}).Decode(r)
+if err != nil {{
+    return v, nil, {fmt}.Errorf("failed to decode `{case_name}` payload: %w", err)
+}}
+v.Set{camel}(payload)
+return v, rx, nil"#
+                    );
+                } else {
+                    enc.push_str("return dst, nil, nil\n");
+                    uwriteln!(dec, "v.Set{camel}()\nreturn v, nil, nil");
                 }
             }
-            self.push_str("default: return nil, ");
-            self.push_str(errors);
-            self.push_str(".New(\"invalid variant\")\n}\n");
-            self.push_str("return nil, nil\n");
-            self.push_str("}\n");
+            uwriteln!(
+                enc,
+                r#"default:
+    return nil, nil, {errors}.New("invalid variant discriminant")
+}}"#
+            );
+            uwriteln!(
+                dec,
+                r#"default:
+    return v, nil, {fmt}.Errorf("unknown discriminant value %d", n)
+}}"#
+            );
+            let def = self.codec_type(&format!("{name}Codec"), &name, (enc, dec));
+            self.push_str(&def);
         }
     }
 
@@ -3887,20 +1451,35 @@ func (v *{name}) WriteToIndex(w {wrpc}.ByteWriter) (func({context}.Context, {wrp
                 );
             }
 
-            let context = self.deps.context();
+            let errors = self.deps.errors();
             let fmt = self.deps.fmt();
             let wrpc = self.deps.wrpc();
-            uwriteln!(
-                self.src,
-                "func (v {name}) WriteToIndex(w {wrpc}.ByteWriter) (func({context}.Context, {wrpc}.IndexWriter) error, error) {{",
+            let n = enum_.cases.len();
+            let def = self.codec_type(
+                &format!("{name}Codec"),
+                &name,
+                (
+                    format!(
+                        r#"if uint64(v) >= {n} {{
+    return nil, nil, {errors}.New("invalid enum value")
+}}
+return {wrpc}.AppendUint32(dst, uint32(v)), nil, nil
+"#
+                    ),
+                    format!(
+                        r#"n, err := {wrpc}.ReadUint32(r)
+if err != nil {{
+    return 0, nil, err
+}}
+if uint64(n) >= {n} {{
+    return 0, nil, {fmt}.Errorf("unknown discriminant value %d", n)
+}}
+return {name}(n), nil, nil
+"#
+                    ),
+                ),
             );
-            self.push_str("if err := ");
-            self.print_write_discriminant(enum_.tag(), "v", "w");
-            self.push_str("; err != nil { return nil, ");
-            self.push_str(fmt);
-            self.push_str(".Errorf(\"failed to write discriminant: %w\", err)\n}\n");
-            self.push_str("return nil, nil\n");
-            self.push_str("}\n");
+            self.push_str(&def);
         }
     }
 

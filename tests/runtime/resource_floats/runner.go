@@ -10,7 +10,11 @@ import (
 	"driver/runner/test/resource_floats/test"
 )
 
-func Run(ctx context.Context, c wrpc.Invoker) error {
+func Run(ctx context.Context, connect func() (*wrpc.Framed, error)) error {
+	c, err := connect()
+	if err != nil {
+		return err
+	}
 	a := must(test.NewFloat(ctx, c, 42.0))
 	b := must(test.NewFloat(ctx, c, 55.0))
 	float3 := must(Add(ctx, c, a.Borrow(), b.Borrow()))

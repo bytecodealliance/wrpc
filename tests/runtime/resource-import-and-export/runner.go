@@ -9,7 +9,11 @@ import (
 	"driver/runner/test/resource_import_and_export/test"
 )
 
-func Run(ctx context.Context, c wrpc.Invoker) error {
+func Run(ctx context.Context, connect func() (*wrpc.Framed, error)) error {
+	c, err := connect()
+	if err != nil {
+		return err
+	}
 	thing1 := must(test.NewThing(ctx, c, 42))
 
 	// 42 + 1 (constructor) + 1 (constructor) + 2 (foo) + 2 (foo)

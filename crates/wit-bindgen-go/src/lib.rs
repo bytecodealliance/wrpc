@@ -71,6 +71,7 @@ struct GoWrpc {
     export_paths: Vec<String>,
     deps: Deps,
     with_name_counter: usize,
+    helper_count: usize,
     /// Interface names to how they should be generated.
     with: GenerationConfiguration,
 }
@@ -82,17 +83,6 @@ struct Deps {
 }
 
 impl Deps {
-    fn binary(&mut self) -> &'static str {
-        self.map
-            .insert("binary".to_string(), "encoding/binary".to_string());
-        "binary"
-    }
-
-    fn bytes(&mut self) -> &'static str {
-        self.map.insert("bytes".to_string(), "bytes".to_string());
-        "bytes"
-    }
-
     fn context(&mut self) -> &'static str {
         self.map
             .insert("context".to_string(), "context".to_string());
@@ -109,36 +99,10 @@ impl Deps {
         "fmt"
     }
 
-    fn io(&mut self) -> &'static str {
-        self.map.insert("io".to_string(), "io".to_string());
-        "io"
-    }
-
-    fn math(&mut self) -> &'static str {
-        self.map.insert("math".to_string(), "math".to_string());
-        "math"
-    }
-
-    fn slog(&mut self) -> &'static str {
-        self.map.insert("slog".to_string(), "log/slog".to_string());
-        "slog"
-    }
-
     fn strings(&mut self) -> &'static str {
         self.map
             .insert("strings".to_string(), "strings".to_string());
         "strings"
-    }
-
-    fn sync(&mut self) -> &'static str {
-        self.map.insert("sync".to_string(), "sync".to_string());
-        "sync"
-    }
-
-    fn utf8(&mut self) -> &'static str {
-        self.map
-            .insert("utf8".to_string(), "unicode/utf8".to_string());
-        "utf8"
     }
 
     fn wrpc(&mut self) -> &'static str {
@@ -285,6 +249,8 @@ impl GoWrpc {
                 map: BTreeMap::default(),
                 package,
             },
+            helpers: Source::default(),
+            helper_names: HashMap::default(),
         }
     }
 
@@ -344,60 +310,39 @@ impl GoWrpc {
         Ok(remapped)
     }
 
-    /// Generates imports and a `Serve` function for the world
-    fn finish_serve_function(&mut self) {
-        let interfaces = self.export_paths.iter().map(|path| {
-            if path.is_empty() {
-                "Handler".to_string()
-            } else {
-                format!("{path}.Handler")
-            }
-        });
-        if interfaces.len() == 0 {
+    /// Generates a `Handle` function for the world
+    fn finish_handle_function(&mut self) {
+        if self.export_paths.is_empty() {
             return;
         }
+        let context = self.deps.context();
         let wrpc = self.deps.wrpc();
-        uwrite!(self.src, "func Serve(s {wrpc}.Server",);
-        for (i, bound) in interfaces.enumerate() {
-            uwrite!(self.src, ", h{i} {bound}");
-        }
-        self.src.push_str(") (stop func() error, err error) {\n");
-        uwriteln!(
+        uwrite!(
             self.src,
-            "stops := make([]func() error, 0, {})",
-            self.export_paths.len()
+            "// Handle serves the invocation with header `hdr` over `c` using the handlers of the exported interfaces.
+// It returns false if the function is not exported by this world.
+func Handle(ctx {context}.Context, hdr {wrpc}.Header, c *{wrpc}.Framed",
         );
-        self.src.push_str(
-            r"stop = func() error {
-            for _, stop := range stops {
-                if err := stop(); err != nil {
-                    return err
-                }
-            }
-            return nil
-        }
-",
-        );
-
         for (i, path) in self.export_paths.iter().enumerate() {
-            uwrite!(self.src, "stop{i}, err := ");
-            if !path.is_empty() {
-                self.src.push_str(path);
-                self.src.push_str(".");
+            if path.is_empty() {
+                uwrite!(self.src, ", h{i} Handler");
+            } else {
+                uwrite!(self.src, ", h{i} {path}.Handler");
             }
-            uwriteln!(self.src, "ServeInterface(s, h{i})");
-            self.src.push_str("if err != nil { return }\n");
-            uwriteln!(self.src, "stops = append(stops, stop{i})");
         }
-        self.src.push_str("stop = func() error {\n");
-        for (i, _) in self.export_paths.iter().enumerate() {
-            uwriteln!(self.src, "if err := stop{i}(); err != nil {{ return err }}");
+        self.src.push_str(") (bool, error) {\n");
+        for (i, path) in self.export_paths.iter().enumerate() {
+            let pkg = if path.is_empty() {
+                String::default()
+            } else {
+                format!("{path}.")
+            };
+            uwriteln!(
+                self.src,
+                "if ok, err := {pkg}HandleInterface(ctx, hdr, c, h{i}); ok {{\nreturn true, err\n}}"
+            );
         }
-        self.src.push_str("return nil\n");
-        self.src.push_str("}\n");
-
-        self.src.push_str("return\n");
-        self.src.push_str("}\n");
+        self.src.push_str("return false, nil\n}\n");
     }
 }
 
@@ -623,7 +568,7 @@ impl WorldGenerator for GoWrpc {
         let export_modules = mem::take(&mut self.export_modules);
         self.emit_modules(export_modules, files);
 
-        self.finish_serve_function();
+        self.finish_handle_function();
 
         let mut src = mem::take(&mut self.src);
         let s = src.as_mut_string();

@@ -11,12 +11,16 @@ import (
 	"driver/runner/my/test/i"
 )
 
-func Run(ctx context.Context, c wrpc.Invoker) error {
+func Run(ctx context.Context, connect func() (*wrpc.Framed, error)) error {
 	pendingImport := func(ctx context.Context, x <-chan struct{}) <-chan error {
 		done := make(chan error, 1)
 		go func() {
-			_, err := i.PendingImport(ctx, c, x)
-			done <- err
+			c, err := connect()
+			if err != nil {
+				done <- err
+				return
+			}
+			done <- i.PendingImport(ctx, c, x)
 		}()
 		return done
 	}

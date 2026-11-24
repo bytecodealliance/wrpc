@@ -18,11 +18,19 @@ var (
 )
 
 type handler struct {
-	c wrpc.Invoker
+	connect func() (*wrpc.Framed, error)
 }
 
-func NewHandler(c wrpc.Invoker) handler {
-	return handler{c}
+func NewHandler(connect func() (*wrpc.Framed, error)) handler {
+	return handler{connect}
+}
+
+func (h handler) conn() *wrpc.Framed {
+	c, err := h.connect()
+	if err != nil {
+		panic(err)
+	}
+	return c
 }
 
 func (handler) Add(ctx context.Context, a wrpc.Borrow[exports_.Z], b wrpc.Borrow[exports_.Z]) (wrpc.Own[exports_.Z], error) {
@@ -35,26 +43,26 @@ func (handler) Consume(ctx context.Context, x wrpc.Own[exports_.X]) error {
 }
 
 func (h handler) TestImports(ctx context.Context) (*wrpc.Result[struct{}, string], error) {
-	y := must(imports.NewY(ctx, h.c, 10))
-	assertEqual(must(imports.Y_GetA(ctx, h.c, y.Borrow())), 10)
-	must0(imports.Y_SetA(ctx, h.c, y.Borrow(), 20))
-	assertEqual(must(imports.Y_GetA(ctx, h.c, y.Borrow())), 20)
-	y2 := must(imports.Y_Add(ctx, h.c, y, 20))
-	assertEqual(must(imports.Y_GetA(ctx, h.c, y2.Borrow())), 40)
+	y := must(imports.NewY(ctx, h.conn(), 10))
+	assertEqual(must(imports.Y_GetA(ctx, h.conn(), y.Borrow())), 10)
+	must0(imports.Y_SetA(ctx, h.conn(), y.Borrow(), 20))
+	assertEqual(must(imports.Y_GetA(ctx, h.conn(), y.Borrow())), 20)
+	y2 := must(imports.Y_Add(ctx, h.conn(), y, 20))
+	assertEqual(must(imports.Y_GetA(ctx, h.conn(), y2.Borrow())), 40)
 
 	// test multiple instances
-	y1 := must(imports.NewY(ctx, h.c, 1))
-	y2 = must(imports.NewY(ctx, h.c, 2))
-	assertEqual(must(imports.Y_GetA(ctx, h.c, y1.Borrow())), 1)
-	assertEqual(must(imports.Y_GetA(ctx, h.c, y2.Borrow())), 2)
-	must0(imports.Y_SetA(ctx, h.c, y1.Borrow(), 10))
-	must0(imports.Y_SetA(ctx, h.c, y2.Borrow(), 20))
-	assertEqual(must(imports.Y_GetA(ctx, h.c, y1.Borrow())), 10)
-	assertEqual(must(imports.Y_GetA(ctx, h.c, y2.Borrow())), 20)
-	y3 := must(imports.Y_Add(ctx, h.c, y1, 20))
-	y4 := must(imports.Y_Add(ctx, h.c, y2, 30))
-	assertEqual(must(imports.Y_GetA(ctx, h.c, y3.Borrow())), 30)
-	assertEqual(must(imports.Y_GetA(ctx, h.c, y4.Borrow())), 50)
+	y1 := must(imports.NewY(ctx, h.conn(), 1))
+	y2 = must(imports.NewY(ctx, h.conn(), 2))
+	assertEqual(must(imports.Y_GetA(ctx, h.conn(), y1.Borrow())), 1)
+	assertEqual(must(imports.Y_GetA(ctx, h.conn(), y2.Borrow())), 2)
+	must0(imports.Y_SetA(ctx, h.conn(), y1.Borrow(), 10))
+	must0(imports.Y_SetA(ctx, h.conn(), y2.Borrow(), 20))
+	assertEqual(must(imports.Y_GetA(ctx, h.conn(), y1.Borrow())), 10)
+	assertEqual(must(imports.Y_GetA(ctx, h.conn(), y2.Borrow())), 20)
+	y3 := must(imports.Y_Add(ctx, h.conn(), y1, 20))
+	y4 := must(imports.Y_Add(ctx, h.conn(), y2, 30))
+	assertEqual(must(imports.Y_GetA(ctx, h.conn(), y3.Borrow())), 30)
+	assertEqual(must(imports.Y_GetA(ctx, h.conn(), y4.Borrow())), 50)
 	return wrpc.Ok[string](struct{}{}), nil
 }
 

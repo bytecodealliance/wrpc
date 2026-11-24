@@ -11,18 +11,24 @@ import (
 	"driver/runner/my/test/i"
 )
 
-func Run(ctx context.Context, c wrpc.Invoker) error {
+func Run(ctx context.Context, connect func() (*wrpc.Framed, error)) error {
+	c, err := connect()
+	if err != nil {
+		return err
+	}
 	x := make(chan string)
 	go func() {
 		x <- "hello"
 		close(x)
 	}()
-	rx2, errs, err := i.Ping(ctx, c, x, "world")
+	rx2, inv, err := i.Ping(ctx, c, x, "world")
 	if err != nil {
 		return err
 	}
+	done := make(chan error, 1)
+	go func() { done <- inv.Wait() }()
 	m2 := <-rx2
-	for err := range errs {
+	if err := <-done; err != nil {
 		return err
 	}
 	assertEqual(m2, "helloworld")
@@ -32,12 +38,12 @@ func Run(ctx context.Context, c wrpc.Invoker) error {
 		y <- m2
 		close(y)
 	}()
-	m3, errs, err := i.Pong(ctx, c, y)
+	m3, inv, err := i.Pong(ctx, c, y)
 	if err != nil {
 		return err
 	}
 	assertEqual(m3, "helloworld")
-	for err := range errs {
+	if err := inv.Wait(); err != nil {
 		return err
 	}
 	return nil

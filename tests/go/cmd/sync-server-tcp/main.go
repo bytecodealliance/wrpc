@@ -2,86 +2,45 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"log/slog"
 	"net"
 	"os"
-	"os/signal"
-	"syscall"
 
-	"github.com/lmittmann/tint"
-	wrpctcp "wrpc.io/go/x/tcp"
+	wrpc "wrpc.io/go"
 	integration "wrpc.io/tests/go"
 	"wrpc.io/tests/go/bindings/sync_server"
+	"wrpc.io/tests/go/internal"
 )
 
-func run(addr string) (err error) {
-	a, err := net.ResolveTCPAddr("tcp", addr)
-	if err != nil {
-		return fmt.Errorf("failed to resolve `%s` as TCP address: %w", addr, err)
-	}
-	l, err := net.ListenTCP("tcp", a)
+func run(addr string) error {
+	l, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("failed to listen on TCP socket: %w", err)
 	}
+	defer l.Close()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	srv := wrpctcp.NewServerWithContext(ctx, l)
+	ctx := context.Background()
 	var h integration.SyncHandler
 	rh := &integration.ResourcesHandler{}
-	stop, err := sync_server.Serve(srv, h, h, h, rh, integration.StrangeHandler{Resources: rh})
-	if err != nil {
-		return fmt.Errorf("failed to serve world: %w", err)
+	handle := func(ctx context.Context, hdr wrpc.Header, c *wrpc.Framed) (bool, error) {
+		return sync_server.Handle(ctx, hdr, c, h, h, h, rh, integration.StrangeHandler{Resources: rh})
 	}
-
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-				slog.Debug("accepting invocation")
-				accept, err := srv.Accept()
-				if err != nil {
-					if !errors.Is(err, net.ErrClosed) {
-						slog.Error("failed to accept connection", "err", err)
-					}
-					continue
-				}
-				go func() {
-					if err := accept(ctx); err != nil {
-						slog.Error("failed to accept invocation", "err", err)
-					}
-				}()
-			}
+	for {
+		conn, err := l.Accept()
+		if err != nil {
+			return fmt.Errorf("failed to accept connection: %w", err)
 		}
-	}()
-
-	signalCh := make(chan os.Signal, 1)
-	signal.Notify(signalCh, syscall.SIGINT)
-	<-signalCh
-
-	if err = stop(); err != nil {
-		return fmt.Errorf("failed to stop serving world: %w", err)
-	}
-	return nil
-}
-
-func init() {
-	slog.SetDefault(slog.New(tint.NewHandler(os.Stderr, &tint.Options{
-		AddSource: true,
-		Level:     slog.LevelDebug,
-		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
-			if a.Key == slog.TimeKey {
-				return slog.Attr{}
+		if err := conn.(*net.TCPConn).SetLinger(0); err != nil {
+			return fmt.Errorf("failed to set linger: %w", err)
+		}
+		go func() {
+			if err := internal.ServeConn(ctx, conn, handle); err != nil {
+				slog.ErrorContext(ctx, "failed to serve connection", "err", err)
 			}
-			return a
-		},
-	})))
+		}()
+	}
 }
 
 func main() {

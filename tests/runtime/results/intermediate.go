@@ -10,19 +10,27 @@ import (
 )
 
 type handler struct {
-	c wrpc.Invoker
+	connect func() (*wrpc.Framed, error)
 }
 
-func NewHandler(c wrpc.Invoker) handler {
-	return handler{c}
+func NewHandler(connect func() (*wrpc.Framed, error)) handler {
+	return handler{connect}
+}
+
+func (h handler) conn() *wrpc.Framed {
+	c, err := h.connect()
+	if err != nil {
+		panic(err)
+	}
+	return c
 }
 
 func (h handler) StringError(ctx context.Context, a float32) (*wrpc.Result[float32, string], error) {
-	return imports.StringError(ctx, h.c, a)
+	return imports.StringError(ctx, h.conn(), a)
 }
 
 func (h handler) EnumError(ctx context.Context, a float32) (*wrpc.Result[float32, exports.E], error) {
-	res, err := imports.EnumError(ctx, h.c, a)
+	res, err := imports.EnumError(ctx, h.conn(), a)
 	if err != nil {
 		return nil, err
 	}
@@ -33,7 +41,7 @@ func (h handler) EnumError(ctx context.Context, a float32) (*wrpc.Result[float32
 }
 
 func (h handler) RecordError(ctx context.Context, a float32) (*wrpc.Result[float32, exports.E2], error) {
-	res, err := imports.RecordError(ctx, h.c, a)
+	res, err := imports.RecordError(ctx, h.conn(), a)
 	if err != nil {
 		return nil, err
 	}
@@ -44,7 +52,7 @@ func (h handler) RecordError(ctx context.Context, a float32) (*wrpc.Result[float
 }
 
 func (h handler) VariantError(ctx context.Context, a float32) (*wrpc.Result[float32, exports.E3], error) {
-	res, err := imports.VariantError(ctx, h.c, a)
+	res, err := imports.VariantError(ctx, h.conn(), a)
 	if err != nil {
 		return nil, err
 	}
@@ -59,9 +67,9 @@ func (h handler) VariantError(ctx context.Context, a float32) (*wrpc.Result[floa
 }
 
 func (h handler) EmptyError(ctx context.Context, a uint32) (*wrpc.Result[uint32, struct{}], error) {
-	return imports.EmptyError(ctx, h.c, a)
+	return imports.EmptyError(ctx, h.conn(), a)
 }
 
 func (h handler) DoubleError(ctx context.Context, a uint32) (*wrpc.Result[wrpc.Result[struct{}, string], string], error) {
-	return imports.DoubleError(ctx, h.c, a)
+	return imports.DoubleError(ctx, h.conn(), a)
 }

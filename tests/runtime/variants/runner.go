@@ -9,7 +9,11 @@ import (
 	"driver/runner/test/variants/to_test"
 )
 
-func Run(ctx context.Context, c wrpc.Invoker) error {
+func Run(ctx context.Context, connect func() (*wrpc.Framed, error)) error {
+	c, err := connect()
+	if err != nil {
+		return err
+	}
 	assertEqual(*must(to_test.RoundtripOption(ctx, c, ptr[float32](1.0))), 1)
 	assertNil(must(to_test.RoundtripOption(ctx, c, nil)))
 	assertEqual(*must(to_test.RoundtripOption(ctx, c, ptr[float32](2.0))), 2)
