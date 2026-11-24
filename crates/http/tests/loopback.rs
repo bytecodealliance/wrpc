@@ -254,6 +254,9 @@ async fn response_parts() -> anyhow::Result<()> {
             let headers = &mut req.response.headers;
             headers.insert("foo", HeaderValue::from_static("bar"));
             headers.insert("req-content-type", parts.headers[CONTENT_TYPE].clone());
+            if let Some(v) = parts.headers.get("foo") {
+                headers.insert("req-foo", v.clone());
+            }
             let res =
                 serve::<(), _, _, _>(req, async |()| Ok((Bytes::from_static(b"baz"),))).await?;
             Ok(res)
@@ -272,7 +275,7 @@ async fn response_parts() -> anyhow::Result<()> {
         assert_eq!(buf, "baz");
 
         sender.ready().await?;
-        let clt = Client::new(
+        let mut clt = Client::new(
             uri,
             tower::util::service_fn(|req: http::Request<OutgoingParams>| {
                 let res = sender.send_request(req);
@@ -282,11 +285,15 @@ async fn response_parts() -> anyhow::Result<()> {
                     assert_eq!(headers[CONTENT_TYPE], wrpc_http::MEDIA_TYPE);
                     assert_eq!(headers["req-content-type"], wrpc_http::MEDIA_TYPE);
                     assert_eq!(headers["foo"], "bar");
+                    assert_eq!(headers["req-foo"], "qux");
                     ensure!(res.status().is_success(), "status `{}`", res.status());
                     Ok(res)
                 }
             }),
         );
+        clt.parts
+            .headers
+            .insert("foo", HeaderValue::from_static("qux"));
         let res = invoke::<(), (Bytes,), _>(clt, "foo", "bar", ()).await;
         let Err(InvokeError::Request(err)) = res else {
             bail!("the service should fail");
