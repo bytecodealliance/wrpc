@@ -1,40 +1,6 @@
 package wrpc
 
-import (
-	"context"
-	"fmt"
-)
-
-// Fault is the side at fault for a failed invocation
-type Fault uint8
-
-const (
-	// FaultRequest means receiving the parameters failed, such as on malformed, truncated or unexpected data
-	FaultRequest Fault = iota
-	// FaultHandler means the handler failed
-	FaultHandler
-	// FaultResponse means encoding or transmitting the results failed
-	FaultResponse
-)
-
-// ServeError is the error of serving an invocation
-type ServeError struct {
-	Fault Fault
-	Err   error
-}
-
-func (e *ServeError) Error() string {
-	switch e.Fault {
-	case FaultRequest:
-		return fmt.Sprintf("failed to receive request: %s", e.Err)
-	case FaultResponse:
-		return fmt.Sprintf("failed to send response: %s", e.Err)
-	default:
-		return e.Err.Error()
-	}
-}
-
-func (e *ServeError) Unwrap() error { return e.Err }
+import "context"
 
 // Serve serves an invocation accepted by a Listener over `c` by calling `f` with its parameters, decoded using `pc`,
 // and transmitting the results `f` returns, encoded using `rc`.

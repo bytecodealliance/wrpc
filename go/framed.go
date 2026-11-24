@@ -19,13 +19,41 @@ const (
 )
 
 var (
-	errDataAfterEnd  = errors.New("received data after value end")
-	errClosedNoValue = fmt.Errorf("path closed without a value: %w", io.ErrUnexpectedEOF)
-	errIngressEnded  = fmt.Errorf("ingress ended before all paths were closed: %w", io.ErrUnexpectedEOF)
+	errDataAfterEnd = &ReceiveError{Kind: ReceiveDataAfterEnd}
+	errTruncated    = &ReceiveError{Kind: ReceiveTruncated, Err: io.ErrUnexpectedEOF}
 )
 
 func errUnknownPath(path []uint32) error {
-	return fmt.Errorf("received frame on unknown path `%v`", path)
+	return &ReceiveError{Kind: ReceiveUnknownPath, Err: fmt.Errorf("path `%v`", path)}
+}
+
+func frameError(err error) error {
+	switch err {
+	case io.EOF, io.ErrUnexpectedEOF:
+		return &FrameDecodeError{Kind: FrameTruncated, Err: io.ErrUnexpectedEOF}
+	case errOverflow32:
+		return &FrameDecodeError{Kind: FrameOverflow}
+	default:
+		return &FrameDecodeError{Kind: FrameIO, Err: err}
+	}
+}
+
+func headerError(err error) error {
+	switch err {
+	case io.EOF, io.ErrUnexpectedEOF:
+		return &HeaderDecodeError{Kind: HeaderTruncated, Err: io.ErrUnexpectedEOF}
+	case errOverflow32:
+		return &HeaderDecodeError{Kind: HeaderOverflow}
+	default:
+		return &HeaderDecodeError{Kind: HeaderIO, Err: err}
+	}
+}
+
+func decodeError(err error) error {
+	if errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return &ReceiveError{Kind: ReceiveTruncated, Err: unexpectedEOF(err)}
+	}
+	return &ReceiveError{Kind: ReceiveDecode, Err: err}
 }
 
 func unexpectedEOF(err error) error {
@@ -58,66 +86,73 @@ func NewFrameReader(r io.Reader) *FrameReader {
 }
 
 // ReadHeader reads the protocol version and the header of an invocation.
-// It returns io.EOF if the byte stream ended before the header.
+// It returns io.EOF if the byte stream ended before the header and a *HeaderDecodeError otherwise.
 func (r *FrameReader) ReadHeader() (Header, error) {
 	v, err := r.r.ReadByte()
+	if err == io.EOF {
+		return Header{}, io.EOF
+	}
 	if err != nil {
-		return Header{}, err
+		return Header{}, &HeaderDecodeError{Kind: HeaderIO, Err: err}
 	}
 	if v != frameVersion {
-		return Header{}, fmt.Errorf("unsupported protocol version `0x%x`", v)
+		return Header{}, &HeaderDecodeError{Kind: HeaderUnsupportedVersion, Err: fmt.Errorf("version byte `0x%x`", v)}
 	}
 	instance, err := readHeaderName(r.r, defaultMaxHeaderNameLen)
 	if err != nil {
-		return Header{}, fmt.Errorf("failed to read instance name: %w", unexpectedEOF(err))
+		return Header{}, err
 	}
 	name, err := readHeaderName(r.r, defaultMaxHeaderNameLen)
 	if err != nil {
-		return Header{}, fmt.Errorf("failed to read function name: %w", unexpectedEOF(err))
+		return Header{}, err
 	}
 	return Header{Instance: instance, Name: name}, nil
 }
 
 // Next reads the header of the next frame and returns its path, valid until the next call, and the length of its data.
-// It returns io.EOF if the byte stream ended before the frame. The data of the previous frame must have been read.
+// It returns io.EOF if the byte stream ended before the frame and a *FrameDecodeError otherwise.
+// The data of the previous frame must have been read.
 func (r *FrameReader) Next() ([]uint32, uint32, error) {
 	depth, err := ReadUint32(r.r)
+	if err == io.EOF {
+		return nil, 0, io.EOF
+	}
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, frameError(err)
 	}
 	if depth > defaultMaxFrameDepth {
-		return nil, 0, fmt.Errorf("path length of %d exceeds maximum of %d", depth, defaultMaxFrameDepth)
+		return nil, 0, &FrameDecodeError{Kind: FramePathTooDeep, Err: fmt.Errorf("path length of %d exceeds maximum of %d", depth, defaultMaxFrameDepth)}
 	}
 	r.path = r.path[:0]
 	for range depth {
 		i, err := ReadUint32(r.r)
 		if err != nil {
-			return nil, 0, unexpectedEOF(err)
+			return nil, 0, frameError(err)
 		}
 		r.path = append(r.path, i)
 	}
 	n, err := ReadUint32(r.r)
 	if err != nil {
-		return nil, 0, unexpectedEOF(err)
+		return nil, 0, frameError(err)
 	}
 	r.n = n
 	return r.path, n, nil
 }
 
-// ReadByte reads a byte of the data of the current frame, returning io.EOF at its end
+// ReadByte reads a byte of the data of the current frame, returning io.EOF at its end and a *FrameDecodeError on failure
 func (r *FrameReader) ReadByte() (byte, error) {
 	if r.n == 0 {
 		return 0, io.EOF
 	}
 	b, err := r.r.ReadByte()
 	if err != nil {
-		return 0, unexpectedEOF(err)
+		return 0, frameError(err)
 	}
 	r.n--
 	return b, nil
 }
 
-// Read reads the data of the current frame, returning io.EOF at its end
+// Read reads the data of the current frame, returning io.EOF at its end and a *FrameDecodeError on failure
 func (r *FrameReader) Read(p []byte) (int, error) {
 	if r.n == 0 {
 		return 0, io.EOF
@@ -128,7 +163,7 @@ func (r *FrameReader) Read(p []byte) (int, error) {
 	n, err := r.r.Read(p)
 	r.n -= uint32(n)
 	if err != nil {
-		return n, unexpectedEOF(err)
+		return n, frameError(err)
 	}
 	return n, nil
 }
@@ -136,7 +171,7 @@ func (r *FrameReader) Read(p []byte) (int, error) {
 func (r *FrameReader) peek() ([]byte, error) {
 	b, err := r.r.Peek(int(min(r.n, uint32(r.r.Size()))))
 	if err != nil {
-		return nil, unexpectedEOF(err)
+		return nil, frameError(err)
 	}
 	return b, nil
 }
@@ -150,17 +185,17 @@ func (r *FrameReader) discard(n int) {
 func readHeaderName(r *bufio.Reader, max uint32) (string, error) {
 	n, err := ReadUint32(r)
 	if err != nil {
-		return "", fmt.Errorf("failed to read name length: %w", err)
+		return "", headerError(err)
 	}
 	if n > max {
-		return "", fmt.Errorf("name length of %d exceeds maximum of %d", n, max)
+		return "", &HeaderDecodeError{Kind: HeaderNameTooLong, Err: fmt.Errorf("name length of %d exceeds maximum of %d", n, max)}
 	}
 	b, err := ReadBytes(r, n)
 	if err != nil {
-		return "", fmt.Errorf("failed to read name: %w", err)
+		return "", headerError(err)
 	}
 	if !utf8.Valid(b) {
-		return "", errors.New("name is not valid UTF-8")
+		return "", &HeaderDecodeError{Kind: HeaderInvalidName}
 	}
 	return string(b), nil
 }
@@ -253,7 +288,8 @@ func NewListener(w io.WriteCloser, r io.ReadCloser) *Listener {
 }
 
 // Accept reads the header of the next invocation and returns it with the Framed to serve it over.
-// It returns io.EOF once the byte stream ended in place of the next invocation.
+// It returns io.EOF once the byte stream ended in place of the next invocation and a *HeaderDecodeError
+// if the header could not be read, unless `ctx` was cancelled.
 // The invocation must be served before Accept is called again; Accept must not be called after a failure.
 // Cancelling `ctx` while Accept waits closes the byte streams.
 func (l *Listener) Accept(ctx context.Context) (Header, *Framed, error) {
