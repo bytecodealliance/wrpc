@@ -166,8 +166,8 @@
 ///     connect: impl AsyncFn() -> std::io::Result<Framed<I, O>>,
 /// ) -> anyhow::Result<()>
 /// where
-///     I: tokio::io::AsyncRead + Unpin,
-///     O: tokio::io::AsyncWrite + Unpin,
+///     I: tokio::io::AsyncRead + Unpin + Send,
+///     O: tokio::io::AsyncWrite + Unpin + Send,
 /// {
 ///     let clt = connect().await?;
 ///     let current_temp = bindings::what_temperature_is_it(clt).await?;
@@ -222,8 +222,8 @@
 ///     connect: impl AsyncFn() -> std::io::Result<Framed<I, O>>,
 /// ) -> anyhow::Result<()>
 /// where
-///     I: tokio::io::AsyncRead + Unpin,
-///     O: tokio::io::AsyncWrite + Unpin,
+///     I: tokio::io::AsyncRead + Unpin + Send,
+///     O: tokio::io::AsyncWrite + Unpin + Send,
 /// {
 ///     let clt = connect().await?;
 ///     let current_level = global_logger::get_current_level(clt).await?;
@@ -290,8 +290,8 @@
 ///     connect: impl AsyncFn() -> std::io::Result<Framed<I, O>>,
 /// ) -> anyhow::Result<()>
 /// where
-///     I: tokio::io::AsyncRead + Unpin,
-///     O: tokio::io::AsyncWrite + Unpin,
+///     I: tokio::io::AsyncRead + Unpin + Send,
+///     O: tokio::io::AsyncWrite + Unpin + Send,
 /// {
 ///     let clt = connect().await?;
 ///     let logger = get_global_logger(clt).await?;

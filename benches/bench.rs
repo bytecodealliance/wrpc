@@ -21,7 +21,7 @@ use tokio::try_join;
 use tower::util;
 use wasmtime::component::{Component, Linker, ResourceTable};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
-use wrpc_core::{Encode, Framed, Header, Invoke, Listener, Serve};
+use wrpc_core::{Framed, Header, Invoke, Listener, Serve};
 use wrpc_http::Client;
 
 mod ping_bindings_wrpc {
@@ -85,7 +85,7 @@ enum Func {
 impl Func {
     async fn call<C>(self, clt: C) -> anyhow::Result<()>
     where
-        C: Invoke<<() as Encode>::Encoder> + Invoke<<(&'static str,) as Encode>::Encoder>,
+        C: Invoke,
     {
         match self {
             Self::Ping => ping_bindings_wrpc::wrpc_bench::bench::ping::ping(clt)

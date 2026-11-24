@@ -11,7 +11,7 @@ use std::sync::Arc;
 use anyhow::{Context as _, bail, ensure};
 use bytes::{Bytes, BytesMut};
 use common::{assert_async, assert_eof, assert_sync};
-use futures::future::BoxFuture;
+use futures::future::{BoxFuture, LocalBoxFuture};
 use futures::stream::BoxStream;
 use futures::{StreamExt as _, TryStreamExt as _, future, stream};
 use tokio::io::{
@@ -24,7 +24,7 @@ use tokio::{join, spawn, try_join};
 use tokio_util::codec::{Encoder as _, FramedParts, FramedRead, FramedWrite};
 use tracing::instrument;
 use wrpc_core::{
-    Decode, Encode, FrameDecoder, FrameEncoder, FrameRef, Framed, Header, HeaderDecoder,
+    Codec, Decode, Encode, FrameDecoder, FrameEncoder, FrameRef, Framed, Header, HeaderDecoder,
     HeaderEncoder, HeaderRef, InvokeError, Listener, ServeError, invoke, receive, serve, transmit,
 };
 use wrpc_test::next_invocation;
@@ -1468,7 +1468,6 @@ async fn rust_bindgen_not_send() -> anyhow::Result<()> {
                 }
 
                 world greeter-world {
-                    import greeter;
                     export greeter;
                 }
             ",
@@ -1493,9 +1492,17 @@ async fn rust_bindgen_not_send() -> anyhow::Result<()> {
     let (rx, tx) = split(srv);
     let (greeting, ()) = try_join!(
         async {
-            let (greeting, io) = bindings::wrpc_test::not_send::greeter::greet(
-                clt,
-                Box::pin(async { "world".into() }),
+            let name: LocalBoxFuture<'static, String> = Box::pin(async { "world".into() });
+            let ((greeting,), io) = Codec::<
+                <(LocalBoxFuture<'static, String>,) as Encode>::Encoder,
+                <(String,) as Decode>::Decoder,
+            >::default()
+            .invoke(
+                clt.tx,
+                clt.rx,
+                "wrpc-test:not-send/greeter",
+                "greet",
+                (name,),
             )
             .await?;
             io.await?;
