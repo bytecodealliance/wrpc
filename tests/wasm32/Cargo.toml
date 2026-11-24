@@ -1,0 +1,16 @@
+[package]
+name = "wasm32-check"
+version = "0.0.0"
+publish = false
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+http-body = { workspace = true }
+wrpc = { workspace = true, features = ["http", "wasmtime", "wave"] }
+
+[target.wasm32-unknown-unknown.dependencies]
+wasmtime = { workspace = true, features = ["custom-virtual-memory"] }
