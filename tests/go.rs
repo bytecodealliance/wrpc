@@ -136,3 +136,167 @@ async fn go() -> anyhow::Result<()> {
     ensure!(status.success(), "`go test` failed");
     Ok(())
 }
+
+#[instrument(ret)]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn go_core() -> anyhow::Result<()> {
+    use core::convert::Infallible;
+    use core::time::Duration;
+
+    use std::env::consts::EXE_SUFFIX;
+    use std::process::Stdio;
+
+    use anyhow::bail;
+    use bytes::Bytes;
+    use futures::future::{self, BoxFuture};
+    use futures::stream::{self, BoxStream};
+    use futures::{FutureExt as _, StreamExt as _};
+    use tempfile::tempdir;
+    use tokio::io::{AsyncBufReadExt as _, BufReader};
+    use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
+    use tokio::sync::{mpsc, oneshot};
+    use tokio::{join, try_join};
+    use wrpc_core::{Framed, Header, Listener, invoke, serve};
+
+    type Echo = (BoxStream<'static, Bytes>, BoxFuture<'static, String>);
+    type Futs = (BoxStream<'static, Vec<BoxFuture<'static, String>>>,);
+
+    async fn invoke_core(clt: &mut Framed<OwnedReadHalf, OwnedWriteHalf>) -> anyhow::Result<()> {
+        for _ in 0..2 {
+            let (s_tx, mut s_rx) = mpsc::channel(1);
+            let (f_tx, f_rx) = oneshot::channel::<String>();
+            let s = stream::poll_fn(move |cx| s_rx.poll_recv(cx)).boxed();
+            let f = f_rx.map(Result::unwrap_or_default).boxed();
+            let ((out,), io) =
+                invoke::<Echo, (BoxStream<'static, Bytes>,), _>(&mut *clt, "test", "echo", (s, f))
+                    .await?;
+            let send = async {
+                s_tx.send(Bytes::from_static(b"foo")).await?;
+                s_tx.send(Bytes::from_static(b"bar")).await?;
+                drop(s_tx);
+                _ = f_tx.send("baz".into());
+                anyhow::Ok(())
+            };
+            let (io, out, send) = join!(io, out.map(|b| b.to_vec()).concat(), send);
+            io?;
+            send?;
+            ensure!(out == b"foobarbaz", "unexpected echo result {out:?}");
+        }
+        let (s_tx, mut s_rx) = mpsc::channel(1);
+        let (b_tx, b_rx) = oneshot::channel::<String>();
+        let (c_tx, c_rx) = oneshot::channel::<String>();
+        let s = stream::poll_fn(move |cx| s_rx.poll_recv(cx)).boxed();
+        let send = async {
+            let a = async { "a".to_string() }.boxed();
+            let b = b_rx.map(Result::unwrap_or_default).boxed();
+            let c = c_rx.map(Result::unwrap_or_default).boxed();
+            let Ok(()) = s_tx.send(vec![a, b]).await else {
+                bail!("stream dropped");
+            };
+            let Ok(()) = s_tx.send(vec![c]).await else {
+                bail!("stream dropped");
+            };
+            drop(s_tx);
+            _ = b_tx.send("b".into());
+            _ = c_tx.send("c".into());
+            anyhow::Ok(())
+        };
+        let (vs, ()) = try_join!(
+            async {
+                let ((vs,), io) =
+                    invoke::<Futs, (Vec<String>,), _>(&mut *clt, "test", "futs", (s,)).await?;
+                io.await?;
+                anyhow::Ok(vs)
+            },
+            send
+        )?;
+        ensure!(vs == ["a", "b", "c"], "unexpected futs result {vs:?}");
+        Ok(())
+    }
+
+    async fn serve_core(lis: &mut Listener<OwnedReadHalf, OwnedWriteHalf>) -> anyhow::Result<()> {
+        while let Some((Header { instance, name }, srv)) = lis.accept().await? {
+            match (instance.as_str(), name.as_str()) {
+                ("test", "echo") => {
+                    serve::<Echo, (BoxStream<'static, Bytes>,), _, _, Infallible>(
+                        srv,
+                        |(s, f)| async move { Ok((s.chain(f.map(Bytes::from).into_stream()).boxed(),)) },
+                    )
+                    .await?;
+                }
+                ("test", "futs") => {
+                    serve::<Futs, (Vec<String>,), _, _, Infallible>(srv, |(s,)| async move {
+                        let fs: Vec<_> = s.concat().await;
+                        Ok((future::join_all(fs).await,))
+                    })
+                    .await?;
+                }
+                _ => bail!("unexpected invocation of `{instance}.{name}`"),
+            }
+        }
+        Ok(())
+    }
+
+    let bin = tempdir().context("failed to create temporary directory")?;
+    let status = Command::new("go")
+        .current_dir("tests/go")
+        .arg("build")
+        .arg("-o")
+        .arg(bin.path())
+        .arg("./cmd/core-tcp")
+        .kill_on_drop(true)
+        .status()
+        .await
+        .context("failed to call `go build`")?;
+    ensure!(status.success(), "`go build` failed");
+    let bin = bin.path().join(format!("core-tcp{EXE_SUFFIX}"));
+
+    let mut server = Command::new(&bin)
+        .arg("server")
+        .stdout(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .context("failed to run Go server")?;
+    let stdout = server.stdout.take().context("Go server stdout missing")?;
+    let Some(addr) = BufReader::new(stdout).lines().next_line().await? else {
+        bail!("Go server did not print its address");
+    };
+    let (tx, rx) = wrpc_test::tcp_streams(addr).await?;
+    let mut clt = Framed::new(tx, rx);
+    tokio::time::timeout(Duration::from_secs(10), invoke_core(&mut clt))
+        .await
+        .context("Rust client timed out")??;
+    drop(clt);
+    let status = tokio::time::timeout(Duration::from_secs(5), server.wait())
+        .await
+        .context("Go server did not exit")??;
+    ensure!(status.success(), "Go server failed");
+
+    let lis = wrpc_test::tcp_bind().await?;
+    let addr = lis.local_addr()?;
+    let mut client = Command::new(&bin)
+        .arg("client")
+        .arg(addr.to_string())
+        .kill_on_drop(true)
+        .spawn()
+        .context("failed to run Go client")?;
+    tokio::time::timeout(Duration::from_secs(10), async {
+        try_join!(
+            async {
+                let status = client
+                    .wait()
+                    .await
+                    .context("failed to wait for Go client")?;
+                ensure!(status.success(), "Go client failed");
+                Ok(())
+            },
+            async {
+                let (tx, rx) = wrpc_test::tcp_accept(&lis).await?;
+                serve_core(&mut Listener::new(tx, rx)).await
+            }
+        )
+    })
+    .await
+    .context("Go client timed out")??;
+    Ok(())
+}
