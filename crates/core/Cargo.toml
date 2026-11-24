@@ -13,7 +13,7 @@ repository.workspace = true
 bytes = { workspace = true }
 futures = { workspace = true, features = ["std"] }
 tokio = { workspace = true }
-tokio-util = { workspace = true, features = ["codec", "io"] }
+tokio-util = { workspace = true, features = ["codec"] }
 tracing = { workspace = true, features = ["attributes"] }
 wasm-tokio = { workspace = true, features = ["tracing"] }
 
