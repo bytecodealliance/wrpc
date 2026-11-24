@@ -46,7 +46,7 @@ pub use header::{Header, HeaderDecoder, HeaderEncoder, HeaderRef, PROTOCOL};
 pub use invoke::{Invocation, Invoke, invoke};
 pub use listener::Listener;
 pub use mux::{Receipt, Transmission, receive, transmit};
-pub use pack::{pack, pack_with, unpack, unpack_with};
+pub use pack::{PackError, UnpackError, pack, pack_with, unpack, unpack_with};
 pub use serve::{Serve, ServeError, serve};
 pub use value::*;
 
