@@ -12,7 +12,7 @@ use crate::client::my::test::test_interface::{
 
 pub async fn run(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let mut clt = wrpc.connect().await?;
     {
         // Write the things all at once.  The callee will read them only

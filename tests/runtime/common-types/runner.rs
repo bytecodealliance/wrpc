@@ -3,7 +3,7 @@ use crate::client::test::common::to_test::{var_f, wrap};
 
 pub async fn run(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let mut clt = wrpc.connect().await?;
     let res = wrap(&mut clt, &F1::A).await?;
     assert_eq!(res.b, F1::A);

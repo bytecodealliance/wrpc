@@ -2,7 +2,7 @@ use crate::client::test::flags_widths::to_test::*;
 
 pub async fn run(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let mut clt = wrpc.connect().await?;
     assert_eq!(
         roundtrip_flag17(&mut clt, &(Flag17::B0 | Flag17::B16), 7).await?,

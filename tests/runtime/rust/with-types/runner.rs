@@ -51,7 +51,7 @@ mod my_types {
 
 pub async fn run(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let a = my_types::MyA { inner: 0.0 };
     let mut clt = wrpc.connect().await?;
     let _ = crate::client::my::inline::foo::func1(&mut clt, &a).await?;

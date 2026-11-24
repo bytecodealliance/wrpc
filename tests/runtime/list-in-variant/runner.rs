@@ -2,7 +2,7 @@ use crate::client::test::list_in_variant::to_test::*;
 
 pub async fn run(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let hw: Vec<&str> = vec!["hello", "world"];
     let mut clt = wrpc.connect().await?;
     assert_eq!(

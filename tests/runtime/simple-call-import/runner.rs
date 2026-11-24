@@ -2,7 +2,7 @@
 
 pub async fn run(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let clt = wrpc.connect().await?;
     crate::client::a::b::i::f(clt).await?;
     Ok(())

@@ -21,7 +21,7 @@ mod other {
 
 pub async fn run(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let mut clt = wrpc.connect().await?;
     let resource = other::my::inline::foo::bar(&mut clt).await?;
     let _ = crate::client::my::inline::bar::bar(&mut clt, &resource).await?;

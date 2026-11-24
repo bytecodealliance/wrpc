@@ -4,7 +4,7 @@ use crate::client::test::equal_types::{blag, blah};
 
 pub async fn run(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let kind1 = blag::Kind1::A;
     let mut clt = wrpc.connect().await?;
     let res1 = blag::f(&mut clt, &kind1).await?;

@@ -10,7 +10,7 @@ impl PartialEq for thing_in_and_out::Thing {
 
 pub async fn run(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let value = vec![vec!["foo".to_owned(), "bar".to_owned()]];
     let mut clt = wrpc.connect().await?;
     let res = lists::foo(&mut clt, &value).await?;

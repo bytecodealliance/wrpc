@@ -7,7 +7,7 @@ use crate::client::my::test::i::{read_and_drop, take_then_drop};
 
 pub async fn run(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     // cancel from the other end
     let (tx, rx) = oneshot::channel();
     let f1 = async { tx.send(String::from("hello")) };

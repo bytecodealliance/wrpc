@@ -4,7 +4,7 @@ use crate::client::test::resource_aggregates::to_test::{
 
 pub async fn run(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let mut clt = wrpc.connect().await?;
     let mut thing = async |n| Thing::new(&mut clt, n).await;
     let thing0 = thing(0).await?;

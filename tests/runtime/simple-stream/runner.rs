@@ -8,7 +8,7 @@ use crate::client::my::test::i::*;
 
 pub async fn run(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let (mut tx, rx) = mpsc::channel(0);
     let wrpc_clt = wrpc.connect().await?;
     let (res, ()) = join!(read_stream(wrpc_clt, Box::pin(rx)), async {

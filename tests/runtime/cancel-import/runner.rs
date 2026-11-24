@@ -11,7 +11,7 @@ use crate::client::my::test::i::*;
 
 pub async fn run(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     println!("test cancelling an import in progress");
     {
         let (mut tx, rx) = oneshot::channel();

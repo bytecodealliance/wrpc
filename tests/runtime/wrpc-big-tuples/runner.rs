@@ -3,7 +3,7 @@ use tokio::{join, try_join};
 
 use crate::client::wrpc_test::big_tuples::to_test::{many_params, nested_future, roundtrip};
 
-pub async fn run(wrpc: &crate::Client) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+pub async fn run(wrpc: &crate::Client) -> ::anyhow::Result<()> {
     let expected = Tuple17(
         0,
         1,
@@ -54,7 +54,7 @@ pub async fn run(wrpc: &crate::Client) -> ::wit_bindgen_wrpc::anyhow::Result<()>
         )
         .await?;
         let (v, ()) = try_join!(async { Ok(fut.await) }, io)?;
-        ::wit_bindgen_wrpc::anyhow::Ok(v)
+        ::anyhow::Ok(v)
     });
     let v = v?;
     assert_eq!(v, 16);

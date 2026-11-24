@@ -22,7 +22,7 @@ mod other {
 
 pub async fn run(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let msg = other::my::inline::foo::Msg {
         field: "hello".to_string(),
     };

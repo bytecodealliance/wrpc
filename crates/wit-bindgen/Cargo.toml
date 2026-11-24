@@ -15,7 +15,6 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-anyhow = { workspace = true, features = ["std"] }
 bitflags = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true }
@@ -30,4 +29,5 @@ default = ["macro-string"]
 macro-string = ["wit-bindgen-wrpc-rust-macro/macro-string"]
 
 [dev-dependencies]
+anyhow = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["macros", "net", "rt"] }

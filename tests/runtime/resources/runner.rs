@@ -2,7 +2,7 @@ use crate::client::exports::*;
 
 pub async fn run(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let mut clt = wrpc.connect().await?;
     let res = test_imports(&mut clt).await?;
     res.unwrap();

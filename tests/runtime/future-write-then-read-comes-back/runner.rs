@@ -7,14 +7,14 @@ use crate::client::a::b::the_test::f;
 
 pub async fn run(
     wrpc: &crate::Client,
-) -> ::wit_bindgen_wrpc::anyhow::Result<()> {
+) -> ::anyhow::Result<()> {
     let (tx, rx) = oneshot::channel();
     let a = async { tx.send(()).unwrap() };
     let b = async {
         let wrpc_clt = wrpc.connect().await?;
         let (rx, io) = f(wrpc_clt, Box::pin(async move { rx.await.unwrap() })).await?;
         try_join!(async { Ok(rx.await) }, io)?;
-        ::wit_bindgen_wrpc::anyhow::Ok(())
+        ::anyhow::Ok(())
     };
     let ((), b_result) = join!(a, b);
     b_result
