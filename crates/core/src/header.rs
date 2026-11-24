@@ -1,5 +1,9 @@
 //! wRPC invocation header
 
+use core::error::Error;
+use core::fmt;
+use core::str::Utf8Error;
+
 use bytes::{Buf as _, BufMut as _, BytesMut};
 use tokio_util::codec::Decoder as _;
 use tracing::{instrument, trace};
@@ -36,6 +40,72 @@ impl<'a> From<&'a Header> for HeaderRef<'a> {
     }
 }
 
+/// Error of decoding a [Header]
+#[derive(Debug)]
+pub enum HeaderDecodeError {
+    /// The protocol version byte is not [PROTOCOL]
+    UnsupportedVersion(u8),
+    /// An instance or function name is longer than the limit of the decoder
+    NameTooLong {
+        /// Length of the name
+        len: u32,
+        /// Maximum length of the name
+        max: u32,
+    },
+    /// An instance or function name is not valid UTF-8
+    InvalidName(Utf8Error),
+    /// A name length does not fit in a `u32`
+    Overflow,
+    /// The stream ended inside a header
+    Truncated,
+    /// Reading the stream failed
+    Io(std::io::Error),
+}
+
+impl fmt::Display for HeaderDecodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnsupportedVersion(v) => write!(f, "unsupported version byte `{v}`"),
+            Self::NameTooLong { len, max } => {
+                write!(f, "name length of `{len}` exceeds maximum of `{max}`")
+            }
+            Self::InvalidName(..) => f.write_str("name is not valid UTF-8"),
+            Self::Overflow => f.write_str("name length does not fit in `u32`"),
+            Self::Truncated => f.write_str("stream ended inside a header"),
+            Self::Io(..) => f.write_str("failed to read header"),
+        }
+    }
+}
+
+impl Error for HeaderDecodeError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::InvalidName(err) => Some(err),
+            Self::Io(err) => Some(err),
+            Self::UnsupportedVersion(..)
+            | Self::NameTooLong { .. }
+            | Self::Overflow
+            | Self::Truncated => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for HeaderDecodeError {
+    fn from(err: std::io::Error) -> Self {
+        Self::Io(err)
+    }
+}
+
+impl From<HeaderDecodeError> for std::io::Error {
+    fn from(err: HeaderDecodeError) -> Self {
+        match err {
+            HeaderDecodeError::Io(err) => err,
+            HeaderDecodeError::Truncated => Self::new(std::io::ErrorKind::UnexpectedEof, err),
+            err => Self::new(std::io::ErrorKind::InvalidData, err),
+        }
+    }
+}
+
 /// [Header] decoder, which can be used, for example, with [`FramedRead`](tokio_util::codec::FramedRead)
 /// and switched to the [`FrameDecoder`](crate::FrameDecoder) of the invocation following the
 /// header using [`FramedRead::map_decoder`](tokio_util::codec::FramedRead::map_decoder)
@@ -64,21 +134,24 @@ impl HeaderDecoder {
     }
 
     /// Decodes a name of at most `max` bytes
-    fn decode_name(&mut self, src: &mut BytesMut, max: u32) -> std::io::Result<Option<String>> {
+    fn decode_name(
+        &mut self,
+        src: &mut BytesMut,
+        max: u32,
+    ) -> Result<Option<String>, HeaderDecodeError> {
         let n = if let Some(n) = self.len.take() {
             n
         } else {
-            let Some(n) = Leb128DecoderU32.decode(src)? else {
+            let Some(n) = Leb128DecoderU32
+                .decode(src)
+                .map_err(|_| HeaderDecodeError::Overflow)?
+            else {
                 return Ok(None);
             };
             if n > max {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("name length of `{n}` exceeds maximum of `{max}`"),
-                ));
+                return Err(HeaderDecodeError::NameTooLong { len: n, max });
             }
-            usize::try_from(n)
-                .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?
+            usize::try_from(n).map_err(|_| HeaderDecodeError::Overflow)?
         };
         if src.len() < n {
             self.len = Some(n);
@@ -86,7 +159,7 @@ impl HeaderDecoder {
         }
         let name = src.split_to(n);
         let name = String::from_utf8(name.to_vec())
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
+            .map_err(|err| HeaderDecodeError::InvalidName(err.utf8_error()))?;
         Ok(Some(name))
     }
 }
@@ -99,7 +172,7 @@ impl Default for HeaderDecoder {
 
 impl tokio_util::codec::Decoder for HeaderDecoder {
     type Item = Header;
-    type Error = std::io::Error;
+    type Error = HeaderDecodeError;
 
     #[instrument(level = "trace", skip_all)]
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
@@ -108,10 +181,7 @@ impl tokio_util::codec::Decoder for HeaderDecoder {
                 return Ok(None);
             };
             if v != PROTOCOL {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("unsupported version byte: {v}"),
-                ));
+                return Err(HeaderDecodeError::UnsupportedVersion(v));
             }
             src.advance(1);
             self.version = true;
@@ -138,7 +208,7 @@ impl tokio_util::codec::Decoder for HeaderDecoder {
             return Ok(Some(header));
         }
         if self.version || !src.is_empty() {
-            return Err(std::io::ErrorKind::UnexpectedEof.into());
+            return Err(HeaderDecodeError::Truncated);
         }
         Ok(None)
     }
@@ -189,7 +259,10 @@ mod tests {
         let err = HeaderDecoder::new(2, 3)
             .decode(&mut BytesMut::from(&buf[..2]))
             .expect_err("decoding a header with a too long instance name should fail");
-        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert!(
+            matches!(err, HeaderDecodeError::NameTooLong { len: 3, max: 2 }),
+            "{err:?}"
+        );
         let mut dec = HeaderDecoder::default();
         let mut src = BytesMut::default();
         let mut header = None;

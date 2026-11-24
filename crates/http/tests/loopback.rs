@@ -51,13 +51,8 @@ where
         let f = f.clone();
         let tx = tx.clone();
         async move {
-            let res = async {
-                let (header, req) = wrpc_http::accept(req.into_body())
-                    .await
-                    .map_err(ServeError::Request)?;
-                f(header, req).await
-            };
-            match res.await {
+            let (header, req) = wrpc_http::accept(req.into_body()).await?;
+            match f(header, req).await {
                 Ok(res) => {
                     _ = tx.unbounded_send(Ok(()));
                     Ok(res)

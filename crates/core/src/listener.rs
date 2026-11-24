@@ -6,7 +6,7 @@ use futures::TryStreamExt as _;
 use tokio::io::AsyncRead;
 use tokio_util::codec::{FramedRead, FramedWrite};
 
-use crate::{FrameDecoder, FrameEncoder, Framed, Header, HeaderDecoder, error_connection_failed};
+use crate::{FrameDecoder, FrameEncoder, Framed, Header, HeaderDecodeError, HeaderDecoder};
 
 #[derive(Debug)]
 enum State<I, O> {
@@ -43,13 +43,14 @@ impl<I, O> Listener<I, O> {
     }
 
     /// Receives the header of the next invocation, once the previous one was served, and returns
-    /// it along with the frames to serve the invocation over, or `None` once `rx` reaches EOF
+    /// it along with the frames to serve the invocation over, or `None` once `rx` reaches EOF or
+    /// receiving a header failed
     ///
-    /// This is cancel-safe, a partially received header is completed by the next call. Once
-    /// receiving a header failed, this always fails. Once serving an invocation failed or was not
-    /// completed, the connection must be dropped, since its unread frames would be received as a
-    /// header.
-    pub async fn accept(&mut self) -> std::io::Result<Option<(Header, &mut Framed<I, O>)>>
+    /// This is cancel-safe, a partially received header is completed by the next call. A failure
+    /// is returned once, every call after it returns `None`. Once serving an invocation failed or
+    /// was not completed, the connection must be dropped, since its unread frames would be
+    /// received as a header.
+    pub async fn accept(&mut self) -> Result<Option<(Header, &mut Framed<I, O>)>, HeaderDecodeError>
     where
         I: AsyncRead + Unpin,
     {
@@ -60,7 +61,7 @@ impl<I, O> Listener<I, O> {
             state => state,
         };
         let State::Header(.., rx) = &mut self.state else {
-            return Err(error_connection_failed());
+            return Ok(None);
         };
         let header = match rx.try_next().await {
             Ok(Some(header)) => header,
@@ -78,7 +79,7 @@ impl<I, O> Listener<I, O> {
             state => state,
         };
         let State::Frames(io) = &mut self.state else {
-            return Err(error_connection_failed());
+            return Ok(None);
         };
         Ok(Some((header, io)))
     }

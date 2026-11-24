@@ -47,9 +47,9 @@ use tokio::io::{AsyncRead, ReadBuf};
 use tokio_util::codec::{Decoder, Encoder, FramedRead};
 use tokio_util::io::StreamReader;
 use wrpc_core::{
-    Codec, FrameDecoder, FrameEncoder, FrameRef, Header, HeaderDecoder, HeaderEncoder, HeaderRef,
-    Invoke, Receipt, Receive, ReceiveError, Serve, ServeError, Transmit, error_data_after_end,
-    receive,
+    Codec, FrameDecoder, FrameEncoder, FrameRef, Header, HeaderDecodeError, HeaderDecoder,
+    HeaderEncoder, HeaderRef, Invoke, Receipt, Receive, ReceiveError, Serve, ServeError, Transmit,
+    error_data_after_end, receive,
 };
 
 /// Media type of wRPC request and response bodies
@@ -162,14 +162,14 @@ impl<E: Transmit> http_body::Body for Body<E> {
 
 /// Receives the invocation header of a request with `body`, returning it along with the
 /// [IncomingRequest] of the invocation
-pub async fn accept<T>(body: T) -> std::io::Result<(Header, IncomingRequest<T>)>
+pub async fn accept<T>(body: T) -> Result<(Header, IncomingRequest<T>), HeaderDecodeError>
 where
     T: http_body::Body<Error: Into<Box<dyn core::error::Error + Send + Sync>>> + Unpin,
 {
     let rx = StreamReader::new(body.map_err(into_io_error as fn(_) -> _).into_data_stream());
     let mut rx = FramedRead::new(rx, HeaderDecoder::default());
     let Some(header) = rx.try_next().await? else {
-        return Err(std::io::ErrorKind::UnexpectedEof.into());
+        return Err(HeaderDecodeError::Truncated);
     };
     let rx = rx.map_decoder(|_| FrameDecoder::default());
     let (parts, ()) = http::Response::new(()).into_parts();
