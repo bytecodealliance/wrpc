@@ -296,24 +296,31 @@ where
     Ok((header, IncomingRequest { rx, response }))
 }
 
-/// Client invoking functions with `POST` requests to `uri`, with content type [`MEDIA_TYPE`],
-/// sent by `service`, such as a hyper-util client
+/// Client invoking functions with requests built from `parts`, sent by `service`, such as a
+/// hyper-util client
 ///
 /// The parameters are encoded before [`Invoke::invoke`] returns. The response status and headers
-/// are not checked: to act on them or to set other request headers, wrap `service` in a layer.
+/// are not checked: to act on them, wrap `service` in a layer.
 /// Errors of `service` are [`InvokeError::Request`].
 #[derive(Clone, Debug)]
 pub struct Client<T> {
-    /// URI of the requests
-    pub uri: Uri,
+    /// Parts of the requests
+    pub parts: http::request::Parts,
     /// Service sending the requests
     pub service: T,
 }
 
 impl<T> Client<T> {
-    /// Returns a client sending requests to `uri` with `service`
+    /// Returns a client sending `POST` requests with content type [`MEDIA_TYPE`] to `uri` with
+    /// `service`
     pub fn new(uri: Uri, service: T) -> Self {
-        Self { uri, service }
+        let (mut parts, ()) = http::Request::new(()).into_parts();
+        parts.method = Method::POST;
+        parts.uri = uri;
+        parts
+            .headers
+            .insert(CONTENT_TYPE, HeaderValue::from_static(MEDIA_TYPE));
+        Self { parts, service }
     }
 }
 
@@ -340,7 +347,7 @@ where
         E: Encoder<T, Error = std::io::Error>,
         D: Decoder<Error = std::io::Error> + Receive,
     {
-        let Self { uri, mut service } = self;
+        let Self { parts, mut service } = self;
         let Codec { enc, dec } = codec;
         let mut buffer = BytesMut::default();
         let body = HeaderEncoder
@@ -364,17 +371,16 @@ where
                 .await
                 .map_err(|err| InvokeError::Request(into_io_error(err)))?;
             let (tx, mut error) = oneshot::channel();
-            let mut req = http::Request::new(OutgoingParams(Egress {
-                enc: Box::new(enc),
-                path,
-                frames,
-                buffer,
-                error: Some(tx),
-            }));
-            *req.method_mut() = Method::POST;
-            *req.uri_mut() = uri;
-            req.headers_mut()
-                .insert(CONTENT_TYPE, HeaderValue::from_static(MEDIA_TYPE));
+            let req = http::Request::from_parts(
+                parts,
+                OutgoingParams(Egress {
+                    enc: Box::new(enc),
+                    path,
+                    frames,
+                    buffer,
+                    error: Some(tx),
+                }),
+            );
             let res = service.call(req).await.map_err(|err| {
                 InvokeError::Request(match error.try_recv() {
                     Ok(Some(err)) => err,
@@ -430,8 +436,12 @@ where
         E: Encoder<T, Error = std::io::Error>,
         D: Decoder<Error = std::io::Error> + Receive,
     {
-        let Client { uri, service } = self;
-        Client::new(uri.clone(), service).invoke(codec, instance, func, params)
+        let Client { parts, service } = self;
+        Client {
+            parts: parts.clone(),
+            service,
+        }
+        .invoke(codec, instance, func, params)
     }
 }
 
