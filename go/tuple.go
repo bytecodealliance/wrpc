@@ -5,6 +5,11 @@ import (
 	"log/slog"
 )
 
+// Tuple1 is a tuple of one value
+type Tuple1[T0 any] struct {
+	V0 T0
+}
+
 type Tuple2[T0, T1 any] struct {
 	V0 T0
 	V1 T1
