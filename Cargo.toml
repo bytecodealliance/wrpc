@@ -10,7 +10,7 @@ license.workspace = true
 repository.workspace = true
 
 [package.metadata.docs.rs]
-features = ["http", "wasmtime", "wasmtime-async", "wave"]
+features = ["h2", "http", "wasmtime", "wasmtime-async", "wave"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [workspace.package]
@@ -32,6 +32,7 @@ members = [
 [features]
 default = [
     "bin",
+    "h2",
     "http",
     "wasmtime",
     "wasmtime-async",
@@ -50,6 +51,7 @@ bin-bindgen = [
 ]
 bin-wasmtime = ["dep:tokio", "dep:wrpc-wasmtime-cli", "tokio/rt-multi-thread"]
 http = ["dep:wrpc-http"]
+h2 = ["http", "wrpc-http/h2"]
 wasmtime = ["dep:wrpc-wasmtime"]
 wasmtime-async = ["wrpc-wasmtime?/async"]
 wave = ["dep:wrpc-wave"]
@@ -135,7 +137,7 @@ wrpc-test = { workspace = true, features = [
     "quic",
     "webtransport",
 ] }
-wrpc-http = { workspace = true }
+wrpc-http = { workspace = true, features = ["h2"] }
 
 [workspace.dependencies]
 anyhow = { version = "1", default-features = false }
