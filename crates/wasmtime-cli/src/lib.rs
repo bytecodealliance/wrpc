@@ -27,7 +27,7 @@ use wasmtime::component::{
 use wasmtime::{Config, Engine, Memory, MemoryType, Store};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpCtxView, WasiHttpView};
-use wrpc_core::{Codec, Listener};
+use wrpc_core::{Codec, HeaderDecodeError, Listener};
 use wrpc_wasmtime::{Export, Exports, TupleDecoder, TupleEncoder, Val, lift, lower};
 
 mod tcp;
@@ -344,7 +344,7 @@ async fn serve_conn(
         let (header, srv) = match conn.accept().await {
             Ok(Some(next)) => next,
             Ok(None) => break,
-            Err(err) if err.kind() == std::io::ErrorKind::TimedOut => break,
+            Err(HeaderDecodeError::Io(err)) if err.kind() == std::io::ErrorKind::TimedOut => break,
             Err(err) => return Err(err).context("failed to read invocation header"),
         };
         let export = exports

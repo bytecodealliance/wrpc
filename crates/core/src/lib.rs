@@ -42,7 +42,7 @@ mod value;
 pub use frame::{
     FrameDecoder, FrameEncoder, FrameHeaderDecoder, FrameHeaderEncoder, FrameHeaderRef, FrameRef,
 };
-pub use header::{Header, HeaderDecoder, HeaderEncoder, HeaderRef, PROTOCOL};
+pub use header::{Header, HeaderDecodeError, HeaderDecoder, HeaderEncoder, HeaderRef, PROTOCOL};
 pub use invoke::{Invocation, Invoke, invoke};
 pub use listener::Listener;
 pub use mux::{Receipt, Transmission, receive, transmit};
@@ -157,9 +157,4 @@ impl From<ReceiveError> for std::io::Error {
             ReceiveError::Io(err) => err,
         }
     }
-}
-
-/// Returns the error for a connection, on which receiving an invocation header failed
-fn error_connection_failed() -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::InvalidInput, "connection failed")
 }

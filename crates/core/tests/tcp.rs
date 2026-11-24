@@ -10,7 +10,8 @@ use tokio::task::yield_now;
 use tokio::time::timeout;
 use tokio_util::codec::Encoder as _;
 use wrpc_core::{
-    FrameDecoder, Framed, Header, HeaderDecoder, HeaderEncoder, HeaderRef, Listener, invoke,
+    FrameDecoder, Framed, Header, HeaderDecodeError, HeaderDecoder, HeaderEncoder, HeaderRef,
+    Listener, invoke,
 };
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -140,8 +141,11 @@ async fn conn_header_limits() -> anyhow::Result<()> {
     clt.write_all(&buf).await?;
     let res = lis.accept().await;
     let err = res.err().context("too long instance name accepted")?;
-    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(
+        matches!(err, HeaderDecodeError::NameTooLong { len: 3, max: 2 }),
+        "{err:?}"
+    );
     let res = lis.accept().await;
-    assert!(res.is_err(), "failed connection reused");
+    assert!(matches!(res, Ok(None)), "failed connection reused");
     Ok(())
 }
