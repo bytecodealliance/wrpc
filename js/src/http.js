@@ -28,8 +28,9 @@ const end = (rx, received) =>
  * A client invoking each function with a `POST` request to `input` with
  * `fetch`, with the {@link MEDIA_TYPE} unless `headers` set one, reading the
  * body of the response, whatever its status. To act on the response, wrap
- * `fetch`, failing the invocation by rejecting. The other `options` are passed
- * to `fetch`. The request body is streamed, unless `buffer` is set: then it is
+ * `fetch`, failing the invocation by rejecting, with an {@link InvokeError} of
+ * kind `request` caused by the rejection. The other `options` are passed to
+ * `fetch`. The request body is streamed, unless `buffer` is set: then it is
  * sent once the parameters are transmitted, for runtimes which cannot stream
  * request bodies.
  * @param {Parameters<typeof fetch>[0]} input
@@ -48,14 +49,19 @@ export function fromFetch(input, { fetch = globalThis.fetch, buffer = false, ...
       const tx = new FrameWriter(
         pipe?.writable ?? new WritableStream({ write: (chunk) => void chunks.push(chunk) }),
       );
-      const start = send(enc, tx, params, (err) => new InvokeError("request", err));
+      const request = (/** @type {unknown} */ err) => new InvokeError("request", err);
+      const start = send(enc, tx, params, request);
       tx.header({ instance, name }).catch(noop);
-      const sent = start().then(() => tx.writer.close());
+      const sent = start().then(() => mapError(tx.writer.close(), request));
       const headers = new Headers(init.headers ?? /** @type {Request} */ (input).headers);
       if (!headers.has("content-type")) headers.set("content-type", MEDIA_TYPE);
       const req = { ...init, headers, method: "POST" };
       const res = pipe
-        ? fetch(input, /** @type {RequestInit} */ ({ ...req, body: pipe.readable, duplex: "half" }))
+        ? (async () =>
+            fetch(
+              input,
+              /** @type {RequestInit} */ ({ ...req, body: pipe.readable, duplex: "half" }),
+            ))()
         : sent.then(() =>
             fetch(input, {
               ...req,
@@ -65,7 +71,7 @@ export function fromFetch(input, { fetch = globalThis.fetch, buffer = false, ...
       const rx = res.then(
         (res) => new FrameReader(res.body ?? new Blob([]).stream()),
         (err) => {
-          throw new InvokeError("request", err);
+          throw request(err);
         },
       );
       /** @param {unknown} err */

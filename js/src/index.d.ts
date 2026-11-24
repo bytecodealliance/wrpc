@@ -458,11 +458,12 @@ export class ServeError extends Error {
 }
 
 /**
- * The error of invoking a function, by the side at fault: encoding or
- * transmitting the parameters failed (`request`), the client cancelled a
- * pending result, for which data was received (`unread`), or receiving the
- * results or the rest of the invocation failed (`response`, caused by a
- * {@link ReceiveError}).
+ * The error of invoking a function, by the side at fault: the request failed,
+ * such as on encoding or transmitting the parameters or `fetch` rejecting
+ * (`request`), the client
+ * cancelled a pending result, for which data was received (`unread`), or
+ * receiving the results or the rest of the invocation failed (`response`,
+ * caused by a {@link ReceiveError}).
  */
 export class InvokeError extends Error {
   readonly kind: "request" | "unread" | "response";
@@ -486,8 +487,8 @@ export interface FetchOptions extends Omit<RequestInit, "method" | "body"> {
  * {@link MEDIA_TYPE} unless `headers` set one, and reading the body of the
  * response, whatever its status. To act on the response, wrap `fetch`,
  * failing the invocation by rejecting, with an {@link InvokeError} of kind
- * `response`. Once an invocation failed, its request and response bodies are
- * torn down.
+ * `request` caused by the rejection. Once an invocation failed, its request
+ * and response bodies are torn down.
  */
 export function fromFetch(input: RequestInfo | URL, options?: FetchOptions): Invoke;
 

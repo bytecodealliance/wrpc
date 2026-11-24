@@ -161,10 +161,11 @@ results failed (`response`). Nothing is transmitted if the function fails.
 Errors are classes with a `kind` naming what failed, keeping the error they are
 caused by as their `cause`, as in the Rust implementation:
 
-- `InvokeError`: encoding or transmitting the parameters failed (`request`),
-  a pending result was cancelled while data was received for it (`unread`), or
-  receiving the results or the rest of the invocation failed (`response`,
-  caused by a `ReceiveError`).
+- `InvokeError`: encoding or transmitting the parameters or obtaining the
+  response, such as `fetch` rejecting, failed (`request`), a pending result
+  was cancelled while data was received for it (`unread`), or receiving the
+  results or the rest of the invocation failed (`response`, caused by a
+  `ReceiveError`).
 - `ServeError`: see [Serving](#serving); `request` is caused by a `ReceiveError`.
 - `ReceiveError`: data for a cancelled consumer (`unread`), a frame on a path,
   which is not pending (`unknownPath`), data after the end of a value
@@ -211,7 +212,8 @@ response status, and tears both bodies down if the invocation fails. The other
 `options`, such as `headers` and `signal`, are passed to `fetch`; the
 `content-type` defaults to `MEDIA_TYPE`
 (`application/vnd.bytecodealliance.wrpc`). To act on the response status or
-headers, wrap `fetch` and reject to fail the invocation:
+headers, wrap `fetch` and reject to fail the invocation with an `InvokeError`
+of kind `request` caused by the rejection:
 
 ```js
 const clt = fromFetch(url, {
