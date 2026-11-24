@@ -21,11 +21,11 @@ use tokio::try_join;
 use tower::util;
 use wasmtime::component::{Component, Linker, ResourceTable};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
-use wrpc_core::{Framed, Header, Invoke, Listener, Serve};
-use wrpc_http::Client;
+use wrpc::http::Client;
+use wrpc::{Framed, Header, Invoke, Listener, Serve};
 
 mod ping_bindings_wrpc {
-    wit_bindgen_wrpc::generate!({
+    wrpc::generate!({
         world: "ping-proxy",
         path: "benches/wit",
     });
@@ -38,7 +38,7 @@ mod ping_bindings_wasmtime {
     });
 }
 mod greet_bindings_wrpc {
-    wit_bindgen_wrpc::generate!({
+    wrpc::generate!({
         world: "greet-proxy",
         path: "benches/wit",
     });

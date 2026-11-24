@@ -3,10 +3,10 @@ use std::path::PathBuf;
 use anyhow::Context as _;
 use clap::Parser;
 use tokio::net::UnixStream;
-use wit_bindgen_wrpc::wrpc_core::Framed;
+use wrpc::Framed;
 
 mod bindings {
-    wit_bindgen_wrpc::generate!({
+    wrpc::generate!({
         with: {
             "wrpc-examples:hello/handler": generate
         }

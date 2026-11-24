@@ -1,5 +1,5 @@
 use clap::Parser;
-use wit_bindgen_wrpc::wrpc_core::Framed;
+use wrpc::Framed;
 
 #[cfg(target_family = "wasm")]
 mod tcp;
@@ -17,7 +17,7 @@ mod bindings {
 }
 
 mod wrpc_bindings {
-    wit_bindgen_wrpc::generate!({
+    wrpc::generate!({
         world: "client",
         with: {
             "wrpc-examples:hello/handler": generate

@@ -30,6 +30,6 @@ tracing-subscriber = { workspace = true, features = [
     "fmt",
 ] }
 web-transport-quinn = { workspace = true, features = ["ring"] }
-wrpc-core = { workspace = true }
+wrpc = { workspace = true }
 wrpc-wasi-keyvalue = { workspace = true }
 wrpc-wasi-keyvalue-mem = { workspace = true }

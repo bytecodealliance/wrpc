@@ -11,8 +11,8 @@ use tokio::time::timeout;
 use tokio::{join, try_join};
 use tower::Service;
 use tracing::info;
-use wrpc_core::{Framed, Invoke};
-use wrpc_http::{Body, Client};
+use wrpc::http::{Body, Client};
+use wrpc::{Framed, Invoke};
 
 /// Connection, which invocations are made on one after another
 pub trait Connection {
@@ -73,7 +73,7 @@ pub async fn assert_eof(
 }
 
 pub async fn assert_async(clt: &mut impl Connection) -> anyhow::Result<()> {
-    wit_bindgen_wrpc::generate!({
+    wrpc::generate!({
         world: "async-client",
         path: "tests/wit",
     });
@@ -258,7 +258,7 @@ pub async fn assert_async(clt: &mut impl Connection) -> anyhow::Result<()> {
 /// results the `sync-server` world is expected to return.
 pub async fn assert_sync(clt: &mut impl Connection) -> anyhow::Result<()> {
     mod bindings {
-        wit_bindgen_wrpc::generate!({
+        wrpc::generate!({
             world: "sync-client",
             path: "tests/wit",
             additional_derives: [::core::cmp::PartialEq],

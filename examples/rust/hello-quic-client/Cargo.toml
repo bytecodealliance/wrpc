@@ -37,4 +37,4 @@ tracing-subscriber = { workspace = true, features = [
     "env-filter",
     "fmt",
 ] }
-wit-bindgen-wrpc = { workspace = true }
+wrpc = { workspace = true }

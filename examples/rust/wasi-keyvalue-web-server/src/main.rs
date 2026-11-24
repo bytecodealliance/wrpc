@@ -15,7 +15,7 @@ use tokio::{select, signal, spawn};
 use tracing::{debug, error, info, warn};
 use web_transport_quinn::quinn::crypto::rustls::QuicServerConfig;
 use web_transport_quinn::{Request, quinn};
-use wrpc_core::{Header, Listener};
+use wrpc::{Header, Listener};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]

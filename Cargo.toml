@@ -137,7 +137,6 @@ wrpc-test = { workspace = true, features = [
     "quic",
     "webtransport",
 ] }
-wrpc-http = { workspace = true, features = ["http2"] }
 
 [workspace.dependencies]
 anyhow = { version = "1", default-features = false }

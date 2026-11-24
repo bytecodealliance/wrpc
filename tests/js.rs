@@ -21,8 +21,8 @@ use tokio::{join, select, spawn};
 use tokio_util::codec::Encoder as _;
 use tower::util;
 use tracing::{info, instrument};
-use wrpc_core::{FrameEncoder, FrameRef, Framed, Header, HeaderEncoder, HeaderRef, Listener};
-use wrpc_http::Client;
+use wrpc::http::Client;
+use wrpc::{FrameEncoder, FrameRef, Framed, Header, HeaderEncoder, HeaderRef, Listener};
 
 pub mod common;
 
@@ -77,7 +77,7 @@ async fn start_server(script: &str, addr: &str, bindings: &Path) -> anyhow::Resu
 
 mod echo {
     mod bindings {
-        wit_bindgen_wrpc::generate!({
+        wrpc::generate!({
             world: "echo-server",
             path: "tests/js/wit",
         });
@@ -140,7 +140,7 @@ where
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn js_server() -> anyhow::Result<()> {
     mod bindings {
-        wit_bindgen_wrpc::generate!({
+        wrpc::generate!({
             world: "echo-client",
             path: "tests/js/wit",
         });
