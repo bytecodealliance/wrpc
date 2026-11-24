@@ -352,7 +352,7 @@ func (c FutureCodec[T]) Decode(r ByteReader) (<-chan T, Receiver, error) {
 	return ch, newPending(func(ctx context.Context, r ByteReader, nested Receivers) error {
 		v, rx, err := c.Elem.Decode(r)
 		if errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
-			return errClosedNoValue
+			return errTruncated
 		}
 		if err != nil {
 			return err

@@ -152,8 +152,10 @@ func TestInvokeServe(t *testing.T) {
 	if err == nil {
 		err = inv.Wait()
 	}
-	if err == nil {
-		t.Fatal("expected a failed handler to fail the invocation")
+	var ierr *wrpc.InvokeError
+	var rerr *wrpc.ReceiveError
+	if !errors.As(err, &ierr) || ierr.Fault != wrpc.FaultResponse || !errors.As(err, &rerr) || rerr.Kind != wrpc.ReceiveTruncated {
+		t.Fatalf("unexpected invoke error: %v", err)
 	}
 	var serr *wrpc.ServeError
 	if err := <-srvErr; !errors.As(err, &serr) || serr.Fault != wrpc.FaultHandler {

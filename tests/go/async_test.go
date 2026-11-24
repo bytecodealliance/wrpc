@@ -174,6 +174,8 @@ func TestAsyncEchoTruncatedStream(t *testing.T) {
 	invokeTruncatedStream(t, c)
 	res, rx, err := wrpc.Receive(c.R, wrpc.Tuple1Codec[<-chan <-chan []byte]{C0: wrpc.FutureCodec[<-chan []byte]{Elem: wrpc.ByteStreamCodec{}}})
 	if err != nil {
+		var rerr *wrpc.ReceiveError
+		require.ErrorAs(t, err, &rerr)
 		return
 	}
 	done := make(chan error, 1)

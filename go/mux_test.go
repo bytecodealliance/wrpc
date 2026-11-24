@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"io"
 	"slices"
 	"testing"
 	"time"
@@ -88,16 +87,18 @@ func TestReceiveRejectsInvalidFrames(t *testing.T) {
 	root := slices.Clip(appendFrames(nil, frame{nil, "\x00"}, frame{nil, ""}))
 	for _, tc := range []struct {
 		frames []byte
-		eof    bool
+		kind   wrpc.ReceiveErrorKind
 	}{
-		{appendFrames(root, frame{[]uint32{1}, ""}), false},
-		{appendFrames(nil, frame{nil, "\x00\x2a"}), false},
-		{root, true},
-		{appendFrames(root, frame{[]uint32{0}, "\x03fo"}, frame{[]uint32{0}, ""}), true},
-		{append(root, "\x01\x00\x05\x2a"...), true},
+		{appendFrames(root, frame{[]uint32{1}, ""}), wrpc.ReceiveUnknownPath},
+		{appendFrames(nil, frame{nil, "\x00\x2a"}), wrpc.ReceiveDataAfterEnd},
+		{appendFrames(nil, frame{nil, "\x02"}, frame{nil, ""}), wrpc.ReceiveDecode},
+		{root, wrpc.ReceiveTruncated},
+		{appendFrames(root, frame{[]uint32{0}, "\x03fo"}, frame{[]uint32{0}, ""}), wrpc.ReceiveDecode},
+		{append(root, "\x01\x00\x05\x2a"...), wrpc.ReceiveFrame},
 	} {
 		_, err := receiveByteStream(ctx, wrpc.NewFrameReader(bytes.NewReader(tc.frames)))
-		if err == nil || errors.Is(err, io.ErrUnexpectedEOF) != tc.eof {
+		var rerr *wrpc.ReceiveError
+		if !errors.As(err, &rerr) || rerr.Kind != tc.kind {
 			t.Fatalf("unexpected error for %x: %v", tc.frames, err)
 		}
 	}
@@ -150,5 +151,23 @@ func TestReceiveStreamOfFutures(t *testing.T) {
 	}
 	if err := <-errs; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestReadHeaderRejectsInvalidHeaders(t *testing.T) {
+	for _, tc := range []struct {
+		data string
+		kind wrpc.HeaderDecodeErrorKind
+	}{
+		{"\x02", wrpc.HeaderUnsupportedVersion},
+		{"\x01\x03fo", wrpc.HeaderTruncated},
+		{"\x01\x01\xff", wrpc.HeaderInvalidName},
+		{"\x01\xff\xff\xff\xff\x7f", wrpc.HeaderOverflow},
+	} {
+		_, err := wrpc.NewFrameReader(bytes.NewReader([]byte(tc.data))).ReadHeader()
+		var herr *wrpc.HeaderDecodeError
+		if !errors.As(err, &herr) || herr.Kind != tc.kind {
+			t.Fatalf("unexpected error for %x: %v", tc.data, err)
+		}
 	}
 }

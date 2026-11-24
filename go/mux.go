@@ -2,6 +2,7 @@ package wrpc
 
 import (
 	"context"
+	"errors"
 	"io"
 	"slices"
 )
@@ -117,6 +118,10 @@ func (p *pending) Receive(ctx context.Context, path []uint32, data []byte) error
 		p.r = &pathReader{ctx: ctx, data: make(chan []byte), done: make(chan error)}
 		go func() {
 			err := p.run(ctx, p.r, p.nested)
+			var rerr *ReceiveError
+			if err != nil && ctx.Err() == nil && !errors.As(err, &rerr) {
+				err = decodeError(err)
+			}
 			select {
 			case p.r.done <- err:
 			case <-ctx.Done():
@@ -200,10 +205,17 @@ func (r *pathReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
-// rootReader reads the data of the root path, failing on frames on other paths
+// rootReader reads the data of the root path, failing on frames on other paths.
+// It keeps the error it failed with, which is not a decoding error.
 type rootReader struct {
 	r      *FrameReader
 	closed bool
+	err    error
+}
+
+func (r *rootReader) fail(err error) error {
+	r.err = err
+	return err
 }
 
 func (r *rootReader) fill() error {
@@ -212,11 +224,14 @@ func (r *rootReader) fill() error {
 			return io.EOF
 		}
 		path, n, err := r.r.Next()
+		if err == io.EOF {
+			return r.fail(errTruncated)
+		}
 		if err != nil {
-			return unexpectedEOF(err)
+			return r.fail(&ReceiveError{Kind: ReceiveFrame, Err: err})
 		}
 		if len(path) > 0 {
-			return errUnknownPath(path)
+			return r.fail(errUnknownPath(path))
 		}
 		if n == 0 {
 			r.closed = true
@@ -229,24 +244,36 @@ func (r *rootReader) ReadByte() (byte, error) {
 	if err := r.fill(); err != nil {
 		return 0, err
 	}
-	return r.r.ReadByte()
+	b, err := r.r.ReadByte()
+	if err != nil {
+		return 0, r.fail(&ReceiveError{Kind: ReceiveFrame, Err: err})
+	}
+	return b, nil
 }
 
 func (r *rootReader) Read(p []byte) (int, error) {
 	if err := r.fill(); err != nil {
 		return 0, err
 	}
-	return r.r.Read(p)
+	n, err := r.r.Read(p)
+	if err != nil {
+		return n, r.fail(&ReceiveError{Kind: ReceiveFrame, Err: err})
+	}
+	return n, nil
 }
 
 // Receive receives a value from the frames read by `r`, decoding it using `c`.
 // It returns the value and the Receipt receiving the asynchronous values pending in it.
+// The error is a *ReceiveError.
 func Receive[T any](r *FrameReader, c Codec[T]) (T, *Receipt, error) {
 	var zero T
 	rr := &rootReader{r: r}
 	v, rx, err := c.Decode(rr)
 	if err != nil {
-		return zero, nil, unexpectedEOF(err)
+		if rr.err != nil {
+			return zero, nil, rr.err
+		}
+		return zero, nil, decodeError(err)
 	}
 	if r.n > 0 {
 		return zero, nil, errDataAfterEnd
@@ -263,16 +290,17 @@ type Receipt struct {
 
 // Wait receives frames and hands their data to the pending values until all paths are closed.
 // It stalls while the consumer of a pending value does not take its data.
+// The error is a *ReceiveError unless `ctx` was cancelled.
 func (rc *Receipt) Wait(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	for !rc.closed || rc.rx != nil && !rc.rx.Complete() {
 		path, n, err := rc.r.Next()
 		if err == io.EOF {
-			return errIngressEnded
+			return errTruncated
 		}
 		if err != nil {
-			return err
+			return &ReceiveError{Kind: ReceiveFrame, Err: err}
 		}
 		if len(path) == 0 {
 			if rc.closed || n > 0 {
@@ -293,7 +321,7 @@ func (rc *Receipt) Wait(ctx context.Context) error {
 		for rc.r.n > 0 {
 			b, err := rc.r.peek()
 			if err != nil {
-				return err
+				return &ReceiveError{Kind: ReceiveFrame, Err: err}
 			}
 			if err := rc.rx.Receive(ctx, path, b); err != nil {
 				return err
