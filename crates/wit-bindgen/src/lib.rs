@@ -809,8 +809,7 @@
 ///
 ///     // Configure where the runtime dependencies of the generated code are
 ///     // located. By default each of these points at the corresponding crate
-///     // reexported from the `runtime_path` crate (e.g. `wit_bindgen_wrpc::anyhow`).
-///     anyhow_path: "path::to::anyhow",
+///     // reexported from the `runtime_path` crate (e.g. `wit_bindgen_wrpc::bytes`).
 ///     bytes_path: "path::to::bytes",
 ///     futures_path: "path::to::futures",
 ///     tokio_util_path: "path::to::tokio_util",

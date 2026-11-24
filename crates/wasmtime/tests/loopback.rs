@@ -22,8 +22,8 @@ use wasmtime::component::{
 };
 use wasmtime::error::Context as _;
 use wrpc_core::{
-    Codec, FrameDecoder, FrameEncoder, FrameRef, Framed, HeaderEncoder, HeaderRef, Listener,
-    Receive as _, ReceiveError, invoke,
+    Codec, FrameDecoder, FrameEncoder, FrameRef, Framed, HeaderEncoder, HeaderRef, InvokeError,
+    Listener, Receive as _, ReceiveError, invoke,
 };
 use wrpc_test::serve_until;
 use wrpc_wasmtime::{Export, Exports, TupleDecoder, TupleEncoder, Val, lift, lower};
@@ -287,7 +287,7 @@ async fn shared_resources() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn async_values() -> anyhow::Result<()> {
     async fn receive<T>(
-        io: impl Future<Output = std::io::Result<()>>,
+        io: impl Future<Output = Result<(), InvokeError>>,
         values: impl Future<Output = T>,
     ) -> anyhow::Result<T> {
         let ((), values) = try_join!(io, async { Ok(values.await) })?;

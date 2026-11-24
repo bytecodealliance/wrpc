@@ -48,8 +48,8 @@ use tokio_util::codec::{Decoder, Encoder, FramedRead};
 use tokio_util::io::StreamReader;
 use wrpc_core::{
     Codec, FrameDecoder, FrameEncoder, FrameRef, Header, HeaderDecodeError, HeaderDecoder,
-    HeaderEncoder, HeaderRef, Invoke, Receipt, Receive, ReceiveError, Serve, ServeError, Transmit,
-    receive,
+    HeaderEncoder, HeaderRef, Invoke, InvokeError, Receipt, Receive, ReceiveError, Serve,
+    ServeError, Transmit, receive,
 };
 
 /// Media type of wRPC request and response bodies
@@ -243,7 +243,7 @@ where
         instance: &str,
         func: &str,
         params: T,
-    ) -> impl Future<Output = std::io::Result<(D::Item, Self::Invocation<D>)>>
+    ) -> impl Future<Output = Result<(D::Item, Self::Invocation<D>), InvokeError>>
     + use<E, F, Fut, B, Err, D, T>
     where
         E: Encoder<T, Error = std::io::Error>,
@@ -267,7 +267,7 @@ where
             .entry(CONTENT_TYPE)
             .or_insert(HeaderValue::from_static(MEDIA_TYPE));
         async move {
-            let mut body = body?;
+            let mut body = body.map_err(InvokeError::Request)?;
             let (tx, mut error) = oneshot::channel();
             body.error = Some(tx);
             let res = send(http::Request::from_parts(parts, body));
@@ -280,7 +280,7 @@ where
                 Ok(res) => res,
                 Err(err) => {
                     if let Ok(Some(err)) = error.try_recv() {
-                        return Err(err);
+                        return Err(InvokeError::Request(err));
                     }
                     return Err(err.into());
                 }
@@ -313,13 +313,13 @@ where
     Err: Into<Box<dyn core::error::Error + Send + Sync>>,
     D: Receive,
 {
-    type Output = std::io::Result<()>;
+    type Output = Result<(), InvokeError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let Self { error, rx } = self.get_mut();
         if let Err(err) = ready!(Pin::new(rx).poll(cx)) {
             if let Ok(Some(err)) = error.try_recv() {
-                return Poll::Ready(Err(err));
+                return Poll::Ready(Err(InvokeError::Request(err)));
             }
             return Poll::Ready(Err(err.into()));
         }

@@ -26,7 +26,6 @@ crate::generate!({
 
     // provided to satisfy imports, since `wit_bindgen_wrpc` crate is not imported here,
     // not required for external use.
-    anyhow_path: "anyhow",
     bytes_path: "bytes",
     futures_path: "futures",
     tokio_util_path: "tokio_util",

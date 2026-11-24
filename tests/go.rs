@@ -16,7 +16,7 @@ async fn go_bindgen() -> anyhow::Result<()> {
     use tokio::fs;
     use tokio::time::{sleep, timeout};
     use tracing::info;
-    use wrpc_core::{Framed, invoke};
+    use wrpc_core::{FrameDecodeError, Framed, InvokeError, ReceiveError, invoke};
 
     if let Err(err) = fs::remove_dir_all("tests/go/bindings").await {
         match err.kind() {
@@ -80,7 +80,12 @@ async fn go_bindgen() -> anyhow::Result<()> {
             bail!("a panicking handler must fail the invocation");
         };
         ensure!(
-            err.kind() == std::io::ErrorKind::ConnectionReset,
+            matches!(
+                &err,
+                InvokeError::Request(err)
+                | InvokeError::Response(ReceiveError::Frame(FrameDecodeError::Io(err)))
+                    if err.kind() == std::io::ErrorKind::ConnectionReset
+            ),
             "expected the connection to be reset, got {err:?}"
         );
         let res = timeout(Duration::from_secs(5), server.wait())

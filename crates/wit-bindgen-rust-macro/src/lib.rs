@@ -137,9 +137,6 @@ impl Parse for Config {
                     Opt::MergeStructurallyEqualTypes(enable) => {
                         opts.merge_structurally_equal_types = Some(Some(enable.value()));
                     }
-                    Opt::AnyhowPath(path) => {
-                        opts.anyhow_path = Some(path.value());
-                    }
                     Opt::BytesPath(path) => {
                         opts.bytes_path = Some(path.value());
                     }
@@ -302,7 +299,6 @@ mod kw {
     syn::custom_keyword!(features);
     syn::custom_keyword!(debug);
     syn::custom_keyword!(merge_structurally_equal_types);
-    syn::custom_keyword!(anyhow_path);
     syn::custom_keyword!(bytes_path);
     syn::custom_keyword!(futures_path);
     syn::custom_keyword!(tokio_util_path);
@@ -353,7 +349,6 @@ enum Opt {
     Features(Vec<syn::LitStr>),
     Debug(syn::LitBool),
     MergeStructurallyEqualTypes(syn::LitBool),
-    AnyhowPath(syn::LitStr),
     BytesPath(syn::LitStr),
     FuturesPath(syn::LitStr),
     TokioUtilPath(syn::LitStr),
@@ -459,10 +454,6 @@ impl Parse for Opt {
             input.parse::<kw::merge_structurally_equal_types>()?;
             input.parse::<Token![:]>()?;
             Ok(Opt::MergeStructurallyEqualTypes(input.parse()?))
-        } else if l.peek(kw::anyhow_path) {
-            input.parse::<kw::anyhow_path>()?;
-            input.parse::<Token![:]>()?;
-            Ok(Opt::AnyhowPath(input.parse()?))
         } else if l.peek(kw::bytes_path) {
             input.parse::<kw::bytes_path>()?;
             input.parse::<Token![:]>()?;

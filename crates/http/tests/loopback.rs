@@ -25,8 +25,8 @@ use tokio::time::sleep;
 use tokio::{select, spawn, try_join};
 use tokio_util::codec::Encoder as _;
 use wrpc_core::{
-    Codec, Decode, Encode, FrameEncoder, FrameRef, Header, HeaderEncoder, HeaderRef, ServeError,
-    Utf8Bytes, invoke, serve,
+    Codec, Decode, Encode, FrameDecodeError, FrameEncoder, FrameRef, Header, HeaderEncoder,
+    HeaderRef, InvokeError, ReceiveError, ServeError, Utf8Bytes, invoke, serve,
 };
 use wrpc_http::{Body, IncomingRequest, OutgoingRequest};
 
@@ -277,7 +277,9 @@ async fn response_parts() -> anyhow::Result<()> {
             },
         };
         let res = invoke::<(), (Bytes,), _>(clt, "foo", "bar", ()).await;
-        let err = res.err().context("receiving results should fail")?;
+        let Err(InvokeError::Response(ReceiveError::Frame(FrameDecodeError::Io(err)))) = res else {
+            bail!("receiving results should fail");
+        };
         assert_eq!(err.to_string(), "status `418 I'm a teapot`");
         Ok(())
     })
@@ -374,8 +376,15 @@ async fn params_error() -> anyhow::Result<()> {
         let err = io
             .await
             .expect_err("parameter error must fail the invocation");
-        assert_eq!(err.kind(), ErrorKind::InvalidInput);
-        assert!(err.get_ref().is_some_and(|err| err.is::<Utf8Error>()));
+        assert!(
+            matches!(
+                &err,
+                InvokeError::Request(err)
+                    if err.kind() == ErrorKind::InvalidInput
+                        && err.get_ref().is_some_and(|err| err.is::<Utf8Error>())
+            ),
+            "{err:?}"
+        );
         let res = results.next().await.context("missing invocation")?;
         res.context("a peer parameter error must not fail serving")
     }

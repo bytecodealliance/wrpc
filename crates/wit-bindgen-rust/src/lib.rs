@@ -200,12 +200,6 @@ pub struct Opts {
     )]
     pub merge_structurally_equal_types: Option<Option<bool>>,
 
-    /// The optional path to the `anyhow` crate to use.
-    ///
-    /// This defaults to `{runtime_path}::anyhow`.
-    #[cfg_attr(feature = "clap", arg(long, value_name = "PATH"))]
-    pub anyhow_path: Option<String>,
-
     /// The optional path to the `bytes` crate to use.
     ///
     /// This defaults to `{runtime_path}::bytes`.
@@ -392,13 +386,6 @@ with: {{\n\t{with_name:?}: generate\n}}
             .runtime_path
             .as_deref()
             .unwrap_or("::wit_bindgen_wrpc")
-    }
-
-    fn anyhow_path(&self) -> String {
-        self.opts
-            .anyhow_path
-            .clone()
-            .unwrap_or_else(|| format!("{}::anyhow", self.runtime_path()))
     }
 
     fn map_type_path(&self) -> &str {

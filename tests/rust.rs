@@ -25,7 +25,7 @@ use tokio_util::codec::{Encoder as _, FramedParts, FramedRead, FramedWrite};
 use tracing::instrument;
 use wrpc_core::{
     Decode, Encode, FrameDecoder, FrameEncoder, FrameRef, Framed, Header, HeaderDecoder,
-    HeaderEncoder, HeaderRef, Listener, ServeError, invoke, receive, serve, transmit,
+    HeaderEncoder, HeaderRef, InvokeError, Listener, ServeError, invoke, receive, serve, transmit,
 };
 use wrpc_test::next_invocation;
 
@@ -518,7 +518,7 @@ fn async_values() -> AsyncValues {
 
 async fn assert_async_values(
     (a, b, c, d, e, f): AsyncValues,
-    io: impl Future<Output = std::io::Result<()>>,
+    io: impl Future<Output = Result<(), InvokeError>>,
 ) -> anyhow::Result<()> {
     try_join!(
         async {

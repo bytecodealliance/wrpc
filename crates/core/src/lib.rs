@@ -44,7 +44,7 @@ pub use frame::{
     FrameHeaderRef, FrameRef,
 };
 pub use header::{Header, HeaderDecodeError, HeaderDecoder, HeaderEncoder, HeaderRef, PROTOCOL};
-pub use invoke::{Invocation, Invoke, invoke};
+pub use invoke::{Invocation, Invoke, InvokeError, invoke};
 pub use listener::Listener;
 pub use mux::{Receipt, Transmission, receive, transmit};
 pub use pack::{PackError, UnpackError, pack, pack_with, unpack, unpack_with};

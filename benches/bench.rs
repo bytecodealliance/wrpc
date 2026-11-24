@@ -28,7 +28,9 @@ use tokio::try_join;
 use tokio_util::codec::{Decoder, Encoder};
 use wasmtime::component::{Component, Linker, ResourceTable};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
-use wrpc_core::{Codec, Encode, Framed, Header, Invoke, Listener, Receive, Serve, Transmit};
+use wrpc_core::{
+    Codec, Encode, Framed, Header, Invoke, InvokeError, Listener, Receive, Serve, Transmit,
+};
 use wrpc_http::{Body, OutgoingRequest};
 
 mod ping_bindings_wrpc {
@@ -355,7 +357,7 @@ impl<'a, E: Transmit + Send + 'static> Invoke<E> for Http1<'a> {
         instance: &str,
         func: &str,
         params: T,
-    ) -> impl Future<Output = std::io::Result<(D::Item, Self::Invocation<D>)>> + use<'a, E, D, T>
+    ) -> impl Future<Output = Result<(D::Item, Self::Invocation<D>), InvokeError>> + use<'a, E, D, T>
     where
         E: Encoder<T, Error = std::io::Error>,
         D: Decoder<Error = std::io::Error> + Receive,
@@ -388,7 +390,7 @@ impl<'a, E: Transmit + Send + 'static> Invoke<E> for Http2<'a> {
         instance: &str,
         func: &str,
         params: T,
-    ) -> impl Future<Output = std::io::Result<(D::Item, Self::Invocation<D>)>> + use<'a, E, D, T>
+    ) -> impl Future<Output = Result<(D::Item, Self::Invocation<D>), InvokeError>> + use<'a, E, D, T>
     where
         E: Encoder<T, Error = std::io::Error>,
         D: Decoder<Error = std::io::Error> + Receive,

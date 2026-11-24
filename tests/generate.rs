@@ -1,3 +1,4 @@
+use futures::TryFutureExt as _;
 use tokio::try_join;
 use wrpc::{Framed, Header, Listener};
 
@@ -44,7 +45,8 @@ async fn generate() -> anyhow::Result<()> {
             fut.await?;
             Ok(())
         },
-        bindings::wrpc_test::umbrella::greeter::greet(Framed::new(clt_tx, clt_rx), "wrpc"),
+        bindings::wrpc_test::umbrella::greeter::greet(Framed::new(clt_tx, clt_rx), "wrpc")
+            .err_into(),
     )?;
     assert_eq!(greeting, "hello, wrpc");
     Ok(())
