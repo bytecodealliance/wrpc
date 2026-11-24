@@ -13,6 +13,10 @@ pub enum Command {
 }
 
 /// Serve a reactor component
+///
+/// Received `future`s and `stream`s are not buffered, so the guest must read the ones of an
+/// invocation concurrently: if the peer interleaves them, a guest reading one `stream` to its end
+/// before another one stalls the invocation indefinitely, which `--timeout` does not end.
 #[derive(Parser, Debug)]
 pub struct ServeArgs {
     /// Limit on how long a read from or a write to a connection may wait on the peer

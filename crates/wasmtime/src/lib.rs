@@ -14,6 +14,10 @@
 //! function, for example, it instantiates the component for each invocation or serves all
 //! connections in one instance from a single `run_concurrent` event loop, which guest-exported
 //! resources require.
+//!
+//! Received `future`s and `stream`s are not buffered, so the guest must read the ones of an
+//! invocation concurrently: a guest reading one `stream` to its end before another one stalls the
+//! invocation indefinitely, if the peer interleaves them (see [`wrpc_core`]).
 
 mod codec;
 mod export;
