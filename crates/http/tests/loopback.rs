@@ -250,8 +250,8 @@ async fn pooling() -> anyhow::Result<()> {
 async fn response_parts() -> anyhow::Result<()> {
     let serve = async |stream| {
         wrpc_test::serve_http(stream, |parts, _, mut req| async move {
-            req.parts.status = StatusCode::IM_A_TEAPOT;
-            let headers = &mut req.parts.headers;
+            req.response.status = StatusCode::IM_A_TEAPOT;
+            let headers = &mut req.response.headers;
             headers.insert("foo", HeaderValue::from_static("bar"));
             headers.insert("req-content-type", parts.headers[CONTENT_TYPE].clone());
             let res =

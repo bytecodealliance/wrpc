@@ -290,8 +290,8 @@ where
         return Err(HeaderDecodeError::Truncated);
     };
     let rx = rx.map_decoder(|_| FrameDecoder::default());
-    let (parts, ()) = http::Response::new(()).into_parts();
-    Ok((header, IncomingRequest { rx, parts }))
+    let (response, ()) = http::Response::new(()).into_parts();
+    Ok((header, IncomingRequest { rx, response }))
 }
 
 /// Client invoking functions with `POST` requests to `uri`, with content type [`MEDIA_TYPE`],
@@ -463,12 +463,12 @@ where
 }
 
 /// Incoming request carrying an invocation, see [accept], served by responding with the
-/// results, with content type [`MEDIA_TYPE`] unless `parts` set one
+/// results, with content type [`MEDIA_TYPE`] unless `response` sets one
 pub struct IncomingRequest<T: http_body::Body> {
     /// Frames of the invocation following its header
     pub rx: FramedRead<BodyReader<T>, FrameDecoder>,
     /// Parts of the response
-    pub parts: http::response::Parts,
+    pub response: http::response::Parts,
 }
 
 impl<T> IncomingRequest<T>
@@ -494,7 +494,7 @@ where
         E: Transmit + Encoder<R, Error = std::io::Error>,
         D: Decoder<Error = std::io::Error> + Receive,
     {
-        let Self { rx, mut parts } = self;
+        let Self { rx, mut response } = self;
         let Codec { enc, dec } = codec;
         let (params, rx) = receive(dec, rx).await?;
         let mut rx = Ingress::Receiving(rx);
@@ -507,12 +507,12 @@ where
         })
         .await?;
         let body = Egress::new(enc, BytesMut::default(), results).map_err(ServeError::Response)?;
-        parts
+        response
             .headers
             .entry(CONTENT_TYPE)
             .or_insert(HeaderValue::from_static(MEDIA_TYPE));
         Ok(http::Response::from_parts(
-            parts,
+            response,
             OutgoingResults { body, rx },
         ))
     }
