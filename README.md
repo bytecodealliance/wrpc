@@ -38,7 +38,7 @@ For static use cases, wRPC provides [WIT] binding generators for:
 
 wRPC fully supports the unreleased native [WIT] `stream` and `future` data types along with all currently released WIT functionality.
 
-Received `stream` and `future` values are not buffered: a pending value takes data from the transport only as fast as its consumer reads it, and while it waits for its consumer, nothing else of its invocation is received. All pending values received in an invocation must therefore be consumed concurrently, for example, in separate goroutines in Go. A consumer, which reads one stream to its end before reading another one, hangs until a timeout, if the peer interleaves them. In Go, a future channel delivers its value once and is closed afterwards, and a stream channel is closed once the stream ended. The JavaScript runtime still buffers up to 16 chunks per pending value.
+Received `stream` and `future` values are not buffered: a pending value takes data from the transport only as fast as its consumer reads it, and while it waits for its consumer, nothing else of its invocation is received. All pending values received in an invocation must therefore be consumed concurrently, for example, in separate goroutines in Go. A consumer, which reads one stream to its end before reading another one, hangs until a timeout, if the peer interleaves them. In Go, a future channel delivers its value once and is closed afterwards, and a stream channel is closed once the stream ended. In JavaScript, a `stream` to send is never `null`.
 
 See [specification](./SPEC.md) for more info.
 
