@@ -46,7 +46,7 @@ pub struct Body<E> {
     enc: E,
     path: Vec<usize>,
     buffer: BytesMut,
-    sent: SentSignal,
+    error: Option<oneshot::Sender<std::io::Error>>,
 }
 
 impl<E> Unpin for Body<E> {}
@@ -72,7 +72,7 @@ impl<E> Body<E> {
             enc,
             path: Vec::default(),
             buffer,
-            sent: SentSignal::default(),
+            error: None,
         })
     }
 }
@@ -89,33 +89,31 @@ impl<E: Transmit> http_body::Body for Body<E> {
             enc,
             path,
             buffer,
-            sent,
+            error,
         } = self.get_mut();
-        if !sent.done
-            && let Some(tx) = &mut sent.tx
+        if let Some(tx) = error
             && tx.poll_canceled(cx).is_ready()
         {
-            return Poll::Ready(Some(Err(std::io::Error::new(
-                std::io::ErrorKind::BrokenPipe,
-                "invocation dropped",
-            ))));
+            return Poll::Ready(Some(Err(std::io::ErrorKind::BrokenPipe.into())));
         }
         let complete = enc.is_complete()
             || match enc.poll_transmit(cx, path, buffer) {
                 Poll::Ready(Ok(())) => true,
                 Poll::Ready(Err(err)) => {
-                    let Some(tx) = sent.tx.take() else {
+                    let Some(tx) = error.take() else {
                         return Poll::Ready(Some(Err(err)));
                     };
                     let kind = err.kind();
-                    if let Err(Err(err)) = tx.send(Err(err)) {
-                        return Poll::Ready(Some(Err(err)));
-                    }
-                    return Poll::Ready(Some(Err(std::io::Error::new(kind, "body failed"))));
+                    return Poll::Ready(Some(Err(match tx.send(err) {
+                        Ok(()) => kind.into(),
+                        Err(err) => err,
+                    })));
                 }
                 Poll::Pending => false,
             };
-        sent.done = complete;
+        if complete {
+            *error = None;
+        }
         if !buffer.is_empty() {
             Poll::Ready(Some(Ok(Frame::data(buffer.split().freeze()))))
         } else if complete {
@@ -137,23 +135,6 @@ impl<E: Transmit> http_body::Body for Body<E> {
             let mut hint = SizeHint::default();
             hint.set_lower(n);
             hint
-        }
-    }
-}
-
-/// Signal of a body, which was handed out in full or failed
-#[derive(Default)]
-struct SentSignal {
-    tx: Option<oneshot::Sender<std::io::Result<()>>>,
-    done: bool,
-}
-
-impl Drop for SentSignal {
-    fn drop(&mut self) {
-        if let Some(tx) = self.tx.take()
-            && self.done
-        {
-            _ = tx.send(Ok(()));
         }
     }
 }
@@ -266,8 +247,8 @@ where
             .or_insert(HeaderValue::from_static(MEDIA_TYPE));
         async move {
             let mut body = body?;
-            let (tx, mut sent) = oneshot::channel();
-            body.sent.tx = Some(tx);
+            let (tx, mut error) = oneshot::channel();
+            body.error = Some(tx);
             let res = send(http::Request::from_parts(parts, body));
             let rx = ResponseReader {
                 res: Some(Box::pin(res)),
@@ -277,7 +258,7 @@ where
             let (results, rx) = match receive(dec, rx).await {
                 Ok(res) => res,
                 Err(err) => {
-                    if let Ok(Some(Err(err))) = sent.try_recv() {
+                    if let Ok(Some(err)) = error.try_recv() {
                         return Err(err);
                     }
                     return Err(err.into());
@@ -286,7 +267,7 @@ where
             Ok((
                 results,
                 Invocation {
-                    sent: Some(sent),
+                    error,
                     rx: Ingress::Receiving(rx),
                 },
             ))
@@ -295,13 +276,12 @@ where
 }
 
 /// Future receiving the asynchronous results and the end of the response body of an
-/// [OutgoingRequest] invocation
+/// [OutgoingRequest] invocation, failing with the error of its request body, if any
 ///
-/// It also completes once the request body was sent, failing with its error, and dropping it
-/// before fails the request body.
+/// Dropping it before the request body was sent fails the request body.
 #[must_use]
 pub struct Invocation<F, B: http_body::Body, D> {
-    sent: Option<oneshot::Receiver<std::io::Result<()>>>,
+    error: oneshot::Receiver<std::io::Error>,
     rx: Ingress<D, ResponseReader<F, B>>,
 }
 
@@ -315,21 +295,12 @@ where
     type Output = std::io::Result<()>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let Self { sent, rx } = self.get_mut();
-        let canceled = poll_sent(cx, sent)?;
-        let end = match Pin::new(rx).poll(cx) {
-            Poll::Ready(Ok(())) => true,
-            Poll::Ready(Err(err)) => return Poll::Ready(Err(sent_error(sent, err.into()))),
-            Poll::Pending => false,
-        };
-        if canceled && end {
-            return Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::BrokenPipe,
-                "request body was not sent",
-            )));
-        }
-        if sent.is_some() || !end {
-            return Poll::Pending;
+        let Self { error, rx } = self.get_mut();
+        if let Err(err) = ready!(Pin::new(rx).poll(cx)) {
+            if let Ok(Some(err)) = error.try_recv() {
+                return Poll::Ready(Err(err));
+            }
+            return Poll::Ready(Err(err.into()));
         }
         Poll::Ready(Ok(()))
     }
@@ -636,33 +607,6 @@ impl hyper::service::Service<http::Request<hyper::body::Incoming>> for ListenerS
             }
         })
     }
-}
-
-/// Polls `sent` for the body being sent, returning whether it was dropped before its end
-fn poll_sent(
-    cx: &mut Context<'_>,
-    sent: &mut Option<oneshot::Receiver<std::io::Result<()>>>,
-) -> std::io::Result<bool> {
-    match sent.as_mut().map(|fut| Pin::new(fut).poll(cx)) {
-        Some(Poll::Ready(Ok(res))) => {
-            res?;
-            *sent = None;
-            Ok(false)
-        }
-        Some(Poll::Ready(Err(oneshot::Canceled))) => Ok(true),
-        _ => Ok(false),
-    }
-}
-
-/// Returns the error the body failed with, if any, else `err`
-fn sent_error(
-    sent: &mut Option<oneshot::Receiver<std::io::Result<()>>>,
-    err: std::io::Error,
-) -> std::io::Error {
-    if let Some(Ok(Some(Err(err)))) = sent.as_mut().map(oneshot::Receiver::try_recv) {
-        return err;
-    }
-    err
 }
 
 /// Receipt of the rest of a body, followed by its end
