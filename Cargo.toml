@@ -167,6 +167,7 @@ reqwest = { version = "0.13", default-features = false }
 rustls = { version = "0.23", default-features = false }
 serde = { version = "1", default-features = false }
 serde_json = { version = "1", default-features = false }
+sync_wrapper = { version = "1", default-features = false }
 syn = { version = "2", default-features = false, features = ["printing"] }
 tempfile = { version = "3", default-features = false }
 test-log = { version = "0.2", default-features = false }

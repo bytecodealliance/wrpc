@@ -21,12 +21,7 @@ clap = { workspace = true, features = [
     "usage",
 ] }
 http = { workspace = true }
-hyper-util = { workspace = true, features = [
-    "client-legacy",
-    "http1",
-    "http2",
-    "tokio",
-] }
+reqwest = { workspace = true, features = ["http2"] }
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread"] }
 tower = { workspace = true, features = ["util"] }
 tracing-subscriber = { workspace = true, features = [
