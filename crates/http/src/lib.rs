@@ -1,4 +1,3 @@
-#![allow(clippy::type_complexity)]
 #![deny(missing_docs)]
 
 //! wRPC HTTP transport
@@ -32,7 +31,6 @@
 //! ```
 
 use core::future::poll_fn;
-use core::iter;
 use core::mem;
 use core::pin::{Pin, pin};
 use core::task::{Context, Poll, ready};
@@ -347,10 +345,8 @@ where
     ///
     /// Receives the asynchronous parameters while `f` runs and resolves to the response once the
     /// results `f` returns are encoded. Its [ResponseBody] transmits the asynchronous results and
-    /// receives the rest of the request. A peer resetting the request fails with
-    /// [`ServeError::Request`] of kind [`ConnectionReset`](std::io::ErrorKind::ConnectionReset).
-    /// Data for an asynchronous parameter `f` dropped fails with [`ServeError::Unread`] until
-    /// this resolves and fails the [ResponseBody] with
+    /// receives the rest of the request. Data for an asynchronous parameter `f` dropped fails with
+    /// [`ServeError::Unread`] until this resolves and fails the [ResponseBody] with
     /// [`BrokenPipe`](std::io::ErrorKind::BrokenPipe) after.
     ///
     /// Unlike [`Serve`], this does not require [`Send`] values and futures.
@@ -488,21 +484,8 @@ impl<D: Receive, I: AsyncRead + Unpin> Future for Ingress<D, I> {
 }
 
 fn into_io_error(err: impl Into<Box<dyn core::error::Error + Send + Sync>>) -> std::io::Error {
-    let err = match err.into().downcast::<std::io::Error>() {
-        Ok(err) => return *err,
-        Err(err) => err,
-    };
-    if err
-        .downcast_ref::<hyper::Error>()
-        .is_some_and(hyper::Error::is_timeout)
-    {
-        return std::io::Error::new(std::io::ErrorKind::TimedOut, err);
+    match err.into().downcast::<std::io::Error>() {
+        Ok(err) => *err,
+        Err(err) => std::io::Error::other(err),
     }
-    if iter::successors(Some(&*err as &dyn core::error::Error), |err| err.source())
-        .filter_map(|err| err.downcast_ref::<h2::Error>())
-        .any(|err| err.is_reset() && err.is_remote())
-    {
-        return std::io::Error::new(std::io::ErrorKind::ConnectionReset, err);
-    }
-    std::io::Error::other(err)
 }

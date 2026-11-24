@@ -4574,7 +4574,6 @@ dependencies = [
  "anyhow",
  "bytes",
  "futures",
- "h2",
  "http",
  "http-body",
  "http-body-util",

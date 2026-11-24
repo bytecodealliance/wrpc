@@ -12,18 +12,16 @@ repository.workspace = true
 [dependencies]
 bytes = { workspace = true }
 futures = { workspace = true, features = ["std"] }
-h2 = { workspace = true }
 http = { workspace = true }
 http-body = { workspace = true }
 http-body-util = { workspace = true }
-hyper = { workspace = true, features = ["http1", "http2", "server"] }
-hyper-util = { workspace = true, features = ["server-auto", "tokio"] }
-tokio = { workspace = true, features = ["sync"] }
+tokio = { workspace = true }
 tokio-util = { workspace = true, features = ["codec", "io"] }
 wrpc-core = { workspace = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
+hyper = { workspace = true, features = ["client", "http1", "http2", "server"] }
 hyper-util = { workspace = true, features = [
     "client",
     "client-legacy",
