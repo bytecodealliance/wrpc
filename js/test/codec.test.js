@@ -3,8 +3,9 @@ import { test } from "node:test";
 
 import * as t from "../src/types.js";
 import { FrameReader, FrameWriter, Framed, Listener } from "../src/frame.js";
-import { UnreadError, decoder, encoder, receive, transmit } from "../src/codec.js";
-import { ServeError, invoke, serve } from "../src/rpc.js";
+import { decoder, encoder, receive, transmit } from "../src/codec.js";
+import { InvokeError, ReceiveError, ServeError } from "../src/error.js";
+import { invoke, serve } from "../src/rpc.js";
 
 /**
  * @typedef {import("../src/index.js").Type} Type
@@ -66,17 +67,26 @@ test("frames", async () => {
     ...[...Buffer.from("\x7fƒ𐍈Ő")].map((b) => [[0x42], String.fromCharCode(b)]),
   ]);
 
-  for (const [input, msg] of /** @type {const} */ ([
-    [[65, ...Array(65).fill(0), 0], /path length of `65` exceeds maximum of `64`/],
-    [[1, 0x80], /unexpected end of input/],
+  for (const [input, err] of /** @type {const} */ ([
+    [[65, ...Array(65).fill(0), 0], { kind: "pathTooDeep", depth: 65, max: 64 }],
+    [[1, 0x80], { kind: "truncated" }],
+    [[1, 0x80, 0x80, 0x80, 0x80, 0x10], { kind: "overflow" }],
   ])) {
-    await assert.rejects(new FrameReader(readable(input)).next(), msg);
+    await assert.rejects(new FrameReader(readable(input)).next(), {
+      name: "FrameDecodeError",
+      ...err,
+    });
   }
-  for (const [input, msg] of /** @type {const} */ ([
-    [[1, 1, 0x69, 2, 0x66, 0x66], /name length of 2 exceeds maximum of 1/],
-    [[2], /unsupported version byte: 2/],
+  for (const [input, err] of /** @type {const} */ ([
+    [[1, 1, 0x69, 2, 0x66, 0x66], { kind: "nameTooLong", len: 2, max: 1 }],
+    [[1, 1, 0xff], { kind: "invalidName" }],
+    [[2], { kind: "unsupportedVersion", version: 2 }],
+    [[1, 1], { kind: "truncated" }],
   ])) {
-    await assert.rejects(new FrameReader(readable(input)).header({ maxNameLength: 1 }), msg);
+    await assert.rejects(new FrameReader(readable(input)).header({ maxNameLength: 1 }), {
+      name: "HeaderDecodeError",
+      ...err,
+    });
   }
 });
 
@@ -99,20 +109,21 @@ test("receiving reads nothing past the last path closed", async () => {
 
 test("invalid frames fail receiving at once", async () => {
   const root = [...frame([], "\0"), ...frame([], "")];
-  for (const [bytes, msg] of /** @type {const} */ ([
-    [[...root, ...frame([1], "")], /unknown path `\[1\]`/],
-    [frame([], "\0\x2a"), /data after value end/],
-    [root, /ingress ended before all paths were closed/],
-    [[...root, ...frame([0], "\x03fo"), ...frame([0], "")], /stream closed within a chunk/],
-    [[...root, 1, 0, 5, 0x2a], /frame truncated/],
-    [[...frame([0], "\0")], /unknown path `\[0\]`/],
+  for (const [bytes, kind] of /** @type {const} */ ([
+    [[...root, ...frame([1], "")], "unknownPath"],
+    [frame([], "\0\x2a"), "dataAfterEnd"],
+    [root, "truncated"],
+    [[...root, ...frame([0], "\x03fo"), ...frame([0], "")], "truncated"],
+    [[...root, ...frame([0], "\xff\xff\xff\xff\x7f")], "decode"],
+    [[...root, 1, 0, 5, 0x2a], "frame"],
+    [[...frame([0], "\0")], "unknownPath"],
   ])) {
     const run = async () => {
       const [[s], rx] = await receive(decoder(STREAM), new FrameReader(readable(bytes)));
       void collect(s);
       await rx;
     };
-    await assert.rejects(run, msg);
+    await assert.rejects(run, { name: "ReceiveError", kind });
   }
 });
 
@@ -215,6 +226,25 @@ test("serving fails by the side at fault", { timeout: 1000 }, async () => {
   }
 });
 
+test("invoking fails by the side at fault", async () => {
+  /** @type {Uint8Array[]} */
+  const written = [];
+  const tx = new WritableStream({ write: (c) => void written.push(c) });
+  await assert.rejects(invoke(new Framed(tx, new ReadableStream()), "i", "f", [t.u8], [256], []), {
+    name: "InvokeError",
+    kind: "request",
+  });
+  assert.deepEqual(written, []);
+  const rx = readable([...frame([], "\x02"), ...frame([], "")]);
+  const err = await invoke(new Framed(new WritableStream(), rx), "i", "f", [], [], [t.bool]).catch(
+    (err) => err,
+  );
+  assert.ok(err instanceof InvokeError);
+  assert.equal(err.kind, "response");
+  assert.ok(err.cause instanceof ReceiveError);
+  assert.equal(err.cause.kind, "decode");
+});
+
 test("invalid values fail before anything is written", async () => {
   /** @type {Uint8Array[]} */
   const written = [];
@@ -299,5 +329,5 @@ test("an unread stream stalls receiving, a cancelled one fails it", { timeout: 1
   assert.equal(sent, false);
   assert.equal(settled, false);
   await reader.cancel();
-  await assert.rejects(rx, UnreadError);
+  await assert.rejects(rx, { name: "ReceiveError", kind: "unread" });
 });

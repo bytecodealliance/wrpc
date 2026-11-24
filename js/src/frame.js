@@ -3,7 +3,16 @@
 // `SPEC.md`, "Framed stream specification"). Transports provide WHATWG byte
 // streams, which their owner ends or tears down.
 
-import { AsyncReader, UNEXPECTED_EOF, Writer, atomic, readVarU32 } from "./io.js";
+import { FrameDecodeError, HeaderDecodeError } from "./error.js";
+import {
+  AsyncReader,
+  Writer,
+  atomic,
+  isOverflow,
+  isUnexpectedEof,
+  readVarU32,
+  textDecoder,
+} from "./io.js";
 import { invokeOver, serveOver } from "./rpc.js";
 
 /** The wRPC framing protocol version byte. */
@@ -73,12 +82,24 @@ export class FrameWriter {
  */
 function* frameHeader(r, maxDepth) {
   const n = yield* atomic(r, readVarU32);
-  if (n > maxDepth) {
-    throw new RangeError(`path length of \`${n}\` exceeds maximum of \`${maxDepth}\``);
-  }
+  if (n > maxDepth) throw new FrameDecodeError("pathTooDeep", { depth: n, max: maxDepth });
   const path = [];
   for (let i = 0; i < n; i++) path.push(yield* atomic(r, readVarU32));
   return { path, size: yield* atomic(r, readVarU32) };
+}
+
+/**
+ * The error `Err` of failing to decode with `err`, which is `io` unless the
+ * data is truncated or invalid.
+ * @template {typeof FrameDecodeError | typeof HeaderDecodeError} Err
+ * @param {Err} Err @param {unknown} err
+ * @returns {InstanceType<Err>}
+ */
+function decodeError(Err, err) {
+  if (err instanceof Err) return /** @type {InstanceType<Err>} */ (err);
+  if (isUnexpectedEof(err)) return /** @type {InstanceType<Err>} */ (new Err("truncated"));
+  const kind = isOverflow(err) ? "overflow" : "io";
+  return /** @type {InstanceType<Err>} */ (new Err(kind, { cause: err }));
 }
 
 /** Reads invocation headers and frames from a byte stream. */
@@ -112,14 +133,18 @@ export class FrameReader {
    */
   async next() {
     const input = this.#input;
-    if (this.#left === 0) {
-      if (!(await input.fill(1))) return null;
-      const { path, size } = await input.decode((r) => frameHeader(r, this.maxDepth));
-      this.path = path;
-      this.#left = size;
-      if (size === 0) return EMPTY;
+    try {
+      if (this.#left === 0) {
+        if (!(await input.fill(1))) return null;
+        const { path, size } = await input.decode((r) => frameHeader(r, this.maxDepth));
+        this.path = path;
+        this.#left = size;
+        if (size === 0) return EMPTY;
+      }
+      if (!(await input.fill(1))) throw new FrameDecodeError("truncated");
+    } catch (err) {
+      throw decodeError(FrameDecodeError, err);
     }
-    if (!(await input.fill(1))) throw new RangeError(`${UNEXPECTED_EOF}: frame truncated`);
     const data = input.remaining().subarray(0, this.#left);
     input.consume(data.length);
     this.#left -= data.length;
@@ -137,13 +162,28 @@ export class FrameReader {
     maxInstanceLength = DEFAULT_MAX_NAME_LENGTH,
     maxNameLength = DEFAULT_MAX_NAME_LENGTH,
   } = {}) {
-    const input = this.#input;
-    if (!(await input.fill(1))) return null;
-    const version = await input.u8();
-    if (version !== PROTOCOL) throw new RangeError(`unsupported version byte: ${version}`);
-    const instance = await input.name(maxInstanceLength);
-    const name = await input.name(maxNameLength);
-    return { instance, name };
+    try {
+      if (!(await this.#input.fill(1))) return null;
+      const version = await this.#input.u8();
+      if (version !== PROTOCOL) throw new HeaderDecodeError("unsupportedVersion", { version });
+      const instance = await this.#name(maxInstanceLength);
+      const name = await this.#name(maxNameLength);
+      return { instance, name };
+    } catch (err) {
+      throw decodeError(HeaderDecodeError, err);
+    }
+  }
+
+  /** @param {number} max */
+  async #name(max) {
+    const len = await this.#input.decode((r) => atomic(r, readVarU32));
+    if (len > max) throw new HeaderDecodeError("nameTooLong", { len, max });
+    const bytes = await this.#input.take(len);
+    try {
+      return textDecoder.decode(bytes);
+    } catch (err) {
+      throw new HeaderDecodeError("invalidName", { cause: err });
+    }
   }
 }
 
@@ -175,6 +215,7 @@ export class Framed {
 /** Accepts the invocations sent over a byte stream pair one after another. */
 export class Listener {
   #options;
+  #failed = false;
 
   /**
    * @param {WritableStream<Uint8Array>} writable @param {ReadableStream<Uint8Array>} readable
@@ -187,12 +228,19 @@ export class Listener {
 
   /**
    * The header of the next invocation, once the previous one was served, along
-   * with the frames to serve it over, or `null` once the stream ends before one.
-   * Once serving an invocation failed, the byte streams must be torn down.
+   * with the frames to serve it over, or `null` once the stream ends before one
+   * or reading a header failed before. Once serving an invocation failed, the
+   * byte streams must be torn down.
    * @returns {Promise<[{ instance: string, name: string }, Framed] | null>}
    */
   async accept() {
-    const header = await this.io.rx.header(this.#options);
-    return header && [header, this.io];
+    if (this.#failed) return null;
+    try {
+      const header = await this.io.rx.header(this.#options);
+      return header && [header, this.io];
+    } catch (err) {
+      this.#failed = true;
+      throw err;
+    }
   }
 }

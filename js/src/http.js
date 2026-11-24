@@ -1,10 +1,16 @@
 // The HTTP transport: an invocation per `POST` request, whose request body
 // carries the client's frames and whose response body carries the server's.
 
-import { UNEXPECTED_EOF } from "./io.js";
-import { errorDataAfterEnd, receive, transmission } from "./codec.js";
+import { next, receive } from "./codec.js";
+import {
+  FrameDecodeError,
+  HeaderDecodeError,
+  InvokeError,
+  ReceiveError,
+  ServeError,
+} from "./error.js";
 import { FrameReader, FrameWriter } from "./frame.js";
-import { ServeError, handle, never, noop, requestError } from "./rpc.js";
+import { handle, mapError, never, noop, requestError, responseError, send } from "./rpc.js";
 
 /** The media type of wRPC request and response bodies. */
 export const MEDIA_TYPE = "application/vnd.bytecodealliance.wrpc";
@@ -21,7 +27,7 @@ export const MEDIA_TYPE = "application/vnd.bytecodealliance.wrpc";
  */
 const end = (rx, received) =>
   received.then(async () => {
-    if ((await rx.next()) !== null) throw errorDataAfterEnd();
+    if ((await next(rx)) !== null) throw new ReceiveError("dataAfterEnd");
   });
 
 /**
@@ -48,9 +54,9 @@ export function fromFetch(input, { fetch = globalThis.fetch, buffer = false, ...
       const tx = new FrameWriter(
         pipe?.writable ?? new WritableStream({ write: (chunk) => void chunks.push(chunk) }),
       );
-      const send = transmission(enc, tx, params);
+      const start = send(enc, tx, params, (err) => new InvokeError("request", err));
       tx.header({ instance, name }).catch(noop);
-      const sent = send().then(() => tx.writer.close());
+      const sent = start().then(() => tx.writer.close());
       const headers = new Headers(init.headers ?? /** @type {Request} */ (input).headers);
       if (!headers.has("content-type")) headers.set("content-type", MEDIA_TYPE);
       const req = { ...init, headers, method: "POST" };
@@ -62,7 +68,13 @@ export function fromFetch(input, { fetch = globalThis.fetch, buffer = false, ...
               body: new Blob(/** @type {Uint8Array<ArrayBuffer>[]} */ (chunks)),
             }),
           );
-      const rx = res.then((res) => new FrameReader(res.body ?? new Blob([]).stream()));
+      const rx = res.then(
+        (res) => new FrameReader(res.body ?? new Blob([]).stream()),
+        (err) => {
+          const cause = new ReceiveError("frame", new FrameDecodeError("io", { cause: err }));
+          throw new InvokeError("response", cause);
+        },
+      );
       /** @param {unknown} err */
       const fail = (err) => {
         tx.writer.abort(err).catch(noop);
@@ -72,8 +84,8 @@ export function fromFetch(input, { fetch = globalThis.fetch, buffer = false, ...
       try {
         const [results, received] = await Promise.race([
           rx.then(async (rx) => {
-            const [results, received] = await receive(dec, rx);
-            return /** @type {const} */ ([results, end(rx, received)]);
+            const [results, received] = await mapError(receive(dec, rx), responseError);
+            return /** @type {const} */ ([results, mapError(end(rx, received), responseError)]);
           }),
           sent.then(() => never),
         ]);
@@ -96,7 +108,7 @@ export async function accept(request, options) {
   const rx = new FrameReader(request.body ?? new Blob([]).stream(), options);
   try {
     const header = await rx.header(options);
-    if (!header) throw new RangeError(`${UNEXPECTED_EOF}: request ended before a header`);
+    if (!header) throw new HeaderDecodeError("truncated");
     return [header, new IncomingRequest(rx)];
   } catch (err) {
     rx.reader.cancel(err).catch(noop);
@@ -119,18 +131,11 @@ export class IncomingRequest {
    */
   async serve({ enc, dec }, f) {
     const rx = this.#rx;
-    /** @type {[any, Promise<void>]} */
-    let received;
-    try {
-      received = await receive(dec, rx);
-    } catch (err) {
+    const [params, rest] = await mapError(receive(dec, rx), (err) => {
       rx.reader.cancel(err).catch(noop);
-      throw requestError(err);
-    }
-    const [params, rest] = received;
-    const ended = end(rx, rest).catch((err) => {
-      throw requestError(err);
+      return requestError(err);
     });
+    const ended = mapError(end(rx, rest), requestError);
     const { readable, writable } = new TransformStream();
     const tx = new FrameWriter(writable);
     /** @param {unknown} err */
@@ -141,16 +146,7 @@ export class IncomingRequest {
     };
     try {
       const results = await Promise.race([handle(f, params), ended.then(() => never)]);
-      /** @type {() => Promise<void>} */
-      let send;
-      try {
-        send = transmission(enc, tx, results);
-      } catch (err) {
-        throw new ServeError("response", err);
-      }
-      const sent = send().catch((err) => {
-        throw new ServeError("response", err);
-      });
+      const sent = send(enc, tx, results, (err) => new ServeError("response", err))();
       Promise.all([ended, sent])
         .then(() => tx.writer.close(), fail)
         .catch(noop);

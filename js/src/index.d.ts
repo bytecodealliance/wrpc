@@ -207,13 +207,13 @@ export class FrameReader {
   /**
    * The next chunk of the data of a frame on {@link path}, empty for the frame
    * closing it, or `null` once the stream ends between frames. Chunks are
-   * views of the chunks read, not copies.
+   * views of the chunks read, not copies. Fails with a {@link FrameDecodeError}.
    */
   next(): Promise<Uint8Array | null>;
   /**
    * The next invocation header, or `null` once the stream ends before one.
    * Names longer than `maxInstanceLength` and `maxNameLength` bytes, 1 KiB by
-   * default, are rejected.
+   * default, are rejected. Fails with a {@link HeaderDecodeError}.
    */
   header(options?: { maxInstanceLength?: number; maxNameLength?: number }): Promise<Header | null>;
 }
@@ -238,7 +238,7 @@ export class Framed implements Invoke, Serve<void> {
    * Resolves to the results once they are received, along with the promise
    * of the rest of the invocation, which resolves once the pending parameters
    * are transmitted and the pending results received. The next invocation
-   * starts once it resolved.
+   * starts once it resolved. Both fail with an {@link InvokeError}.
    */
   invoke<P, R>(
     codec: Codec<P, R>,
@@ -250,7 +250,7 @@ export class Framed implements Invoke, Serve<void> {
    * Serve the invocation, whose header was read, using `codec` by calling `f`
    * with its parameters and transmitting the results it returns. Resolves once
    * all pending parameters are received and all pending results transmitted.
-   * Nothing is transmitted if `f` fails.
+   * Nothing is transmitted if `f` fails. Fails with a {@link ServeError}.
    */
   serve<P, R>(codec: Codec<R, P>, f: (params: P) => R | Promise<R>): Promise<void>;
 }
@@ -266,7 +266,8 @@ export class Listener {
   readonly io: Framed;
   /**
    * The header of the next invocation, once the previous one was served, along
-   * with the frames to serve it over, or `null` once the stream ends before one.
+   * with the frames to serve it over, or `null` once the stream ends before one
+   * or reading a header failed before. Fails with a {@link HeaderDecodeError}.
    * Once serving an invocation failed, the byte streams must be torn down.
    */
   accept(): Promise<[Header, Framed] | null>;
@@ -329,18 +330,15 @@ export function transmit<T>(enc: Encoder<T>, tx: FrameWriter, value: T): Promise
  * Receive a value, the results when invoking and the parameters when serving,
  * from the root path using `dec`, returning it and the promise receiving the
  * pending values nested in it, which resolves once all paths are closed.
- * Receiving fails on a frame on a path, which is not pending, on data after
- * the end of a value, on `rx` ending before all paths are closed, on an error
- * of `rx` and, with {@link UnreadError}, on data for a pending value whose
- * consumer was cancelled. A consumer, which is not ready to take more data,
+ * Receiving fails with a {@link ReceiveError} on a frame on a path, which is
+ * not pending, on data after the end of a value, on `rx` ending before all
+ * paths are closed, on invalid data, on an error of `rx` and on data for a
+ * pending value whose consumer was cancelled. A consumer, which is not ready to take more data,
  * such as one of a stream whose chunks are not read, stalls receiving. Once
  * receiving failed, the pending values stay pending. `rx` must not be read
  * again before the receipt resolved.
  */
 export function receive<T>(dec: Decoder<T>, rx: FrameReader): Promise<[T, Promise<void>]>;
-
-/** The error of receiving data for a pending value whose consumer was cancelled. */
-export class UnreadError extends Error {}
 
 /** The encoder of the parameters and the decoder of the results of an invocation, or vice versa. */
 export interface Codec<E, D> {
@@ -354,7 +352,7 @@ export interface Invoke {
    * Invoke `instance#name` with `params` using `codec`, resolving to the
    * results once they are received, along with the promise of the rest of the
    * invocation, which resolves once the pending parameters are transmitted and
-   * the pending results received.
+   * the pending results received. Both fail with an {@link InvokeError}.
    */
   invoke<P, R>(
     codec: Codec<P, R>,
@@ -369,7 +367,10 @@ export interface Invoke {
  * {@link IncomingRequest}, resolving to `O`.
  */
 export interface Serve<O> {
-  /** Serve the invocation using `codec` by calling `f` with its parameters. */
+  /**
+   * Serve the invocation using `codec` by calling `f` with its parameters,
+   * failing with a {@link ServeError}.
+   */
   serve<P, R>(codec: Codec<R, P>, f: (params: P) => R | Promise<R>): Promise<O>;
 }
 
@@ -400,21 +401,72 @@ export function serve<O>(
   f: (...params: any[]) => InputValue[] | Promise<InputValue[]>,
 ): Promise<O>;
 
+// ----- error.js -------------------------------------------------------------
+
+/**
+ * The error of decoding an invocation header: an unsupported protocol
+ * `version` (`unsupportedVersion`), a name `len` bytes long, longer than
+ * `max` (`nameTooLong`), a name, which is not UTF-8 (`invalidName`), a name
+ * length, which does not fit in a `u32` (`overflow`), the byte stream ending
+ * inside a header (`truncated`), or reading the byte stream failing (`io`).
+ */
+export class HeaderDecodeError extends Error {
+  readonly kind:
+    "unsupportedVersion" | "nameTooLong" | "invalidName" | "overflow" | "truncated" | "io";
+  readonly version?: number;
+  readonly len?: number;
+  readonly max?: number;
+}
+
+/**
+ * The error of decoding a frame: a path `depth` elements long, longer than
+ * `max` (`pathTooDeep`), a path or length, which does not fit in a `u32`
+ * (`overflow`), the byte stream ending inside a frame (`truncated`), or
+ * reading the byte stream failing (`io`).
+ */
+export class FrameDecodeError extends Error {
+  readonly kind: "pathTooDeep" | "overflow" | "truncated" | "io";
+  readonly depth?: number;
+  readonly max?: number;
+}
+
+/**
+ * The error of receiving a value: data for a pending value whose consumer was
+ * cancelled (`unread`), a frame on a path, which is not pending
+ * (`unknownPath`), data after the end of a value or after its path was closed
+ * (`dataAfterEnd`), the frames ending or a path closed before its value was
+ * complete (`truncated`), a value decoder rejecting the data (`decode`), or
+ * reading the frames failing (`frame`, caused by a {@link FrameDecodeError}).
+ */
+export class ReceiveError extends Error {
+  constructor(
+    kind: "unread" | "unknownPath" | "dataAfterEnd" | "truncated" | "decode" | "frame",
+    cause?: unknown,
+  );
+  readonly kind: "unread" | "unknownPath" | "dataAfterEnd" | "truncated" | "decode" | "frame";
+}
+
 /**
  * The error of serving an invocation, by the side at fault: receiving the
- * parameters or the rest of the invocation failed (`request`), the handler
- * cancelled a pending parameter, for which data was received (`unread`), the
- * handler failed (`handler`), or encoding or transmitting the results failed
- * (`response`). The error it is caused by is its `cause`.
+ * parameters or the rest of the invocation failed (`request`, caused by a
+ * {@link ReceiveError}), the handler cancelled a pending parameter, for which
+ * data was received (`unread`), the handler failed (`handler`), or encoding or
+ * transmitting the results failed (`response`).
  */
 export class ServeError extends Error {
   readonly kind: "request" | "unread" | "handler" | "response";
 }
 
-/** The error for a frame received on `path`, which is not pending. */
-export function errorUnknownPath(path: readonly number[]): Error;
-/** The error for data received after the end of a value. */
-export function errorDataAfterEnd(): Error;
+/**
+ * The error of invoking a function, by the side at fault: encoding or
+ * transmitting the parameters failed (`request`), the client cancelled a
+ * pending result, for which data was received (`unread`), or receiving the
+ * results or the rest of the invocation failed (`response`, caused by a
+ * {@link ReceiveError}).
+ */
+export class InvokeError extends Error {
+  readonly kind: "request" | "unread" | "response";
+}
 
 // ----- http.js --------------------------------------------------------------
 
@@ -433,14 +485,15 @@ export interface FetchOptions extends Omit<RequestInit, "method" | "body"> {
  * A client invoking each function with a `POST` request to `input`, with the
  * {@link MEDIA_TYPE} unless `headers` set one, and reading the body of the
  * response, whatever its status. To act on the response, wrap `fetch`,
- * failing the invocation by rejecting. Once an invocation failed, its request
- * and response bodies are torn down.
+ * failing the invocation by rejecting, with an {@link InvokeError} of kind
+ * `response`. Once an invocation failed, its request and response bodies are
+ * torn down.
  */
 export function fromFetch(input: RequestInfo | URL, options?: FetchOptions): Invoke;
 
 /**
  * Receive the invocation header of `request`, resolving to it along with the
- * request to serve the invocation over.
+ * request to serve the invocation over. Fails with a {@link HeaderDecodeError}.
  */
 export function accept(
   request: Request,
