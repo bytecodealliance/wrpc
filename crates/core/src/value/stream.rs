@@ -20,7 +20,6 @@ use wasm_tokio::{CoreVecDecoderBytes, Leb128Encoder, put_u32_leb128};
 use crate::value::{decode_buffered, encode_list};
 use crate::{
     Decode, Encode, ListDecoder, Receive, ReceiveError, Transmit, encode_close, encode_frames,
-    error_data_after_end, error_unknown_path,
 };
 
 /// Number of bytes or elements of a stream, after which encoding it eagerly stops
@@ -302,14 +301,14 @@ where
 {
     if src.is_empty() {
         let Some((.., end)) = tx.take() else {
-            return Poll::Ready(Err(error_data_after_end().into()));
+            return Poll::Ready(Err(ReceiveError::DataAfterEnd));
         };
         dec.decode_eof(buf)?;
         _ = end.send(());
         return Poll::Ready(Ok(()));
     }
     let Some((tx, ..)) = tx else {
-        return Poll::Ready(Err(error_data_after_end().into()));
+        return Poll::Ready(Err(ReceiveError::DataAfterEnd));
     };
     ready!(tx.poll_ready(cx)).map_err(|_| ReceiveError::Unread)?;
     if let Some(chunk) = decode_buffered(buf, src, |buf| decode(dec, buf))? {
@@ -543,7 +542,7 @@ impl<T> Receive for StreamDecoderBytes<T> {
         src: &mut BytesMut,
     ) -> Poll<Result<(), ReceiveError>> {
         if !path.is_empty() {
-            return Poll::Ready(Err(error_unknown_path(path).into()));
+            return Poll::Ready(Err(ReceiveError::UnknownPath));
         }
         poll_receive_stream(
             cx,

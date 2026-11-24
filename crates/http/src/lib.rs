@@ -49,7 +49,7 @@ use tokio_util::io::StreamReader;
 use wrpc_core::{
     Codec, FrameDecoder, FrameEncoder, FrameRef, Header, HeaderDecodeError, HeaderDecoder,
     HeaderEncoder, HeaderRef, Invoke, Receipt, Receive, ReceiveError, Serve, ServeError, Transmit,
-    error_data_after_end, receive,
+    receive,
 };
 
 /// Media type of wRPC request and response bodies
@@ -475,7 +475,10 @@ impl<D: Receive, I: AsyncRead + Unpin> Future for Ingress<D, I> {
         if let Self::Trailing(rx) = this {
             let frame = ready!(rx.poll_next_unpin(cx)).transpose()?;
             if frame.is_some() {
-                return Poll::Ready(Err(error_data_after_end().into()));
+                if !rx.decoder().path().is_empty() {
+                    return Poll::Ready(Err(ReceiveError::UnknownPath));
+                }
+                return Poll::Ready(Err(ReceiveError::DataAfterEnd));
             }
             *this = Self::Done;
         }

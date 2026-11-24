@@ -1,6 +1,10 @@
 //! wRPC transport stream framing
 
+use core::error::Error;
+use core::fmt;
+
 use bytes::BytesMut;
+use tokio_util::codec::Decoder as _;
 use tracing::{instrument, trace};
 use wasm_tokio::{Leb128DecoderU32, Leb128Encoder};
 
@@ -23,6 +27,68 @@ pub struct FrameHeaderRef<'a> {
     pub path: &'a [usize],
     /// Length of the frame data
     pub size: usize,
+}
+
+/// Error of decoding a frame
+#[derive(Debug)]
+pub enum FrameDecodeError {
+    /// A frame path is longer than the limit of the decoder
+    PathTooDeep {
+        /// Length of the path
+        depth: u32,
+        /// Maximum length of the path
+        max: u32,
+    },
+    /// A path length, path element or data length does not fit in a `u32`
+    Overflow,
+    /// The stream ended inside a frame
+    Truncated,
+    /// Reading the stream failed
+    Io(std::io::Error),
+}
+
+impl fmt::Display for FrameDecodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::PathTooDeep { depth, max } => {
+                write!(f, "path length of `{depth}` exceeds maximum of `{max}`")
+            }
+            Self::Overflow => f.write_str("frame integer does not fit in `u32`"),
+            Self::Truncated => f.write_str("stream ended inside a frame"),
+            Self::Io(..) => f.write_str("failed to read frame"),
+        }
+    }
+}
+
+impl Error for FrameDecodeError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Io(err) => Some(err),
+            Self::PathTooDeep { .. } | Self::Overflow | Self::Truncated => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for FrameDecodeError {
+    fn from(err: std::io::Error) -> Self {
+        Self::Io(err)
+    }
+}
+
+impl From<FrameDecodeError> for std::io::Error {
+    fn from(err: FrameDecodeError) -> Self {
+        match err {
+            FrameDecodeError::Io(err) => err,
+            FrameDecodeError::Truncated => Self::new(std::io::ErrorKind::UnexpectedEof, err),
+            err => Self::new(std::io::ErrorKind::InvalidData, err),
+        }
+    }
+}
+
+fn decode_u32(src: &mut BytesMut) -> Result<Option<u32>, FrameDecodeError> {
+    Leb128DecoderU32
+        .decode(src)
+        .map_err(|_| FrameDecodeError::Overflow)
 }
 
 /// Frame header decoder, which yields the length of the frame data and exposes the frame path
@@ -61,46 +127,40 @@ impl Default for FrameHeaderDecoder {
 
 impl tokio_util::codec::Decoder for FrameHeaderDecoder {
     type Item = usize;
-    type Error = std::io::Error;
+    type Error = FrameDecodeError;
 
     #[instrument(level = "trace", skip_all)]
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         let depth = if let Some(depth) = self.depth {
             depth
         } else {
-            let Some(n) = Leb128DecoderU32.decode(src)? else {
+            let Some(n) = decode_u32(src)? else {
                 return Ok(None);
             };
             trace!(n, "decoded path length");
             if n > self.max_depth {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!(
-                        "path length of `{n}` exceeds maximum of `{}`",
-                        self.max_depth
-                    ),
-                ));
+                return Err(FrameDecodeError::PathTooDeep {
+                    depth: n,
+                    max: self.max_depth,
+                });
             }
-            let n = usize::try_from(n)
-                .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
+            let n = usize::try_from(n).map_err(|_| FrameDecodeError::Overflow)?;
             self.path.clear();
             self.depth = Some(n);
             n
         };
         while self.path.len() < depth {
-            let Some(i) = Leb128DecoderU32.decode(src)? else {
+            let Some(i) = decode_u32(src)? else {
                 return Ok(None);
             };
-            let i = usize::try_from(i)
-                .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
+            let i = usize::try_from(i).map_err(|_| FrameDecodeError::Overflow)?;
             self.path.push(i);
         }
-        let Some(n) = Leb128DecoderU32.decode(src)? else {
+        let Some(n) = decode_u32(src)? else {
             return Ok(None);
         };
         trace!(path = ?self.path, n, "decoded data length");
-        let n = usize::try_from(n)
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
+        let n = usize::try_from(n).map_err(|_| FrameDecodeError::Overflow)?;
         self.depth = None;
         Ok(Some(n))
     }
@@ -110,7 +170,7 @@ impl tokio_util::codec::Decoder for FrameHeaderDecoder {
             return Ok(Some(n));
         }
         if self.depth.is_some() || !src.is_empty() {
-            return Err(std::io::ErrorKind::UnexpectedEof.into());
+            return Err(FrameDecodeError::Truncated);
         }
         Ok(None)
     }
@@ -124,7 +184,7 @@ impl tokio_util::codec::Decoder for FrameHeaderDecoder {
 /// Frames are read using a [`FramedRead`](tokio_util::codec::FramedRead):
 ///
 /// ```
-/// # async fn read(rx: impl tokio::io::AsyncRead + Unpin) -> std::io::Result<()> {
+/// # async fn read(rx: impl tokio::io::AsyncRead + Unpin) -> Result<(), wrpc_core::FrameDecodeError> {
 /// use futures::TryStreamExt as _;
 /// use tokio_util::codec::FramedRead;
 /// use wrpc_core::FrameDecoder;
@@ -170,7 +230,7 @@ impl Default for FrameDecoder {
 
 impl tokio_util::codec::Decoder for FrameDecoder {
     type Item = BytesMut;
-    type Error = std::io::Error;
+    type Error = FrameDecodeError;
 
     #[instrument(level = "trace", skip_all)]
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
@@ -197,7 +257,7 @@ impl tokio_util::codec::Decoder for FrameDecoder {
             return Ok(Some(data));
         }
         if self.size > 0 {
-            return Err(std::io::ErrorKind::UnexpectedEof.into());
+            return Err(FrameDecodeError::Truncated);
         }
         self.header.decode_eof(src)?;
         Ok(None)
@@ -264,7 +324,7 @@ impl tokio_util::codec::Encoder<FrameRef<'_>> for FrameEncoder {
 #[cfg(test)]
 mod tests {
     use futures::{SinkExt as _, TryStreamExt as _};
-    use tokio_util::codec::{Decoder as _, Encoder as _, FramedRead, FramedWrite};
+    use tokio_util::codec::{Encoder as _, FramedRead, FramedWrite};
 
     use super::*;
 
@@ -365,10 +425,19 @@ mod tests {
         let tx = tx.into_inner();
         let mut rx = FramedRead::new(tx.as_slice(), FrameDecoder::default());
         let err = rx.try_next().await.unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert!(
+            matches!(
+                err,
+                FrameDecodeError::PathTooDeep {
+                    depth: 65,
+                    max: DEFAULT_MAX_DEPTH
+                }
+            ),
+            "{err:?}"
+        );
 
         let mut rx = FramedRead::new(b"\x01\x80".as_slice(), FrameDecoder::default());
         let err = rx.try_next().await.unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+        assert!(matches!(err, FrameDecodeError::Truncated), "{err:?}");
     }
 }

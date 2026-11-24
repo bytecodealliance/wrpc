@@ -11,7 +11,7 @@ use tracing::debug;
 
 use crate::{
     FrameDecoder, FrameEncoder, FrameRef, Receive, ReceiveError, Transmit, encode_close,
-    encode_frames, error_data_after_end, error_unknown_path,
+    encode_frames,
 };
 
 /// Receives a value from the frames read by `rx`, decoding it using `dec`
@@ -35,16 +35,12 @@ where
     let (item, data) = loop {
         let rx = rx.borrow_mut();
         let Some(data) = rx.try_next().await? else {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                "ingress ended before the root path was closed",
-            )
-            .into());
+            return Err(ReceiveError::Truncated);
         };
         let path = rx.decoder().path();
         if !path.is_empty() {
             let Some(item) = item else {
-                return Err(error_unknown_path(path).into());
+                return Err(ReceiveError::UnknownPath);
             };
             break (item, Some(data));
         }
@@ -57,18 +53,14 @@ where
                 dec.decode(&mut buf)?
             };
             if item.is_some() && !buf.is_empty() {
-                return Err(error_data_after_end().into());
+                return Err(ReceiveError::DataAfterEnd);
             }
         } else if !closed {
-            return Err(error_data_after_end().into());
+            return Err(ReceiveError::DataAfterEnd);
         }
         if closed {
             let Some(item) = item else {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::UnexpectedEof,
-                    "path closed without a value",
-                )
-                .into());
+                return Err(ReceiveError::Truncated);
             };
             break (item, None);
         }
@@ -141,16 +133,12 @@ where
                 return Poll::Ready(Ok(()));
             }
             let Some(buf) = ready!(rx.poll_next_unpin(cx)).transpose()? else {
-                return Poll::Ready(Err(std::io::Error::new(
-                    std::io::ErrorKind::UnexpectedEof,
-                    "ingress ended before all paths were closed",
-                )
-                .into()));
+                return Poll::Ready(Err(ReceiveError::Truncated));
             };
             if !rx.decoder().path().is_empty() {
                 *data = Some(buf);
             } else if *closed || !buf.is_empty() {
-                return Poll::Ready(Err(error_data_after_end().into()));
+                return Poll::Ready(Err(ReceiveError::DataAfterEnd));
             } else {
                 *closed = true;
             }
@@ -237,7 +225,7 @@ mod tests {
     use tokio_util::codec::FramedRead;
 
     use super::*;
-    use crate::{Decode, RawCodec};
+    use crate::{Decode, FrameDecodeError, RawCodec};
 
     fn frame(path: &[usize], data: &[u8]) -> Vec<u8> {
         let mut buf = BytesMut::default();
@@ -247,7 +235,9 @@ mod tests {
         buf.to_vec()
     }
 
-    async fn receive_stream(rx: &mut FramedRead<&[u8], FrameDecoder>) -> std::io::Result<Vec<u8>> {
+    async fn receive_stream(
+        rx: &mut FramedRead<&[u8], FrameDecoder>,
+    ) -> Result<Vec<u8>, ReceiveError> {
         let dec = <(BoxStream<'static, Bytes>,) as Decode>::Decoder::default();
         let ((s,), rx) = receive(dec, rx).await?;
         let (buf, ()) = try_join!(
@@ -287,25 +277,26 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn ingress_rejects_invalid_frames() {
         let root = [frame(&[], b"\0"), frame(&[], b"")].concat();
-        for (frames, kind) in [
-            (
-                [&root[..], &frame(&[1], b"")].concat(),
-                std::io::ErrorKind::InvalidData,
-            ),
-            (frame(&[], b"\0\x2a"), std::io::ErrorKind::InvalidData),
-            (root.clone(), std::io::ErrorKind::UnexpectedEof),
+        let cases: [(Vec<u8>, fn(&ReceiveError) -> bool); 5] = [
+            ([&root[..], &frame(&[1], b"")].concat(), |err| {
+                matches!(err, ReceiveError::UnknownPath)
+            }),
+            (frame(&[], b"\0\x2a"), |err| {
+                matches!(err, ReceiveError::DataAfterEnd)
+            }),
+            (root.clone(), |err| matches!(err, ReceiveError::Truncated)),
             (
                 [&root[..], &frame(&[0], b"\x03fo"), &frame(&[0], b"")].concat(),
-                std::io::ErrorKind::UnexpectedEof,
+                |err| matches!(err, ReceiveError::Decode(err) if err.kind() == std::io::ErrorKind::UnexpectedEof),
             ),
-            (
-                [&root[..], b"\x01\x00\x05\x2a"].concat(),
-                std::io::ErrorKind::UnexpectedEof,
-            ),
-        ] {
+            ([&root[..], b"\x01\x00\x05\x2a"].concat(), |err| {
+                matches!(err, ReceiveError::Frame(FrameDecodeError::Truncated))
+            }),
+        ];
+        for (frames, expected) in cases {
             let mut rx = FramedRead::new(frames.as_slice(), FrameDecoder::default());
             let err = receive_stream(&mut rx).await.unwrap_err();
-            assert_eq!(err.kind(), kind, "{frames:02x?}");
+            assert!(expected(&err), "{frames:02x?}: {err:?}");
         }
     }
 
@@ -315,7 +306,9 @@ mod tests {
         let (tx, rx) = duplex(1000);
         let tx = transmit(RawCodec, FramedWrite::new(tx, FrameEncoder), data.clone()).unwrap();
         let (chunks, ()) = try_join!(
-            FramedRead::new(rx, FrameDecoder::default()).try_collect::<Vec<_>>(),
+            FramedRead::new(rx, FrameDecoder::default())
+                .map_err(std::io::Error::from)
+                .try_collect::<Vec<_>>(),
             tx
         )
         .unwrap();

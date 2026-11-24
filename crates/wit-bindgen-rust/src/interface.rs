@@ -1471,7 +1471,7 @@ mod {mod_name} {{
                 .join(" && ");
             uwriteln!(
                 self.src,
-                r#"_ => ::core::task::Poll::Ready(::core::result::Result::Err({wrpc_core}::ReceiveError::Io({wrpc_core}::error_unknown_path(path)))),
+                r#"_ => ::core::task::Poll::Ready(::core::result::Result::Err({wrpc_core}::ReceiveError::UnknownPath)),
             }}
         }}
 
@@ -1679,8 +1679,8 @@ impl {wrpc_core}::Decode for self::{name} {{
 }}
 
 impl {wrpc_core}::Receive for {mod_name}::Codec {{
-    fn poll_receive(&mut self, _: &mut ::core::task::Context<'_>, path: &[usize], _: &mut {bytes}::BytesMut) -> ::core::task::Poll<::core::result::Result<(), {wrpc_core}::ReceiveError>> {{
-        ::core::task::Poll::Ready(::core::result::Result::Err({wrpc_core}::ReceiveError::Io({wrpc_core}::error_unknown_path(path))))
+    fn poll_receive(&mut self, _: &mut ::core::task::Context<'_>, _: &[usize], _: &mut {bytes}::BytesMut) -> ::core::task::Poll<::core::result::Result<(), {wrpc_core}::ReceiveError>> {{
+        ::core::task::Poll::Ready(::core::result::Result::Err({wrpc_core}::ReceiveError::UnknownPath))
     }}
 
     fn is_complete(&self) -> bool {{
@@ -1869,8 +1869,8 @@ impl {wrpc_core}::Decode for self::{name} {{
 }}
 
 impl {wrpc_core}::Receive for {mod_name}::Codec {{
-    fn poll_receive(&mut self, _: &mut ::core::task::Context<'_>, path: &[usize], _: &mut {bytes}::BytesMut) -> ::core::task::Poll<::core::result::Result<(), {wrpc_core}::ReceiveError>> {{
-        ::core::task::Poll::Ready(::core::result::Result::Err({wrpc_core}::ReceiveError::Io({wrpc_core}::error_unknown_path(path))))
+    fn poll_receive(&mut self, _: &mut ::core::task::Context<'_>, _: &[usize], _: &mut {bytes}::BytesMut) -> ::core::task::Poll<::core::result::Result<(), {wrpc_core}::ReceiveError>> {{
+        ::core::task::Poll::Ready(::core::result::Result::Err({wrpc_core}::ReceiveError::UnknownPath))
     }}
 
     fn is_complete(&self) -> bool {{
@@ -2171,7 +2171,7 @@ mod {mod_name} {{
         fn poll_receive(&mut self, cx: &mut ::core::task::Context<'_>, path: &[usize], src: &mut {bytes}::BytesMut) -> ::core::task::Poll<::core::result::Result<(), {wrpc_core}::ReceiveError>> {{
             match self {{
                 {poll_receive}
-                _ => ::core::task::Poll::Ready(::core::result::Result::Err({wrpc_core}::ReceiveError::Io({wrpc_core}::error_unknown_path(path)))),
+                _ => ::core::task::Poll::Ready(::core::result::Result::Err({wrpc_core}::ReceiveError::UnknownPath)),
             }}
         }}
 
@@ -2429,8 +2429,8 @@ impl {wrpc_core}::Decode for self::{name} {{
 }}
 
 impl {wrpc_core}::Receive for {mod_name}::Codec {{
-    fn poll_receive(&mut self, _: &mut ::core::task::Context<'_>, path: &[usize], _: &mut {bytes}::BytesMut) -> ::core::task::Poll<::core::result::Result<(), {wrpc_core}::ReceiveError>> {{
-        ::core::task::Poll::Ready(::core::result::Result::Err({wrpc_core}::ReceiveError::Io({wrpc_core}::error_unknown_path(path))))
+    fn poll_receive(&mut self, _: &mut ::core::task::Context<'_>, _: &[usize], _: &mut {bytes}::BytesMut) -> ::core::task::Poll<::core::result::Result<(), {wrpc_core}::ReceiveError>> {{
+        ::core::task::Poll::Ready(::core::result::Result::Err({wrpc_core}::ReceiveError::UnknownPath))
     }}
 
     fn is_complete(&self) -> bool {{

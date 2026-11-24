@@ -13,7 +13,6 @@ use wasm_tokio::cm::OptionDecoder;
 use crate::value::decode_buffered;
 use crate::{
     Decode, Encode, ListDecoder, Receive, ReceiveError, Transmit, encode_close, encode_frames,
-    error_data_after_end, error_unknown_path,
 };
 
 /// Encoder for `future<T>` of type `F`, whose value is transmitted on its path and the values
@@ -175,13 +174,13 @@ where
     ) -> Poll<Result<(), ReceiveError>> {
         if let Some((i, rest)) = path.split_first() {
             if *i != 0 || self.tx.is_some() {
-                return Poll::Ready(Err(error_unknown_path(path).into()));
+                return Poll::Ready(Err(ReceiveError::UnknownPath));
             }
             return self.dec.poll_receive(cx, rest, src);
         }
         let Some(tx) = self.tx.take() else {
             if !src.is_empty() || self.closed {
-                return Poll::Ready(Err(error_data_after_end().into()));
+                return Poll::Ready(Err(ReceiveError::DataAfterEnd));
             }
             self.closed = true;
             return Poll::Ready(Ok(()));
@@ -195,17 +194,13 @@ where
         };
         let Some(v) = v? else {
             if self.closed {
-                return Poll::Ready(Err(std::io::Error::new(
-                    std::io::ErrorKind::UnexpectedEof,
-                    "future closed without a value",
-                )
-                .into()));
+                return Poll::Ready(Err(ReceiveError::Truncated));
             }
             self.tx = Some(tx);
             return Poll::Ready(Ok(()));
         };
         if !self.buffer.is_empty() {
-            return Poll::Ready(Err(error_data_after_end().into()));
+            return Poll::Ready(Err(ReceiveError::DataAfterEnd));
         }
         if tx.send(v).is_err() {
             return Poll::Ready(Err(ReceiveError::Unread));
