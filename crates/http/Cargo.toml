@@ -12,6 +12,7 @@ repository.workspace = true
 [dependencies]
 bytes = { workspace = true }
 futures = { workspace = true, features = ["std"] }
+h2 = { workspace = true }
 http = { workspace = true }
 http-body = { workspace = true }
 http-body-util = { workspace = true }
