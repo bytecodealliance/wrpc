@@ -329,27 +329,91 @@ async fn local() -> anyhow::Result<()> {
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn params_error() -> anyhow::Result<()> {
+    use hyper::client::conn::http1::handshake;
+    use hyper::server::conn::http1::Builder;
+
+    async fn assert_params_error<Fut>(
+        mut lis: Listener<'static>,
+        send: impl FnOnce(http::Request<UnsyncBoxBody<Bytes, std::io::Error>>) -> Fut,
+    ) -> anyhow::Result<()>
+    where
+        Fut: Future<Output = hyper::Result<http::Response<Incoming>>>,
+    {
+        try_join!(
+            async {
+                let (_, _, req) = lis.next().await.context("missing invocation")??;
+                let (res, _) = join!(
+                    serve::<(BoxFuture<'static, String>,), (), _, _, _>(req, async |(s,)| {
+                        spawn(s);
+                        anyhow::Ok(())
+                    }),
+                    lis.next()
+                );
+                res.context("a peer parameter error must not fail serving")
+            },
+            async move {
+                let (tx, rx) = oneshot::channel::<()>();
+                let s: BoxFuture<'static, Utf8Bytes<&'static [u8]>> = Box::pin(async {
+                    _ = rx.await;
+                    Utf8Bytes(&b"\xff"[..])
+                });
+                let (parts, ()) = http::Request::new(()).into_parts();
+                let clt = OutgoingRequest {
+                    parts,
+                    send: |req: http::Request<Body<_>>| send(req.map(BodyExt::boxed_unsync)),
+                };
+                let ((), io) = invoke::<_, (), _>(clt, "foo", "bar", (s,)).await?;
+                _ = tx.send(());
+                let err = io
+                    .await
+                    .expect_err("parameter error must fail the invocation");
+                assert_eq!(err.kind(), ErrorKind::InvalidData);
+                assert!(err.get_ref().is_some_and(|err| err.is::<Utf8Error>()));
+                Ok(())
+            },
+        )?;
+        Ok(())
+    }
+
+    let (clt, srv) = duplex(65536);
+    let (mut sender, conn) = handshake(TokioIo::new(clt)).await?;
+    spawn(conn);
+    let lis = Listener::http1(&Builder::new(), TokioIo::new(srv));
+    sender.ready().await?;
+    assert_params_error(lis, move |req| sender.send_request(req)).await?;
+
+    let (mut sender, lis) = connect().await?;
+    sender.ready().await?;
+    assert_params_error(lis, move |req| sender.send_request(req)).await
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn drop_invocation() -> anyhow::Result<()> {
     let (mut sender, mut lis) = connect().await?;
     try_join!(
         async {
             let (_, _, req) = lis.next().await.context("missing invocation")??;
             let (res, next) = join!(
-                serve::<(BoxFuture<'static, String>,), (), _, _, _>(req, async |(s,)| {
-                    spawn(s);
+                serve::<(BoxStream<'static, Bytes>,), (), _, _, _>(req, async |(s,)| {
+                    spawn(s.count());
                     anyhow::Ok(())
                 }),
                 lis.next()
             );
-            res.context("a peer parameter error must not fail serving")?;
+            res?;
             ensure!(next.is_none(), "connection must close cleanly");
             Ok(())
         },
         async move {
-            let (tx, rx) = oneshot::channel::<()>();
-            let s: BoxFuture<'static, Utf8Bytes<&'static [u8]>> = Box::pin(async {
-                _ = rx.await;
-                Utf8Bytes(&b"\xff"[..])
-            });
+            let (dropped_tx, dropped_rx) = oneshot::channel::<()>();
+            let s: BoxStream<'static, Bytes> =
+                Box::pin(stream::repeat(Bytes::from_static(b"foo")).then(move |buf| {
+                    _ = &dropped_tx;
+                    async {
+                        sleep(Duration::from_millis(10)).await;
+                        buf
+                    }
+                }));
             sender.ready().await?;
             let (parts, ()) = http::Request::new(()).into_parts();
             let clt = OutgoingRequest {
@@ -359,12 +423,11 @@ async fn params_error() -> anyhow::Result<()> {
                 },
             };
             let ((), io) = invoke::<_, (), _>(clt, "foo", "bar", (s,)).await?;
-            _ = tx.send(());
-            let err = io
+            drop(io);
+            let res = tokio::time::timeout(Duration::from_secs(10), dropped_rx)
                 .await
-                .expect_err("parameter error must fail the invocation");
-            assert_eq!(err.kind(), ErrorKind::InvalidData);
-            assert!(err.get_ref().is_some_and(|err| err.is::<Utf8Error>()));
+                .context("request body was not stopped")?;
+            res.expect_err("parameters must not be sent in full");
             Ok(())
         },
     )?;
