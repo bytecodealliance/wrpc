@@ -883,8 +883,8 @@ async fn rust_http_bindgen_sync() -> anyhow::Result<()> {
                     else {
                         bail!("`{instance}#{name}` is not exported");
                     };
-                    fut.await?;
-                    Ok(())
+                    let res = fut.await?;
+                    Ok(res)
                 }
             })
             .await
@@ -910,8 +910,8 @@ async fn rust_http_bindgen_async() -> anyhow::Result<()> {
                 else {
                     bail!("`{instance}#{name}` is not exported");
                 };
-                fut.await?;
-                Ok(())
+                let res = fut.await?;
+                Ok(res)
             })
             .await
             .context("failed to serve HTTP/2 connection")
@@ -925,102 +925,82 @@ async fn rust_http_bindgen_async() -> anyhow::Result<()> {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn rust_http_dynamic() -> anyhow::Result<()> {
     use http_body_util::BodyExt;
+    use hyper::body::Incoming;
     use hyper::client::conn::http2::handshake;
     use hyper::server::conn::http2::Builder;
+    use hyper::service::service_fn;
     use hyper_util::rt::{TokioExecutor, TokioIo};
-    use wrpc_http::{Body, Listener, OutgoingRequest};
+    use wrpc_http::{Body, OutgoingRequest};
 
     let (clt, srv) = duplex(65536);
     let (mut sender, conn) = handshake(TokioExecutor::default(), TokioIo::new(clt)).await?;
     spawn(conn);
-    let mut lis = Listener::http2(&Builder::new(TokioExecutor::default()), TokioIo::new(srv));
-    try_join!(
-        async {
-            let mut inv = lis.next().await;
-            for func in ["sync", "async"] {
-                let (_, Header { instance, name }, srv) = inv.context("missing invocation")??;
-                ensure!(
-                    instance == "test" && name == func,
-                    "unexpected `{instance}.{name}`"
-                );
-                let (res, next) = join!(
-                    async {
-                        if func == "sync" {
-                            serve::<SyncValues, SyncValues, _, _, _>(srv, async |params| {
-                                assert_eq!(params, sync_values());
-                                anyhow::Ok(sync_values())
-                            })
-                            .await
-                        } else {
-                            serve::<AsyncValues, AsyncValues, _, _, _>(srv, |params| async move {
-                                assert_async_values(params, future::ready(Ok(()))).await?;
-                                anyhow::Ok(async_values())
-                            })
-                            .await
-                        }
-                    },
-                    lis.next()
-                );
-                res?;
-                inv = next;
+    let svc = service_fn(|req: http::Request<Incoming>| async move {
+        let (Header { instance, name }, srv) = wrpc_http::accept(req.into_body()).await?;
+        match (instance.as_str(), name.as_str()) {
+            ("test", "sync") => {
+                let res = serve::<SyncValues, SyncValues, _, _, _>(srv, async |params| {
+                    assert_eq!(params, sync_values());
+                    anyhow::Ok(sync_values())
+                })
+                .await?;
+                Ok(res)
             }
-            let (_, Header { instance, name }, ..) = inv.context("missing invocation")??;
-            ensure!(
-                instance == "test" && name == "reset",
-                "unexpected `{instance}.{name}`"
-            );
-            ensure!(lis.next().await.is_none(), "connection must close cleanly");
-            Ok(())
+            ("test", "async") => {
+                let res = serve::<AsyncValues, AsyncValues, _, _, _>(srv, |params| async move {
+                    assert_async_values(params, future::ready(Ok(()))).await?;
+                    anyhow::Ok(async_values())
+                })
+                .await?;
+                Ok(res)
+            }
+            _ => bail!("`{instance}.{name}` is not exported"),
+        }
+    });
+    let srv =
+        spawn(Builder::new(TokioExecutor::default()).serve_connection(TokioIo::new(srv), svc));
+    let (parts, ()) = http::Request::new(()).into_parts();
+    sender.ready().await?;
+    let (res, io) = invoke::<SyncValues, SyncValues, _>(
+        OutgoingRequest {
+            parts: parts.clone(),
+            send: |req: http::Request<Body<_>>| sender.send_request(req.map(BodyExt::boxed_unsync)),
         },
-        async move {
-            let (parts, ()) = http::Request::new(()).into_parts();
-            sender.ready().await?;
-            let (res, io) = invoke::<SyncValues, SyncValues, _>(
-                OutgoingRequest {
-                    parts: parts.clone(),
-                    send: |req: http::Request<Body<_>>| {
-                        sender.send_request(req.map(BodyExt::boxed_unsync))
-                    },
-                },
-                "test",
-                "sync",
-                sync_values(),
-            )
-            .await?;
-            io.await?;
-            assert_eq!(res, sync_values());
+        "test",
+        "sync",
+        sync_values(),
+    )
+    .await?;
+    io.await?;
+    assert_eq!(res, sync_values());
 
-            let (res, io) = invoke::<AsyncValues, AsyncValues, _>(
-                OutgoingRequest {
-                    parts: parts.clone(),
-                    send: |req: http::Request<Body<_>>| {
-                        sender.send_request(req.map(BodyExt::boxed_unsync))
-                    },
-                },
-                "test",
-                "async",
-                async_values(),
-            )
-            .await?;
-            assert_async_values(res, io).await?;
-
-            sender.ready().await?;
-            let res = invoke::<(String,), (String,), _>(
-                OutgoingRequest {
-                    parts,
-                    send: |req: http::Request<Body<_>>| {
-                        sender.send_request(req.map(BodyExt::boxed_unsync))
-                    },
-                },
-                "test",
-                "reset",
-                ("arg".into(),),
-            )
-            .await;
-            ensure!(res.is_err(), "`test.reset` should have failed");
-            Ok(())
+    let (res, io) = invoke::<AsyncValues, AsyncValues, _>(
+        OutgoingRequest {
+            parts: parts.clone(),
+            send: |req: http::Request<Body<_>>| sender.send_request(req.map(BodyExt::boxed_unsync)),
         },
-    )?;
+        "test",
+        "async",
+        async_values(),
+    )
+    .await?;
+    assert_async_values(res, io).await?;
+
+    sender.ready().await?;
+    let res = invoke::<(String,), (String,), _>(
+        OutgoingRequest {
+            parts,
+            send: |req: http::Request<Body<_>>| sender.send_request(req.map(BodyExt::boxed_unsync)),
+        },
+        "test",
+        "reset",
+        ("arg".into(),),
+    )
+    .await;
+    ensure!(res.is_err(), "`test.reset` should have failed");
+    drop(sender);
+    let res = srv.await?;
+    res.context("connection must close cleanly")?;
     Ok(())
 }
 

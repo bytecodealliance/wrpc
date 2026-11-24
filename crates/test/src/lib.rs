@@ -573,35 +573,53 @@ where
     f(parts, clt, lis).await.context("closure failed")
 }
 
-/// Serves wRPC requests on HTTP/1 or HTTP/2 connection `stream`, polling the futures `f` returns
+/// Serves wRPC requests on HTTP/1 or HTTP/2 connection `stream` with the responses `f` returns
 /// until the connection ends. Returns the first error.
 #[cfg(feature = "http")]
-pub async fn serve_http<Fut>(
-    stream: TcpStream,
-    mut f: impl FnMut(http::request::Parts, Header, wrpc_http::ListenerRequest) -> Fut,
-) -> anyhow::Result<()>
+pub async fn serve_http<F, Fut>(stream: TcpStream, f: F) -> anyhow::Result<()>
 where
-    Fut: Future<Output = anyhow::Result<()>>,
+    F: Fn(http::request::Parts, Header, wrpc_http::IncomingRequest<hyper::body::Incoming>) -> Fut
+        + Clone
+        + Send
+        + Sync
+        + 'static,
+    Fut: Future<
+            Output = anyhow::Result<
+                http::Response<http_body_util::combinators::UnsyncBoxBody<Bytes, std::io::Error>>,
+            >,
+        > + Send
+        + 'static,
 {
-    let mut invs = wrpc_http::Listener::new(
-        &hyper_util::server::conn::auto::Builder::new(hyper_util::rt::TokioExecutor::default()),
-        hyper_util::rt::TokioIo::new(stream),
-    );
-    let mut srvs = FuturesUnordered::default();
-    loop {
-        tokio::select! {
-            inv = invs.next() => {
-                let Some(inv) = inv else { break };
-                let (parts, header, req) = inv?;
-                srvs.push(f(parts, header, req));
+    let (tx, mut errors) = tokio::sync::mpsc::channel(1);
+    let svc = hyper::service::service_fn(move |req: http::Request<hyper::body::Incoming>| {
+        let f = f.clone();
+        let tx = tx.clone();
+        async move {
+            let (parts, body) = req.into_parts();
+            let res = async {
+                let (header, req) = wrpc_http::accept(body).await?;
+                f(parts, header, req).await
+            };
+            match res.await {
+                Ok(res) => Ok(res),
+                Err(err) => {
+                    _ = tx.try_send(err);
+                    anyhow::bail!("failed to serve invocation")
+                }
             }
-            Some(res) = srvs.next() => res?,
         }
+    });
+    let builder =
+        hyper_util::server::conn::auto::Builder::new(hyper_util::rt::TokioExecutor::default());
+    let conn = builder.serve_connection(hyper_util::rt::TokioIo::new(stream), svc);
+    let res = tokio::select! {
+        res = conn => res,
+        Some(err) = errors.recv() => return Err(err),
+    };
+    if let Some(err) = errors.recv().await {
+        return Err(err);
     }
-    while let Some(res) = srvs.next().await {
-        res?;
-    }
-    Ok(())
+    res.map_err(anyhow::Error::from_boxed)
 }
 
 /// A common single-invocation test of HTTP clients, like [`assert_single_invocation`]
@@ -646,13 +664,14 @@ where
 #[cfg(feature = "http")]
 pub async fn serve_http_invocation(
     Header { instance, name }: Header,
-    req: wrpc_http::ListenerRequest,
-) -> anyhow::Result<()> {
+    req: wrpc_http::IncomingRequest<hyper::body::Incoming>,
+) -> anyhow::Result<http::Response<http_body_util::combinators::UnsyncBoxBody<Bytes, std::io::Error>>>
+{
     ensure!(
         instance == "foo" && name == "bar",
         "unexpected invocation of `{instance}.{name}`",
     );
-    serve::<FooBar, FooBar, _, _, _>(req, async |(testbar, s)| {
+    let res = serve::<FooBar, FooBar, _, _, _>(req, async |(testbar, s)| {
         assert_eq!(testbar, b"testbar".as_slice());
         let buf = s.collect::<Vec<_>>().await;
         assert_eq!(buf.concat(), b"client->server");
@@ -661,5 +680,5 @@ pub async fn serve_http_invocation(
         anyhow::Ok((Bytes::from_static(b"foo"), results))
     })
     .await?;
-    Ok(())
+    Ok(res)
 }

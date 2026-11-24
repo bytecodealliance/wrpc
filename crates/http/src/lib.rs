@@ -2,6 +2,34 @@
 #![deny(missing_docs)]
 
 //! wRPC HTTP transport
+//!
+//! Servers [accept] the invocation header of a request and serve its [IncomingRequest], such as
+//! in a hyper service:
+//!
+//! ```no_run
+//! # async fn run(
+//! #     io: impl hyper::rt::Read + hyper::rt::Write + Unpin,
+//! # ) -> Result<(), Box<dyn core::error::Error + Send + Sync>> {
+//! use hyper::body::Incoming;
+//! use hyper::server::conn::http1;
+//! use hyper::service::service_fn;
+//! use wrpc_core::{Header, serve};
+//!
+//! let svc = service_fn(|req: http::Request<Incoming>| async move {
+//!     let (Header { instance, name }, req) = wrpc_http::accept(req.into_body()).await?;
+//!     if instance != "foo" || name != "bar" {
+//!         return Err(format!("`{instance}.{name}` is not exported").into());
+//!     }
+//!     let res = serve::<(String,), (String,), _, _, _>(req, async |(name,)| {
+//!         std::io::Result::Ok((format!("Hello, {name}"),))
+//!     })
+//!     .await?;
+//!     Ok::<_, Box<dyn core::error::Error + Send + Sync>>(res)
+//! });
+//! http1::Builder::new().serve_connection(io, svc).await?;
+//! # Ok(())
+//! # }
+//! ```
 
 use core::future::poll_fn;
 use core::iter;
@@ -11,18 +39,13 @@ use core::task::{Context, Poll, ready};
 
 use bytes::{Bytes, BytesMut};
 use futures::channel::oneshot;
-use futures::future::BoxFuture;
-use futures::{Stream, StreamExt as _, TryFuture, TryFutureExt as _, TryStreamExt as _};
+use futures::{StreamExt as _, TryFutureExt as _, TryStreamExt as _};
 use http::HeaderValue;
 use http::header::CONTENT_TYPE;
 use http_body::{Frame, SizeHint};
 use http_body_util::combinators::{MapErr, UnsyncBoxBody};
 use http_body_util::{BodyDataStream, BodyExt};
-use hyper::server::conn::{http1, http2};
-use hyper_util::rt::TokioExecutor;
-use hyper_util::server::conn::auto;
 use tokio::io::{AsyncRead, ReadBuf};
-use tokio::sync::mpsc;
 use tokio_util::codec::{Decoder, Encoder, FramedRead};
 use tokio_util::io::StreamReader;
 use wrpc_core::{
@@ -432,180 +455,6 @@ where
         let mut lower = SizeHint::default();
         lower.set_lower(hint.lower());
         lower
-    }
-}
-
-/// Request of an invocation yielded by a [Listener], which responds to it once served
-pub struct ListenerRequest {
-    /// Incoming request
-    pub req: IncomingRequest<hyper::body::Incoming>,
-    res: oneshot::Sender<http::Response<UnsyncBoxBody<Bytes, std::io::Error>>>,
-}
-
-impl ListenerRequest {
-    /// Serves the invocation using `codec` by calling `f` with its parameters and responds with
-    /// the results, see [`IncomingRequest::serve`]
-    ///
-    /// It resolves early once the peer canceled the request.
-    ///
-    /// Unlike [`Serve`], this does not require [`Send`] parameters and futures.
-    pub async fn serve<E, D, R, Err>(
-        self,
-        codec: Codec<E, D>,
-        f: impl AsyncFnOnce(D::Item) -> Result<R, Err>,
-    ) -> Result<(), ServeError<Err>>
-    where
-        E: Transmit + Encoder<R, Error = std::io::Error> + Send + 'static,
-        D: Decoder<Error = std::io::Error> + Receive + Send + 'static,
-    {
-        let Self { req, mut res } = self;
-        let mut fut = pin!(req.serve(codec, f));
-        let ret = poll_fn(|cx| {
-            if res.poll_canceled(cx).is_ready() {
-                return Poll::Ready(Ok(None));
-            }
-            fut.as_mut().poll(cx).map_ok(Some)
-        })
-        .await;
-        let ret = match ret {
-            Ok(Some(ret)) => ret,
-            Ok(None) => return Ok(()),
-            Err(ServeError::Request(err)) if err.kind() == std::io::ErrorKind::ConnectionReset => {
-                return Ok(());
-            }
-            Err(err) => return Err(err),
-        };
-        _ = res.send(ret.map(BodyExt::boxed_unsync));
-        Ok(())
-    }
-}
-
-impl Serve for ListenerRequest {
-    type Output = ();
-
-    fn serve<E, D, R, Fut, Err>(
-        self,
-        codec: Codec<E, D>,
-        f: impl FnOnce(D::Item) -> Fut + Send,
-    ) -> impl Future<Output = Result<(), ServeError<Err>>> + Send
-    where
-        E: Transmit + Encoder<R, Error = std::io::Error> + Send + 'static,
-        D: Decoder<Error = std::io::Error> + Receive + Send + 'static,
-        D::Item: Send,
-        Fut: Future<Output = Result<R, Err>> + Send,
-    {
-        ListenerRequest::serve(self, codec, async move |params| f(params).await)
-    }
-}
-
-/// Incoming invocations of an HTTP/1 or HTTP/2 connection
-///
-/// It drives the connection while polled, so keep polling it while serving the invocations it
-/// yields: forwarding it into a sink that waits for room, such as a bounded worker pool, stalls
-/// the connection while the sink is full. It yields the parts of each request along with the
-/// invocation header and the [ListenerRequest] of the [IncomingRequest] [accept] returns for its
-/// body. Requests whose invocation header can't be read fail and their error is yielded, unless
-/// the peer reset them. Requests whose [ListenerRequest] is dropped or fails before responding
-/// fail. Failing a request resets its HTTP/2 stream, but fails an HTTP/1 connection. The error of
-/// a failed connection is yielded last, after the items queued before it failed. Limits come from
-/// the builder, such as HTTP/2
-/// [`max_concurrent_streams`](auto::Http2Builder::max_concurrent_streams), beyond which streams are
-/// refused with `REFUSED_STREAM`.
-pub struct Listener<'a> {
-    conn: Option<BoxFuture<'a, std::io::Result<()>>>,
-    err: Option<std::io::Error>,
-    rx: mpsc::Receiver<std::io::Result<(http::request::Parts, Header, ListenerRequest)>>,
-}
-
-impl<'a> Listener<'a> {
-    /// Returns the incoming invocations of connection `io` configured by `builder`, serving
-    /// HTTP/1 and HTTP/2 unless restricted by [`http1_only`](auto::Builder::http1_only) or
-    /// [`http2_only`](auto::Builder::http2_only)
-    pub fn new<I>(builder: &auto::Builder<TokioExecutor>, io: I) -> Self
-    where
-        I: hyper::rt::Read + hyper::rt::Write + Unpin + Send + 'static,
-    {
-        Self::from_service(|svc| builder.serve_connection(io, svc).into_owned())
-    }
-
-    /// Returns the incoming invocations of HTTP/1 connection `io` configured by `builder`
-    pub fn http1<I>(builder: &http1::Builder, io: I) -> Self
-    where
-        I: hyper::rt::Read + hyper::rt::Write + Unpin + Send + 'a,
-    {
-        Self::from_service(|svc| builder.serve_connection(io, svc))
-    }
-
-    /// Returns the incoming invocations of HTTP/2 connection `io` configured by `builder`
-    pub fn http2<I>(builder: &http2::Builder<TokioExecutor>, io: I) -> Self
-    where
-        I: hyper::rt::Read + hyper::rt::Write + Unpin + Send + 'a,
-    {
-        Self::from_service(|svc| builder.serve_connection(io, svc))
-    }
-
-    fn from_service<T>(f: impl FnOnce(ListenerService) -> T) -> Self
-    where
-        T: TryFuture<Ok = (), Error: Into<Box<dyn core::error::Error + Send + Sync>>> + Send + 'a,
-    {
-        let (tx, rx) = mpsc::channel(1);
-        Self {
-            conn: Some(Box::pin(f(ListenerService { tx }).map_err(into_io_error))),
-            err: None,
-            rx,
-        }
-    }
-}
-
-impl Stream for Listener<'_> {
-    type Item = std::io::Result<(http::request::Parts, Header, ListenerRequest)>;
-
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let Self { conn, err, rx } = self.get_mut();
-        if let Some(fut) = conn
-            && let Poll::Ready(res) = fut.as_mut().poll(cx)
-        {
-            *conn = None;
-            *err = res.err();
-        }
-        let item = ready!(rx.poll_recv(cx));
-        Poll::Ready(item.or_else(|| err.take().map(Err)))
-    }
-}
-
-struct ListenerService {
-    tx: mpsc::Sender<std::io::Result<(http::request::Parts, Header, ListenerRequest)>>,
-}
-
-impl hyper::service::Service<http::Request<hyper::body::Incoming>> for ListenerService {
-    type Response = http::Response<UnsyncBoxBody<Bytes, std::io::Error>>;
-    type Error = std::io::Error;
-    type Future = BoxFuture<'static, std::io::Result<Self::Response>>;
-
-    fn call(&self, req: http::Request<hyper::body::Incoming>) -> Self::Future {
-        let tx = self.tx.clone();
-        Box::pin(async move {
-            let (parts, body) = req.into_parts();
-            match accept(body).await {
-                Ok((header, req)) => {
-                    let (res, rx) = oneshot::channel();
-                    tx.send(Ok((parts, header, ListenerRequest { req, res })))
-                        .await
-                        .map_err(|_| {
-                            std::io::Error::new(std::io::ErrorKind::BrokenPipe, "listener dropped")
-                        })?;
-                    rx.await.map_err(|oneshot::Canceled| {
-                        std::io::Error::new(std::io::ErrorKind::BrokenPipe, "response was not sent")
-                    })
-                }
-                Err(err) if err.kind() == std::io::ErrorKind::ConnectionReset => Err(err),
-                Err(err) => {
-                    let kind = err.kind();
-                    _ = tx.send(Err(err)).await;
-                    Err(std::io::Error::new(kind, "request failed"))
-                }
-            }
-        })
     }
 }
 

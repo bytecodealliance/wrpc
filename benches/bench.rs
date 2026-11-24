@@ -111,13 +111,13 @@ impl Func {
         }
     }
 
-    fn handle<'a, S: Serve<Output = ()> + Send + 'a>(
+    fn handle<'a, S: Serve + Send + 'a>(
         self,
         handler: &impl Handler,
         instance: &str,
         name: &str,
         srv: S,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<S::Output>> + Send + 'a>> {
         let res = match self {
             Self::Ping => ping_bindings_wrpc::handle(handler, instance, name, srv)
                 .map(|fut| Box::pin(fut.err_into()) as Pin<Box<dyn Future<Output = _> + Send>>),
