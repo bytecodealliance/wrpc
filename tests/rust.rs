@@ -593,10 +593,8 @@ where
             }
 
             let mut buf = BytesMut::default();
-            let enc = <SyncValues as Encode>::Encoder::default();
-            wrpc_core::pack(enc, sync_values(), &mut buf)?;
-            let dec = <SyncValues as Decode>::Decoder::default();
-            let unpacked = wrpc_core::unpack(dec, &mut buf)?;
+            wrpc_core::pack(sync_values(), &mut buf)?;
+            let unpacked: SyncValues = wrpc_core::unpack(&mut buf)?;
             let (tx, rx) = connect().await?;
             let mut clt = Framed::new(tx, rx);
             for params in [sync_values(), unpacked] {
@@ -1269,8 +1267,7 @@ async fn rust_oneshot_raw() -> anyhow::Result<()> {
             assert_eq!(&req, b"\0\x01\x2a\0\0");
 
             let mut data = bytes::BytesMut::default();
-            let enc = <(&str,) as Encode>::Encoder::default();
-            wrpc_core::pack(enc, ("test",), &mut data).expect("failed to encode");
+            wrpc_core::pack(("test",), &mut data).expect("failed to encode");
 
             let mut res = bytes::BytesMut::default();
             FrameEncoder

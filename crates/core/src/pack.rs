@@ -3,13 +3,23 @@
 use bytes::BytesMut;
 use tokio_util::codec::{Decoder, Encoder};
 
-use crate::{Receive, Transmit};
+use crate::{Decode, Encode, Receive, Transmit};
+
+/// Encodes `v` into `dst` using its default encoder, see [`pack_with`]
+pub fn pack<T: Encode>(v: T, dst: &mut BytesMut) -> std::io::Result<()> {
+    pack_with(T::Encoder::default(), v, dst)
+}
+
+/// Decodes a value [`pack`] encoded from `buf` using its default decoder, see [`unpack_with`]
+pub fn unpack<T: Decode>(buf: &mut BytesMut) -> std::io::Result<T> {
+    unpack_with(T::Decoder::default(), buf)
+}
 
 /// Encodes `v` into `dst` using `enc`, failing with [`WouldBlock`](std::io::ErrorKind::WouldBlock)
 /// if it contains pending asynchronous values
 ///
 /// The contents of `dst` are unspecified on failure.
-pub fn pack<T>(
+pub fn pack_with<T>(
     mut enc: impl Encoder<T, Error = std::io::Error> + Transmit,
     v: T,
     dst: &mut BytesMut,
@@ -24,11 +34,11 @@ pub fn pack<T>(
     Ok(())
 }
 
-/// Decodes a value [`pack`] encoded from `buf` using `dec`, failing if `buf` is incomplete,
+/// Decodes a value [`pack_with`] encoded from `buf` using `dec`, failing if `buf` is incomplete,
 /// contains pending asynchronous values or trailing bytes
 ///
 /// The contents of `buf` are unspecified on failure.
-pub fn unpack<D>(mut dec: D, buf: &mut BytesMut) -> std::io::Result<D::Item>
+pub fn unpack_with<D>(mut dec: D, buf: &mut BytesMut) -> std::io::Result<D::Item>
 where
     D: Decoder<Error = std::io::Error> + Receive,
 {
@@ -63,16 +73,17 @@ mod tests {
     use futures::{FutureExt as _, StreamExt as _};
 
     use super::*;
-    use crate::{Decode, Encode};
 
     #[test_log::test(tokio::test)]
     async fn roundtrip() -> anyhow::Result<()> {
-        let v: (
+        type Values = (
             u8,
             BoxFuture<'static, String>,
             BoxStream<'static, Vec<BoxFuture<'static, u8>>>,
             BoxStream<'static, Bytes>,
-        ) = (
+        );
+
+        let v: Values = (
             0x42,
             ready("foo".into()).boxed(),
             stream::iter([
@@ -84,22 +95,8 @@ mod tests {
             stream::iter([Bytes::from("foo"), Bytes::from("bar")]).boxed(),
         );
         let mut buf = BytesMut::default();
-        let enc = <(
-            u8,
-            BoxFuture<'static, String>,
-            BoxStream<'static, Vec<BoxFuture<'static, u8>>>,
-            BoxStream<'static, Bytes>,
-        ) as Encode>::Encoder::default();
-        pack(enc, v, &mut buf)?;
-        let (a, b, c, d) = unpack(
-            <(
-                u8,
-                BoxFuture<'static, String>,
-                BoxStream<'static, Vec<BoxFuture<'static, u8>>>,
-                BoxStream<'static, Bytes>,
-            ) as Decode>::Decoder::default(),
-            &mut buf,
-        )?;
+        pack(v, &mut buf)?;
+        let (a, b, c, d): Values = unpack(&mut buf)?;
         assert_eq!(a, 0x42);
         assert_eq!(b.await, "foo");
         assert_eq!(future::join_all(c.concat().await).await, [1, 2, 3]);
@@ -111,31 +108,20 @@ mod tests {
     #[test]
     fn rejects_invalid() {
         let fut = ready(pending::<u8>().boxed()).boxed();
-        let enc = <BoxFuture<'static, BoxFuture<'static, u8>> as Encode>::Encoder::default();
-        let err = pack(enc, fut, &mut BytesMut::default()).unwrap_err();
+        let err = pack(fut, &mut BytesMut::default()).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::WouldBlock);
 
-        let err = unpack(
-            <BoxFuture<'static, u8> as Decode>::Decoder::default(),
-            &mut BytesMut::from("\0"),
-        )
-        .err()
-        .unwrap();
+        let err = unpack::<BoxFuture<'static, u8>>(&mut BytesMut::from("\0"))
+            .err()
+            .unwrap();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
 
-        let err = unpack(
-            <BoxStream<'static, Vec<u8>> as Decode>::Decoder::default(),
-            &mut BytesMut::from("\0"),
-        )
-        .err()
-        .unwrap();
+        let err = unpack::<BoxStream<'static, Vec<u8>>>(&mut BytesMut::from("\0"))
+            .err()
+            .unwrap();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
 
-        let err = unpack(
-            <u8 as Decode>::Decoder::default(),
-            &mut BytesMut::from("\x42\0"),
-        )
-        .unwrap_err();
+        let err = unpack::<u8>(&mut BytesMut::from("\x42\0")).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     }
 }
