@@ -1,3 +1,4 @@
+use core::future;
 use core::net::{Ipv6Addr, SocketAddr};
 use core::pin::pin;
 use core::time::Duration;
@@ -6,15 +7,17 @@ use std::path::Path;
 use std::process::Stdio;
 
 use anyhow::{Context as _, bail, ensure};
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
+use futures::{StreamExt as _, stream};
 use hyper::client::conn::http2;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use tempfile::{TempDir, tempdir};
 use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::net::TcpListener;
 use tokio::process::{Child, Command};
+use tokio::task::yield_now;
 use tokio::time::timeout;
-use tokio::{select, spawn};
+use tokio::{join, select, spawn};
 use tokio_util::codec::Encoder as _;
 use tracing::{info, instrument};
 use wrpc_core::{FrameEncoder, FrameRef, Framed, Header, HeaderEncoder, HeaderRef, Listener};
@@ -41,12 +44,12 @@ async fn bindgen(wit: &str, worlds: &[&str]) -> anyhow::Result<TempDir> {
     Ok(dir)
 }
 
-/// Start `tests/js/server.js` listening on `addr` with the bindings in
+/// Start the server script `script` listening on `addr` with the bindings in
 /// `bindings` and wait until it is ready.
-async fn start_server(addr: &str, bindings: &Path) -> anyhow::Result<Child> {
-    info!("starting `tests/js/server.js`");
+async fn start_server(script: &str, addr: &str, bindings: &Path) -> anyhow::Result<Child> {
+    info!("starting `{script}`");
     let mut server = Command::new("node")
-        .arg("tests/js/server.js")
+        .arg(script)
         .arg(addr)
         .arg(bindings)
         .stdout(Stdio::piped())
@@ -55,12 +58,9 @@ async fn start_server(addr: &str, bindings: &Path) -> anyhow::Result<Child> {
         .context("failed to run `node`")?;
     let mut stdout = BufReader::new(server.stdout.take().context("stdout missing")?).lines();
     let Some(line) = stdout.next_line().await? else {
-        bail!("`tests/js/server.js` exited before listening");
+        bail!("`{script}` exited before listening");
     };
-    ensure!(
-        line == "listening",
-        "unexpected `tests/js/server.js` output: {line}"
-    );
+    ensure!(line == "listening", "unexpected `{script}` output: {line}");
     Ok(server)
 }
 
@@ -133,7 +133,7 @@ async fn js_server() -> anyhow::Result<()> {
         .await
         .context("failed to find free port")?;
     let addr = SocketAddr::from((Ipv6Addr::LOCALHOST, port));
-    let mut server = start_server(&addr.to_string(), bindings.path()).await?;
+    let mut server = start_server("tests/js/server.js", &addr.to_string(), bindings.path()).await?;
 
     {
         let mut stream = wrpc_test::tcp_connect(addr).await?;
@@ -175,13 +175,90 @@ async fn js_server() -> anyhow::Result<()> {
 
 #[instrument(ret)]
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn js_tree_server() -> anyhow::Result<()> {
+    mod bindings {
+        wit_bindgen_wrpc::generate!({
+            world: "echo-client",
+            path: "tests/js/wit",
+        });
+    }
+
+    use bindings::wrpc_test::js::echo::{self, Asyncs};
+
+    let bindings = bindgen("tests/js/wit", &["echo-server"]).await?;
+    let port = wrpc_test::free_port()
+        .await
+        .context("failed to find free port")?;
+    let addr = SocketAddr::from((Ipv6Addr::LOCALHOST, port));
+    let mut server = start_server(
+        "tests/js/tree-server.js",
+        &addr.to_string(),
+        bindings.path(),
+    )
+    .await?;
+
+    let (tx, rx) = wrpc_test::tcp_streams(addr).await?;
+    let mut clt = Framed::new(tx, rx);
+    for i in 0..2 {
+        let (out, io) = echo::echo_async(
+            &mut clt,
+            Asyncs {
+                bytes: Box::pin(stream::iter([
+                    Bytes::from_static(b"foo"),
+                    Bytes::from(vec![i]),
+                ])),
+                lists: Box::pin(stream::iter([vec![vec!["a".into()]], vec![]]).then(
+                    async |chunk| {
+                        yield_now().await;
+                        chunk
+                    },
+                )),
+                str: Box::pin(async {
+                    yield_now().await;
+                    "str".into()
+                }),
+                nested: Box::pin(future::ready(Box::pin(async move {
+                    yield_now().await;
+                    u32::from(i)
+                }) as _)),
+            },
+        )
+        .await
+        .context("failed to call `wrpc-test:js/echo.echo-async`")?;
+        let (bytes, lists, str, nested, io) = join!(
+            out.bytes.collect::<Vec<_>>(),
+            out.lists.collect::<Vec<_>>(),
+            out.str,
+            async { out.nested.await.await },
+            io,
+        );
+        io.context("failed to complete async I/O")?;
+        ensure!(bytes.concat() == [b'f', b'o', b'o', i]);
+        ensure!(lists.concat() == [vec!["a".to_string()]]);
+        ensure!(str == "str");
+        ensure!(nested == u32::from(i));
+    }
+    common::assert_eof(clt).await?;
+
+    server.start_kill().context("failed to kill `node`")?;
+    server.wait().await.context("failed to wait for `node`")?;
+    Ok(())
+}
+
+#[instrument(ret)]
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn js_http_server() -> anyhow::Result<()> {
     let bindings = bindgen("tests/wit", &["sync-server", "async-server"]).await?;
     let port = wrpc_test::free_port()
         .await
         .context("failed to find free port")?;
     let addr = SocketAddr::from((Ipv6Addr::LOCALHOST, port));
-    let mut server = start_server(&format!("http://{addr}"), bindings.path()).await?;
+    let mut server = start_server(
+        "tests/js/server.js",
+        &format!("http://{addr}"),
+        bindings.path(),
+    )
+    .await?;
 
     let conn = wrpc_test::tcp_connect(addr).await?;
     let (sender, conn) = http2::handshake(TokioExecutor::new(), TokioIo::new(conn))

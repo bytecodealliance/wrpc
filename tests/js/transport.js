@@ -5,10 +5,23 @@ import http2 from "node:http2";
 import net from "node:net";
 import { Duplex, Readable, pipeline } from "node:stream";
 
-import { fromFetch, fromRequest, fromWebStreams } from "../../js/src/index.js";
+import {
+  Framed,
+  Listener,
+  decoder,
+  encoder,
+  fromFetch,
+  fromRequest,
+  fromWebStreams,
+  receive,
+  t,
+  transmit,
+} from "../../js/src/index.js";
 
 /**
+ * @typedef {import("../../js/src/index.js").InputValue} InputValue
  * @typedef {import("../../js/src/index.js").Transport} Transport
+ * @typedef {import("../../js/src/index.js").Type} Type
  */
 
 /**
@@ -73,4 +86,69 @@ export function listen(addr, f) {
   net
     .createServer({ allowHalfOpen: true }, (sock) => f(transport(sock)))
     .listen(port, host, () => console.log("listening"));
+}
+
+/**
+ * The byte streams of `sock`, which must allow half-open connections.
+ * @param {net.Socket} sock
+ */
+function streams(sock) {
+  sock.setNoDelay(true);
+  const { readable, writable } = Duplex.toWeb(sock);
+  return /** @type {const} */ ([writable, readable]);
+}
+
+/**
+ * Connect to the TCP `addr`, returning the frames over the connection.
+ * @param {string} addr
+ * @returns {Promise<Framed>}
+ */
+export function connectFramed(addr) {
+  return new Promise((resolve, reject) => {
+    const sock = net.connect({ ...parse(addr), allowHalfOpen: true }, () =>
+      resolve(new Framed(...streams(sock))),
+    );
+    sock.once("error", reject);
+  });
+}
+
+/**
+ * Listen on the TCP `addr`, calling `f` with a listener of the invocations
+ * on each connection and the connection, and print `listening` once ready.
+ * @param {string} addr
+ * @param {(lis: Listener, sock: net.Socket) => void} f
+ */
+export function listenFramed(addr, f) {
+  const { host, port } = parse(addr);
+  net
+    .createServer({ allowHalfOpen: true }, (sock) => f(new Listener(...streams(sock)), sock))
+    .listen(port, host, () => console.log("listening"));
+}
+
+/**
+ * Invoke `instance#name` over `io` using the codec tree.
+ * @param {Framed} io @param {string} instance @param {string} name
+ * @param {Type[]} params @param {InputValue[]} values @param {Type[]} results
+ * @returns {Promise<[any[], Promise<unknown>]>}
+ */
+export async function invokeFramed(io, instance, name, params, values, results) {
+  await io.tx.header({ instance, name });
+  const tx = transmit(encoder(t.tuple(...params)), io.tx, values);
+  const [out, rx] = await Promise.race([
+    receive(decoder(t.tuple(...results)), io.rx),
+    tx.then(() => new Promise(() => {})),
+  ]);
+  return [/** @type {any[]} */ (out), Promise.all([tx, rx])];
+}
+
+/**
+ * Serve an invocation over `io` with `f` using the codec tree.
+ * @param {Framed} io @param {Type[]} params @param {Type[]} results
+ * @param {(...params: any[]) => InputValue[] | Promise<InputValue[]>} f
+ */
+export async function serveFramed(io, params, results, f) {
+  const [values, rx] = await receive(decoder(t.tuple(...params)), io.rx);
+  const tx = (async () =>
+    transmit(encoder(t.tuple(...results)), io.tx, await f(.../** @type {any[]} */ (values))))();
+  await Promise.all([rx, tx]);
 }
