@@ -9,7 +9,7 @@ use wit_bindgen_core::wit_parser::{
     TypeId, TypeOwner, WorldId, WorldItem, WorldKey,
 };
 use wit_bindgen_core::{Files, WorldGenerator, dealias, uwrite, uwriteln};
-use wrpc_introspect::{async_paths_ty, rpc_func_name, uses_error_context};
+use wrpc_introspect::{is_async_ty, rpc_func_name, uses_error_context};
 
 fn generated_preamble() -> String {
     format!(
@@ -747,11 +747,6 @@ impl Gen<'_> {
         uwriteln!(self.m.js, "export const {name} = {js};");
     }
 
-    fn is_async(resolve: &Resolve, ty: &Type) -> bool {
-        let (paths, fut) = async_paths_ty(resolve, ty);
-        fut || !paths.is_empty()
-    }
-
     /// Group `funcs` into those not bound to a resource and those of each
     /// resource.
     fn group<'b>(funcs: &[&'b Function]) -> (Vec<&'b Function>, Vec<(TypeId, Vec<&'b Function>)>) {
@@ -838,8 +833,8 @@ impl Gen<'_> {
     }
 
     fn func_is_async(resolve: &Resolve, func: &Function) -> bool {
-        func.params.iter().any(|p| Self::is_async(resolve, &p.ty))
-            || func.result.is_some_and(|ty| Self::is_async(resolve, &ty))
+        func.params.iter().any(|p| is_async_ty(resolve, &p.ty))
+            || func.result.is_some_and(|ty| is_async_ty(resolve, &ty))
     }
 
     fn client_body(
