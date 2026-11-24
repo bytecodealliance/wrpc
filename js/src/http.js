@@ -2,13 +2,7 @@
 // carries the client's frames and whose response body carries the server's.
 
 import { next, receive } from "./codec.js";
-import {
-  FrameDecodeError,
-  HeaderDecodeError,
-  InvokeError,
-  ReceiveError,
-  ServeError,
-} from "./error.js";
+import { HeaderDecodeError, InvokeError, ReceiveError, ServeError } from "./error.js";
 import { FrameReader, FrameWriter } from "./frame.js";
 import { handle, mapError, never, noop, requestError, responseError, send } from "./rpc.js";
 
@@ -71,8 +65,7 @@ export function fromFetch(input, { fetch = globalThis.fetch, buffer = false, ...
       const rx = res.then(
         (res) => new FrameReader(res.body ?? new Blob([]).stream()),
         (err) => {
-          const cause = new ReceiveError("frame", new FrameDecodeError("io", { cause: err }));
-          throw new InvokeError("response", cause);
+          throw new InvokeError("request", err);
         },
       );
       /** @param {unknown} err */

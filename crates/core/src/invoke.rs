@@ -19,7 +19,8 @@ use crate::{
 /// Error of invoking a function, by the side at fault
 #[derive(Debug)]
 pub enum InvokeError {
-    /// Encoding or transmitting the parameters failed
+    /// The request failed, such as on encoding or transmitting the parameters, or on the
+    /// transport rejecting or resetting it
     Request(std::io::Error),
     /// The caller dropped an asynchronous result, for which the peer was still sending data
     ///
@@ -34,7 +35,7 @@ pub enum InvokeError {
 impl fmt::Display for InvokeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Request(..) => f.write_str("failed to send request"),
+            Self::Request(..) => f.write_str("request failed"),
             Self::Unread => f.write_str("caller dropped an unread result"),
             Self::Response(..) => f.write_str("failed to receive response"),
         }
