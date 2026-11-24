@@ -10,17 +10,25 @@ import (
 )
 
 type handler struct {
-	c wrpc.Invoker
+	connect func() (*wrpc.Framed, error)
 }
 
-func NewHandler(c wrpc.Invoker) handler {
-	return handler{c}
+func NewHandler(connect func() (*wrpc.Framed, error)) handler {
+	return handler{connect}
+}
+
+func (h handler) conn() *wrpc.Framed {
+	c, err := h.connect()
+	if err != nil {
+		panic(err)
+	}
+	return c
 }
 
 func (h handler) Wrap(ctx context.Context, flag *test_types.F1) (*test_types.R1, error) {
-	return to_test.Wrap(ctx, h.c, flag)
+	return to_test.Wrap(ctx, h.conn(), flag)
 }
 
 func (h handler) VarF(ctx context.Context) (*test_types.V1, error) {
-	return to_test.VarF(ctx, h.c)
+	return to_test.VarF(ctx, h.conn())
 }

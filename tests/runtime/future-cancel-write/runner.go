@@ -10,26 +10,22 @@ import (
 	"driver/runner/my/test/i"
 )
 
-func Run(ctx context.Context, c wrpc.Invoker) error {
-	x := make(chan string, 1)
-	x <- "hello"
-	close(x)
-	errs, err := i.TakeThenDrop(ctx, c, x)
+func Run(ctx context.Context, connect func() (*wrpc.Framed, error)) error {
+	c, err := connect()
 	if err != nil {
 		return err
 	}
-	for err := range errs {
+	x := make(chan string, 1)
+	x <- "hello"
+	close(x)
+	if err := i.TakeThenDrop(ctx, c, x); err != nil {
 		return err
 	}
 
 	x = make(chan string, 1)
 	x <- "hello3"
 	close(x)
-	errs, err = i.ReadAndDrop(ctx, c, x)
-	if err != nil {
-		return err
-	}
-	for err := range errs {
+	if err := i.ReadAndDrop(ctx, c, x); err != nil {
 		return err
 	}
 	return nil

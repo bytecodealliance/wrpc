@@ -10,7 +10,11 @@ import (
 	"driver/runner/test/lists/to_test"
 )
 
-func Run(ctx context.Context, c wrpc.Invoker) error {
+func Run(ctx context.Context, connect func() (*wrpc.Framed, error)) error {
+	c, err := connect()
+	if err != nil {
+		return err
+	}
 	must0(to_test.EmptyListParam(ctx, c, []uint8{}))
 	must0(to_test.EmptyStringParam(ctx, c, ""))
 	assertEqual(0, len(must(to_test.EmptyListResult(ctx, c))))

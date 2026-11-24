@@ -9,7 +9,10 @@ func NewHandler() handler {
 }
 
 func (handler) PendingImport(ctx context.Context, x <-chan struct{}) error {
-	<-x
+	select {
+	case <-x:
+	case <-ctx.Done():
+	}
 	return nil
 }
 

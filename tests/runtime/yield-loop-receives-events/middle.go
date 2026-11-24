@@ -13,17 +13,25 @@ import (
 var hit atomic.Bool
 
 type handler struct {
-	c wrpc.Invoker
+	connect func() (*wrpc.Framed, error)
 }
 
-func NewHandler(c wrpc.Invoker) handler {
-	return handler{c}
+func NewHandler(connect func() (*wrpc.Framed, error)) handler {
+	return handler{connect}
+}
+
+func (h handler) conn() *wrpc.Framed {
+	c, err := h.connect()
+	if err != nil {
+		panic(err)
+	}
+	return c
 }
 
 func (h handler) F(ctx context.Context) error {
 	task := make(chan error, 1)
 	go func() {
-		err := i_middle.F(ctx, h.c)
+		err := i_middle.F(ctx, h.conn())
 		if err == nil {
 			hit.Store(true)
 		}

@@ -11,7 +11,11 @@ import (
 	"driver/runner/test/fixed_length_lists/to_test"
 )
 
-func Run(ctx context.Context, c wrpc.Invoker) error {
+func Run(ctx context.Context, connect func() (*wrpc.Framed, error)) error {
+	c, err := connect()
+	if err != nil {
+		return err
+	}
 	must0(to_test.ListParam(ctx, c, [4]uint32{1, 2, 3, 4}))
 	must0(to_test.ListParam2(ctx, c, [2][2]uint32{{1, 2}, {3, 4}}))
 	must0(to_test.ListParam3(ctx, c, [20]int32{

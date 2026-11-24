@@ -9,7 +9,11 @@ import (
 	"driver/runner/test/strings/to_test"
 )
 
-func Run(ctx context.Context, c wrpc.Invoker) error {
+func Run(ctx context.Context, connect func() (*wrpc.Framed, error)) error {
+	c, err := connect()
+	if err != nil {
+		return err
+	}
 	must0(to_test.TakeBasic(ctx, c, "latin utf16"))
 	assertEqual(must(to_test.ReturnUnicode(ctx, c)), "🚀🚀🚀 𠈄𓀀")
 	assertEqual(must(to_test.ReturnEmpty(ctx, c)), "")

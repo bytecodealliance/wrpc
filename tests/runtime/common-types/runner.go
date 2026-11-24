@@ -10,7 +10,11 @@ import (
 	"driver/runner/test/common/to_test"
 )
 
-func Run(ctx context.Context, c wrpc.Invoker) error {
+func Run(ctx context.Context, connect func() (*wrpc.Framed, error)) error {
+	c, err := connect()
+	if err != nil {
+		return err
+	}
 	res := must(to_test.Wrap(ctx, c, &test_types.F1{A: true}))
 	assertEqual(*res.B, test_types.F1{A: true})
 	assertEqual(res.A, 1)

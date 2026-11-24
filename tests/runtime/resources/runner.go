@@ -9,7 +9,11 @@ import (
 	"driver/runner/exports_"
 )
 
-func Run(ctx context.Context, c wrpc.Invoker) error {
+func Run(ctx context.Context, connect func() (*wrpc.Framed, error)) error {
+	c, err := connect()
+	if err != nil {
+		return err
+	}
 	res := must(exports_.TestImports(ctx, c))
 	if res.Err != nil {
 		panic(*res.Err)

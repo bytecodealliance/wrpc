@@ -9,7 +9,11 @@ import (
 	"driver/runner/test/flags_widths/to_test"
 )
 
-func Run(ctx context.Context, c wrpc.Invoker) error {
+func Run(ctx context.Context, connect func() (*wrpc.Framed, error)) error {
+	c, err := connect()
+	if err != nil {
+		return err
+	}
 	f17, b := must2(to_test.RoundtripFlag17(ctx, c, &to_test.Flag17{B0: true, B16: true}, 7))
 	assertEqual(*f17, to_test.Flag17{B0: true, B16: true})
 	assertEqual(b, 7)

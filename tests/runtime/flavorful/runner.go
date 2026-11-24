@@ -14,7 +14,11 @@ func ptr[T any](v T) *T {
 	return &v
 }
 
-func Run(ctx context.Context, c wrpc.Invoker) error {
+func Run(ctx context.Context, connect func() (*wrpc.Framed, error)) error {
+	c, err := connect()
+	if err != nil {
+		return err
+	}
 	must0(to_test.FListInRecord1(ctx, c, &to_test.ListInRecord1{A: "list_in_record1"}))
 
 	assertEqual(must(to_test.FListInRecord2(ctx, c)).A, "list_in_record2")

@@ -11,7 +11,11 @@ import (
 	"driver/runner/a/b/i"
 )
 
-func Run(ctx context.Context, c wrpc.Invoker) error {
+func Run(ctx context.Context, connect func() (*wrpc.Framed, error)) error {
+	c, err := connect()
+	if err != nil {
+		return err
+	}
 	if err := i.OneArgument(ctx, c, 1); err != nil {
 		return err
 	}

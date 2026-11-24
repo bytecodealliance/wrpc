@@ -10,17 +10,17 @@ import (
 	"driver/runner/my/test/i"
 )
 
-func Run(ctx context.Context, c wrpc.Invoker) error {
+func Run(ctx context.Context, connect func() (*wrpc.Framed, error)) error {
+	c, err := connect()
+	if err != nil {
+		return err
+	}
 	x := make(chan struct{})
 	go func() {
 		x <- struct{}{}
 		close(x)
 	}()
-	errs, err := i.ReadFuture(ctx, c, x)
-	if err != nil {
-		return err
-	}
-	for err := range errs {
+	if err := i.ReadFuture(ctx, c, x); err != nil {
 		return err
 	}
 
@@ -29,6 +29,6 @@ func Run(ctx context.Context, c wrpc.Invoker) error {
 		y <- struct{}{}
 		close(y)
 	}()
-	_, err = i.DropFuture(ctx, c, y)
+	err = i.DropFuture(ctx, c, y)
 	return err
 }

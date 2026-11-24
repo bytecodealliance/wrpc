@@ -12,7 +12,11 @@ import (
 	"driver/runner/my/test/i"
 )
 
-func Run(ctx context.Context, c wrpc.Invoker) error {
+func Run(ctx context.Context, connect func() (*wrpc.Framed, error)) error {
+	c, err := connect()
+	if err != nil {
+		return err
+	}
 	got, err := i.ReturnString(ctx, c)
 	if err != nil {
 		return err

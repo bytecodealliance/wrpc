@@ -10,13 +10,17 @@ import (
 	"driver/runner/my/test/i"
 )
 
-func Run(ctx context.Context, c wrpc.Invoker) error {
+func Run(ctx context.Context, connect func() (*wrpc.Framed, error)) error {
+	c, err := connect()
+	if err != nil {
+		return err
+	}
 	x := make(chan uint32)
 	go func() {
 		x <- 0
 		close(x)
 	}()
-	if _, err := i.CancelBeforeRead(ctx, c, x); err != nil {
+	if err := i.CancelBeforeRead(ctx, c, x); err != nil {
 		return err
 	}
 
@@ -25,7 +29,7 @@ func Run(ctx context.Context, c wrpc.Invoker) error {
 		y <- 0
 		close(y)
 	}()
-	if _, err := i.CancelAfterRead(ctx, c, y); err != nil {
+	if err := i.CancelAfterRead(ctx, c, y); err != nil {
 		return err
 	}
 
@@ -37,11 +41,7 @@ func Run(ctx context.Context, c wrpc.Invoker) error {
 		data <- 4
 		close(data)
 	}()
-	errs, err := i.StartReadThenCancel(ctx, c, data, signal)
-	if err != nil {
-		return err
-	}
-	for err := range errs {
+	if err := i.StartReadThenCancel(ctx, c, data, signal); err != nil {
 		return err
 	}
 	return nil

@@ -31,24 +31,17 @@ impl LanguageMethods for Go {
 
     fn should_fail_verify(
         &self,
-        name: &str,
+        _name: &str,
         config: &crate::config::WitConfig,
         _args: &[String],
     ) -> bool {
         // wRPC does not support `error-context`.
         config.error_context
-            // The wRPC Go generator does not yet support bare `stream` types.
-            || name == "streams.wit"
     }
 
     fn should_fail_runtime(&self, name: &str) -> bool {
-        matches!(
-            name,
-            // The wRPC Go generator does not yet support bare `stream` types.
-            "simple-stream"
-                // The wRPC Go generator has no `--generate-unused-types` option.
-                | "unused-types"
-        )
+        // The wRPC Go generator has no `--generate-unused-types` option.
+        name == "unused-types"
     }
 
     fn prepare(&self, _runner: &mut Runner<'_>) -> Result<()> {
@@ -83,110 +76,126 @@ impl LanguageMethods for Go {
 }
 
 /// The driver linking a `runner` (client) and its dependencies into one Go
-/// program. Mirrors the Rust driver: each dependency is served over its own
-/// in-process TCP transport and its handler receives an invoker routing its
-/// imports to the following dependencies (if its `NewHandler` takes one); the
-/// `runner` world's `Run` is then called with an invoker routing to all of them.
-/// `NewHandler` returns either one handler for all exported interfaces or one
-/// per interface, in the order of the world's `Serve` parameters.
-const DRIVER: &str = r#"package main
+/// program. Mirrors the Rust driver: each in-process TCP listener serves the
+/// chain of dependencies following the previous one, so that invocations are
+/// served by the nearest following dependency exporting them, and each
+/// dependency's handler connects to the listener serving the chain following it
+/// (if its `NewHandler` takes a `connect` function). The `runner` world's `Run`
+/// connects to the listener serving all of them. `NewHandler` returns either one
+/// handler for all exported interfaces or one per interface, in the order of
+/// the world's `Handle` parameters.
+const DRIVER: &str = r##"package main
 
 import (
 	"context"
-	"errors"
-	"fmt"
+	"io"
 	"net"
 	"os"
 	"reflect"
 	"time"
 
 	wrpc "wrpc.io/go"
-	wrpctcp "wrpc.io/go/x/tcp"
 
 	"driver/runner"
 {imports}
 )
 
-type route struct {
-	names  map[[2]string]struct{}
-	client wrpc.Invoker
-}
+type handle func(context.Context, wrpc.Header, *wrpc.Framed) (bool, error)
 
-type router []route
-
-func (r router) Invoke(ctx context.Context, instance string, name string, paths ...wrpc.SubscribePath) (wrpc.IndexWriteCloser, wrpc.IndexReadCloser, error) {
-	for _, rt := range r {
-		if _, ok := rt.names[[2]string{instance, name}]; ok {
-			return rt.client.Invoke(ctx, instance, name, paths...)
+func connector(l net.Listener) func() (*wrpc.Framed, error) {
+	return func() (*wrpc.Framed, error) {
+		conn, err := net.Dial("tcp", l.Addr().String())
+		if err != nil {
+			return nil, err
 		}
+		return wrpc.NewFramed(conn, conn), nil
 	}
-	return nil, nil, fmt.Errorf("no component exports `%s#%s`", instance, name)
 }
 
-type recorder struct {
-	wrpc.Server
-	names map[[2]string]struct{}
-}
-
-func (r recorder) Serve(instance string, name string, f wrpc.HandleFunc, paths ...wrpc.SubscribePath) (func() error, error) {
-	r.names[[2]string{instance, name}] = struct{}{}
-	return r.Server.Serve(instance, name, f, paths...)
-}
-
-func serve(ctx context.Context, routes router, serveFn any, newHandler any) router {
-	l, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv6loopback})
-	if err != nil {
-		panic(err)
-	}
-	srv := wrpctcp.NewServerWithContext(ctx, l)
-	rec := recorder{srv, map[[2]string]struct{}{}}
+func handler(handleFn any, newHandler any, connect func() (*wrpc.Framed, error)) handle {
 	h := reflect.ValueOf(newHandler)
 	var hArgs []reflect.Value
 	if h.Type().NumIn() == 1 {
-		hArgs = append(hArgs, reflect.ValueOf(routes))
+		hArgs = append(hArgs, reflect.ValueOf(connect))
 	}
 	handlers := h.Call(hArgs)
-	f := reflect.ValueOf(serveFn)
-	args := []reflect.Value{reflect.ValueOf(rec)}
-	n := f.Type().NumIn() - 1
+	f := reflect.ValueOf(handleFn)
+	n := f.Type().NumIn() - 3
 	if n > 0 && len(handlers) == 0 {
 		panic("NewHandler returned no handlers")
 	}
-	for i := range n {
-		args = append(args, handlers[min(i, len(handlers)-1)])
+	return func(ctx context.Context, hdr wrpc.Header, c *wrpc.Framed) (bool, error) {
+		args := []reflect.Value{reflect.ValueOf(ctx), reflect.ValueOf(hdr), reflect.ValueOf(c)}
+		for i := range n {
+			args = append(args, handlers[min(i, len(handlers)-1)])
+		}
+		out := f.Call(args)
+		err, _ := out[1].Interface().(error)
+		return out[0].Bool(), err
 	}
-	if err, _ := f.Call(args)[1].Interface().(error); err != nil {
-		panic(err)
-	}
+}
+
+func serve(ctx context.Context, l net.Listener, chain []handle) {
 	go func() {
 		for {
-			accept, err := srv.Accept()
+			conn, err := l.Accept()
 			if err != nil {
-				if !errors.Is(err, net.ErrClosed) {
-					os.Stderr.WriteString(err.Error() + "\n")
-				}
 				return
 			}
 			go func() {
-				if err := accept(ctx); err != nil {
-					os.Stderr.WriteString(err.Error() + "\n")
+				defer conn.Close()
+				lis := wrpc.NewListener(conn, conn)
+				for {
+					hdr, c, err := lis.Accept(ctx)
+					if err == io.EOF {
+						return
+					}
+					if err != nil {
+						os.Stderr.WriteString("failed to read invocation header: " + err.Error() + "\n")
+						return
+					}
+					var ok bool
+					for _, h := range chain {
+						if ok, err = h(ctx, hdr, c); ok {
+							break
+						}
+					}
+					if !ok {
+						os.Stderr.WriteString("no component exports `" + hdr.Instance + "#" + hdr.Name + "`\n")
+						return
+					}
+					if err != nil {
+						os.Stderr.WriteString("failed to serve invocation: " + err.Error() + "\n")
+						return
+					}
 				}
 			}()
 		}
 	}()
-	return append(router{{rec.names, wrpctcp.NewInvoker(l.Addr().String())}}, routes...)
 }
 
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	var routes router
-	{serve}
+	var ls []net.Listener
+	for range {listeners} {
+		l, err := net.Listen("tcp", "[::1]:0")
+		if err != nil {
+			panic(err)
+		}
+		defer l.Close()
+		ls = append(ls, l)
+	}
+	var handlers []handle
+	{handlers}
+	for i, l := range ls {
+		serve(ctx, l, handlers[i:])
+	}
 
 	done := make(chan error, 1)
 	go func() {
-		done <- runner.Run(ctx, routes)
+		done <- runner.Run(ctx, connector(ls[0]))
 	}()
 	select {
 	case err := <-done:
@@ -198,7 +207,7 @@ func main() {
 		panic("runtime test timed out")
 	}
 }
-"#;
+"##;
 
 impl Runner<'_> {
     /// Generates Go bindings for `component`'s world into `dir` using `pkg` as
@@ -254,13 +263,14 @@ impl Runner<'_> {
 
         self.generate_go_component(runner, &driver.join("runner"), "driver/runner")?;
         let mut imports = String::default();
-        let mut serve = Vec::default();
-        for (dep, ..) in deps.iter().rev() {
+        let mut handlers = Vec::default();
+        for (i, (dep, ..)) in deps.iter().enumerate() {
             let pkg = dep.bindgen.world.to_snake_case();
             self.generate_go_component(dep, &driver.join(&pkg), &format!("driver/{pkg}"))?;
             imports.push_str(&format!("\t\"driver/{pkg}\"\n"));
-            serve.push(format!(
-                "routes = serve(ctx, routes, {pkg}.Serve, {pkg}.NewHandler)"
+            handlers.push(format!(
+                "handlers = append(handlers, handler({pkg}.Handle, {pkg}.NewHandler, connector(ls[{}])))",
+                i + 1
             ));
         }
 
@@ -275,7 +285,8 @@ impl Runner<'_> {
             &driver.join("main.go"),
             DRIVER
                 .replace("{imports}", imports.trim_end())
-                .replace("{serve}", &serve.join("\n\t")),
+                .replace("{listeners}", &(deps.len() + 1).to_string())
+                .replace("{handlers}", &handlers.join("\n\t")),
         )?;
 
         // The driver module lives under the build artifacts directory, which is
