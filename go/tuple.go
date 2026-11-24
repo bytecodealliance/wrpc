@@ -1,84 +1,24 @@
 package wrpc
 
-import (
-	"fmt"
-	"log/slog"
-)
-
 // Tuple1 is a tuple of one value
 type Tuple1[T0 any] struct {
 	V0 T0
 }
 
+// Tuple2 is a tuple of 2 values
 type Tuple2[T0, T1 any] struct {
 	V0 T0
 	V1 T1
 }
 
-func ReadTuple2[T0, T1 any](r IndexReader, f0 func(IndexReader) (T0, error), f1 func(IndexReader) (T1, error)) (*Tuple2[T0, T1], error,
-) {
-	v0, err := f0(r)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read tuple element 0: %w", err)
-	}
-	v1, err := f1(r)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read tuple element 1: %w", err)
-	}
-	return &Tuple2[T0, T1]{v0, v1}, nil
-}
-
-func (v *Tuple2[T0, T1]) WriteTo(w ByteWriter, f0 func(T0, ByteWriter) error, f1 func(T1, ByteWriter) error) error {
-	slog.Debug("writing tuple element 0")
-	if err := f0(v.V0, w); err != nil {
-		return fmt.Errorf("failed to write tuple element 0: %w", err)
-	}
-	slog.Debug("writing tuple element 1")
-	if err := f1(v.V1, w); err != nil {
-		return fmt.Errorf("failed to write tuple element 1: %w", err)
-	}
-	return nil
-}
-
+// Tuple3 is a tuple of 3 values
 type Tuple3[T0, T1, T2 any] struct {
 	V0 T0
 	V1 T1
 	V2 T2
 }
 
-func ReadTuple3[T0, T1, T2 any](r IndexReader, f0 func(IndexReader) (T0, error), f1 func(IndexReader) (T1, error), f2 func(IndexReader) (T2, error)) (*Tuple3[T0, T1, T2], error,
-) {
-	v0, err := f0(r)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read tuple element 0: %w", err)
-	}
-	v1, err := f1(r)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read tuple element 1: %w", err)
-	}
-	v2, err := f2(r)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read tuple element 2: %w", err)
-	}
-	return &Tuple3[T0, T1, T2]{v0, v1, v2}, nil
-}
-
-func (v *Tuple3[T0, T1, T2]) WriteTo(w ByteWriter, f0 func(T0, ByteWriter) error, f1 func(T1, ByteWriter) error, f2 func(T2, ByteWriter) error) error {
-	slog.Debug("writing tuple element 0")
-	if err := f0(v.V0, w); err != nil {
-		return fmt.Errorf("failed to write tuple element 0: %w", err)
-	}
-	slog.Debug("writing tuple element 1")
-	if err := f1(v.V1, w); err != nil {
-		return fmt.Errorf("failed to write tuple element 1: %w", err)
-	}
-	slog.Debug("writing tuple element 2")
-	if err := f2(v.V2, w); err != nil {
-		return fmt.Errorf("failed to write tuple element 2: %w", err)
-	}
-	return nil
-}
-
+// Tuple4 is a tuple of 4 values
 type Tuple4[T0, T1, T2, T3 any] struct {
 	V0 T0
 	V1 T1
@@ -86,6 +26,7 @@ type Tuple4[T0, T1, T2, T3 any] struct {
 	V3 T3
 }
 
+// Tuple5 is a tuple of 5 values
 type Tuple5[T0, T1, T2, T3, T4 any] struct {
 	V0 T0
 	V1 T1
@@ -94,6 +35,7 @@ type Tuple5[T0, T1, T2, T3, T4 any] struct {
 	V4 T4
 }
 
+// Tuple6 is a tuple of 6 values
 type Tuple6[T0, T1, T2, T3, T4, T5 any] struct {
 	V0 T0
 	V1 T1
@@ -103,6 +45,7 @@ type Tuple6[T0, T1, T2, T3, T4, T5 any] struct {
 	V5 T5
 }
 
+// Tuple7 is a tuple of 7 values
 type Tuple7[T0, T1, T2, T3, T4, T5, T6 any] struct {
 	V0 T0
 	V1 T1
@@ -113,6 +56,7 @@ type Tuple7[T0, T1, T2, T3, T4, T5, T6 any] struct {
 	V6 T6
 }
 
+// Tuple8 is a tuple of 8 values
 type Tuple8[T0, T1, T2, T3, T4, T5, T6, T7 any] struct {
 	V0 T0
 	V1 T1
@@ -124,6 +68,7 @@ type Tuple8[T0, T1, T2, T3, T4, T5, T6, T7 any] struct {
 	V7 T7
 }
 
+// Tuple9 is a tuple of 9 values
 type Tuple9[T0, T1, T2, T3, T4, T5, T6, T7, T8 any] struct {
 	V0 T0
 	V1 T1
@@ -136,6 +81,7 @@ type Tuple9[T0, T1, T2, T3, T4, T5, T6, T7, T8 any] struct {
 	V8 T8
 }
 
+// Tuple10 is a tuple of 10 values
 type Tuple10[T0, T1, T2, T3, T4, T5, T6, T7, T8, T9 any] struct {
 	V0 T0
 	V1 T1
@@ -149,6 +95,7 @@ type Tuple10[T0, T1, T2, T3, T4, T5, T6, T7, T8, T9 any] struct {
 	V9 T9
 }
 
+// Tuple11 is a tuple of 11 values
 type Tuple11[T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10 any] struct {
 	V0  T0
 	V1  T1
@@ -163,6 +110,7 @@ type Tuple11[T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10 any] struct {
 	V10 T10
 }
 
+// Tuple12 is a tuple of 12 values
 type Tuple12[T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11 any] struct {
 	V0  T0
 	V1  T1
@@ -178,6 +126,7 @@ type Tuple12[T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11 any] struct {
 	V11 T11
 }
 
+// Tuple13 is a tuple of 13 values
 type Tuple13[T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12 any] struct {
 	V0  T0
 	V1  T1
@@ -194,6 +143,7 @@ type Tuple13[T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12 any] struct {
 	V12 T12
 }
 
+// Tuple14 is a tuple of 14 values
 type Tuple14[T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13 any] struct {
 	V0  T0
 	V1  T1
@@ -211,6 +161,7 @@ type Tuple14[T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13 any] str
 	V13 T13
 }
 
+// Tuple15 is a tuple of 15 values
 type Tuple15[T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14 any] struct {
 	V0  T0
 	V1  T1
@@ -229,6 +180,7 @@ type Tuple15[T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14 any
 	V14 T14
 }
 
+// Tuple16 is a tuple of 16 values
 type Tuple16[T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15 any] struct {
 	V0  T0
 	V1  T1

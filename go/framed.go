@@ -12,6 +12,12 @@ import (
 	"unicode/utf8"
 )
 
+const (
+	frameVersion            = 0x01
+	defaultMaxFrameDepth    = 64
+	defaultMaxHeaderNameLen = 1 << 10
+)
+
 var (
 	errDataAfterEnd  = errors.New("received data after value end")
 	errClosedNoValue = fmt.Errorf("path closed without a value: %w", io.ErrUnexpectedEOF)
@@ -138,6 +144,25 @@ func (r *FrameReader) peek() ([]byte, error) {
 func (r *FrameReader) discard(n int) {
 	_, _ = r.r.Discard(n)
 	r.n -= uint32(n)
+}
+
+// readHeaderName reads a name of at most `max` bytes from `r`
+func readHeaderName(r *bufio.Reader, max uint32) (string, error) {
+	n, err := ReadUint32(r)
+	if err != nil {
+		return "", fmt.Errorf("failed to read name length: %w", err)
+	}
+	if n > max {
+		return "", fmt.Errorf("name length of %d exceeds maximum of %d", n, max)
+	}
+	b, err := ReadBytes(r, n)
+	if err != nil {
+		return "", fmt.Errorf("failed to read name: %w", err)
+	}
+	if !utf8.Valid(b) {
+		return "", errors.New("name is not valid UTF-8")
+	}
+	return string(b), nil
 }
 
 // FrameWriter writes invocation headers and frames to a byte stream, it is safe for concurrent use

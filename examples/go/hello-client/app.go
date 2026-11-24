@@ -23,7 +23,7 @@ func init() {
 	})))
 }
 
-func Run(target string, client wrpc.Invoker) error {
+func Run(target string, client *wrpc.Framed) error {
 	greeting, err := handler.Hello(context.Background(), client)
 	if err != nil {
 		return fmt.Errorf("failed to call `wrpc-examples:hello/handler.hello`: %w", err)

@@ -3,30 +3,16 @@
 package server
 
 import (
+	context "context"
 	exports__wrpc_examples__streams__handler "wrpc.io/examples/go/streams-server/bindings/exports/wrpc_examples/streams/handler"
 	wrpc "wrpc.io/go"
 )
 
-func Serve(s wrpc.Server, h0 exports__wrpc_examples__streams__handler.Handler) (stop func() error, err error) {
-	stops := make([]func() error, 0, 1)
-	stop = func() error {
-		for _, stop := range stops {
-			if err := stop(); err != nil {
-				return err
-			}
-		}
-		return nil
+// Handle serves the invocation with header `hdr` over `c` using the handlers of the exported interfaces.
+// It returns false if the function is not exported by this world.
+func Handle(ctx context.Context, hdr wrpc.Header, c *wrpc.Framed, h0 exports__wrpc_examples__streams__handler.Handler) (bool, error) {
+	if ok, err := exports__wrpc_examples__streams__handler.HandleInterface(ctx, hdr, c, h0); ok {
+		return true, err
 	}
-	stop0, err := exports__wrpc_examples__streams__handler.ServeInterface(s, h0)
-	if err != nil {
-		return
-	}
-	stops = append(stops, stop0)
-	stop = func() error {
-		if err := stop0(); err != nil {
-			return err
-		}
-		return nil
-	}
-	return
+	return false, nil
 }
