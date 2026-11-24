@@ -121,12 +121,14 @@ use http_body_util::{BodyDataStream, BodyExt};
 use tokio::io::AsyncRead;
 use tokio_util::codec::{Decoder, Encoder, FramedRead};
 use tokio_util::io::StreamReader;
-use tower_service::Service;
 use wrpc_core::{
     Codec, FrameDecoder, FrameEncoder, FrameHeaderEncoder, FrameHeaderRef, FrameRef, Header,
     HeaderDecodeError, HeaderDecoder, HeaderEncoder, HeaderRef, Invoke, InvokeError, Receipt,
     Receive, ReceiveError, Serve, ServeError, Transmit, receive,
 };
+
+#[doc(inline)]
+pub use tower_service::Service;
 
 /// Media type of wRPC request and response bodies
 pub const MEDIA_TYPE: &str = "application/vnd.bytecodealliance.wrpc";
