@@ -21,4 +21,4 @@ clap = { workspace = true, features = [
 ] }
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread"] }
 tracing-subscriber = { workspace = true, features = ["ansi", "fmt"] }
-wit-bindgen-wrpc = { workspace = true }
+wrpc = { workspace = true }

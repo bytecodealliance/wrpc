@@ -36,5 +36,5 @@ tracing-subscriber = { workspace = true, features = [
     "env-filter",
     "fmt",
 ] }
-wrpc-core = { workspace = true }
+wrpc = { workspace = true }
 wrpc-wasi-keyvalue = { workspace = true }

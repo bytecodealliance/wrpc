@@ -16,7 +16,7 @@ async fn go_bindgen() -> anyhow::Result<()> {
     use tokio::fs;
     use tokio::time::{sleep, timeout};
     use tracing::info;
-    use wrpc_core::{FrameDecodeError, Framed, InvokeError, ReceiveError, invoke};
+    use wrpc::{FrameDecodeError, Framed, InvokeError, ReceiveError, invoke};
 
     if let Err(err) = fs::remove_dir_all("tests/go/bindings").await {
         match err.kind() {
@@ -160,7 +160,7 @@ async fn go_core() -> anyhow::Result<()> {
     use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
     use tokio::sync::{mpsc, oneshot};
     use tokio::{join, try_join};
-    use wrpc_core::{Framed, Header, Listener, invoke, serve};
+    use wrpc::{Framed, Header, Listener, invoke, serve};
 
     type Echo = (BoxStream<'static, Bytes>, BoxFuture<'static, String>);
     type Futs = (BoxStream<'static, Vec<BoxFuture<'static, String>>>,);

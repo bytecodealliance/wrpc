@@ -27,5 +27,5 @@ tracing-subscriber = { workspace = true, features = [
     "fmt",
 ] }
 url = { workspace = true }
-wrpc-core = { workspace = true }
+wrpc = { workspace = true }
 wrpc-wasi-keyvalue = { workspace = true }

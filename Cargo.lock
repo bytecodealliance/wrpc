@@ -1165,7 +1165,7 @@ dependencies = [
  "tracing-subscriber",
  "wasi 0.14.7+wasi-0.2.4",
  "wit-bindgen 0.60.0",
- "wit-bindgen-wrpc",
+ "wrpc",
 ]
 
 [[package]]
@@ -1206,7 +1206,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "wit-bindgen-wrpc",
+ "wrpc",
 ]
 
 [[package]]
@@ -1223,7 +1223,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "wit-bindgen-wrpc",
+ "wrpc",
 ]
 
 [[package]]
@@ -1239,7 +1239,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "wit-bindgen-wrpc",
+ "wrpc",
 ]
 
 [[package]]
@@ -1250,7 +1250,7 @@ dependencies = [
  "clap",
  "tokio",
  "tracing-subscriber",
- "wit-bindgen-wrpc",
+ "wrpc",
 ]
 
 [[package]]
@@ -1262,7 +1262,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "wit-bindgen-wrpc",
+ "wrpc",
 ]
 
 [[package]]
@@ -1273,7 +1273,7 @@ dependencies = [
  "clap",
  "tokio",
  "tracing-subscriber",
- "wit-bindgen-wrpc",
+ "wrpc",
 ]
 
 [[package]]
@@ -1285,7 +1285,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "wit-bindgen-wrpc",
+ "wrpc",
 ]
 
 [[package]]
@@ -1298,7 +1298,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "web-transport-quinn",
- "wit-bindgen-wrpc",
+ "wrpc",
 ]
 
 [[package]]
@@ -1313,7 +1313,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "web-transport-quinn",
- "wit-bindgen-wrpc",
+ "wrpc",
 ]
 
 [[package]]
@@ -2802,7 +2802,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
- "wit-bindgen-wrpc",
+ "wrpc",
 ]
 
 [[package]]
@@ -2820,7 +2820,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
- "wit-bindgen-wrpc",
+ "wrpc",
 ]
 
 [[package]]
@@ -2835,7 +2835,7 @@ dependencies = [
  "tokio-stream",
  "tracing",
  "tracing-subscriber",
- "wit-bindgen-wrpc",
+ "wrpc",
 ]
 
 [[package]]
@@ -2849,7 +2849,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "wit-bindgen-wrpc",
+ "wrpc",
 ]
 
 [[package]]
@@ -2866,7 +2866,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "web-transport-quinn",
- "wit-bindgen-wrpc",
+ "wrpc",
 ]
 
 [[package]]
@@ -2883,7 +2883,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "web-transport-quinn",
- "wit-bindgen-wrpc",
+ "wrpc",
 ]
 
 [[package]]
@@ -3495,7 +3495,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "wrpc-core",
+ "wrpc",
  "wrpc-wasi-keyvalue",
 ]
 
@@ -3512,7 +3512,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "wrpc-core",
+ "wrpc",
  "wrpc-wasi-keyvalue",
  "wrpc-wasi-keyvalue-mem",
 ]
@@ -3527,7 +3527,7 @@ dependencies = [
  "tokio",
  "tracing-subscriber",
  "url",
- "wrpc-core",
+ "wrpc",
  "wrpc-wasi-keyvalue",
 ]
 
@@ -3541,7 +3541,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "wrpc-core",
+ "wrpc",
  "wrpc-wasi-keyvalue",
  "wrpc-wasi-keyvalue-mem",
 ]
@@ -3556,7 +3556,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "wrpc-core",
+ "wrpc",
  "wrpc-wasi-keyvalue",
  "wrpc-wasi-keyvalue-mem",
 ]
@@ -3581,8 +3581,7 @@ dependencies = [
  "url",
  "uuid",
  "web-transport-quinn",
- "wit-bindgen-wrpc",
- "wrpc-core",
+ "wrpc",
  "wrpc-wasi-keyvalue",
  "wrpc-wasi-keyvalue-mem",
  "wrpc-wasi-keyvalue-redis",
@@ -3601,7 +3600,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "web-transport-quinn",
- "wrpc-core",
+ "wrpc",
  "wrpc-wasi-keyvalue",
  "wrpc-wasi-keyvalue-mem",
 ]

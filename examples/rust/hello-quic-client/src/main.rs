@@ -11,10 +11,10 @@ use rustls::{
     pki_types::{CertificateDer, ServerName, UnixTime},
     version::TLS13,
 };
-use wit_bindgen_wrpc::wrpc_core::Framed;
+use wrpc::Framed;
 
 mod bindings {
-    wit_bindgen_wrpc::generate!({
+    wrpc::generate!({
         with: {
             "wrpc-examples:hello/handler": generate
         }
