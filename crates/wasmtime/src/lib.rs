@@ -18,6 +18,11 @@
 //! Received `future`s and `stream`s are not buffered, so the guest must read the ones of an
 //! invocation concurrently: a guest reading one `stream` to its end before another one stalls the
 //! invocation indefinitely, if the peer interleaves them (see [`wrpc_core`]).
+//!
+//! On `wasm32-unknown-unknown`, the `std` feature of wasmtime, which `wrpc-wasmtime` enables,
+//! requires the embedder to enable wasmtime's `custom-virtual-memory` feature, and the `async`
+//! feature its `custom-fiber` feature, and to provide the functions of wasmtime's custom platform
+//! C API they declare, such as `wasmtime_mmap_new`.
 
 mod codec;
 mod export;
