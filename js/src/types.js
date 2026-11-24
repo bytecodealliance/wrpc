@@ -14,7 +14,7 @@
 //   | { kind: "flags", flags: { name: string, key: string }[] }
 //   | { kind: "own" | "borrow", name: string }
 //
-// This is the structural type tree the value codec and session walk. Names are
+// This is the structural type tree the codec tree is built from. Names are
 // the WIT names; the `key` of a record field or flag is the camel case
 // property name its value has in JavaScript, as in the component model's
 // JS-API draft.
@@ -62,21 +62,19 @@ export const map = (key, value) => ({ kind: "map", key, value });
 export const option = (some) => ({ kind: "option", some });
 
 /**
- * `future<some>`. Carries a single asynchronous value, multiplexed over the
- * invocation's framed stream. Requires the async session API (`invoke` /
- * `accept`); the synchronous `encode`/`decode` cannot transmit it. Pass no
- * type for a bare `future` without a payload.
+ * `future<some>`. Carries a single asynchronous value over the frames of an
+ * invocation, so `pack` and `unpack` only accept a ready one. Pass no type for
+ * a bare `future` without a payload.
  * @param {Type | null} [some]
  * @returns {Type}
  */
 export const future = (some = null) => ({ kind: "future", some });
 
 /**
- * `stream<elem>`. Carries an asynchronous sequence of `elem` chunks,
- * multiplexed over the invocation's framed stream. Requires the async session
- * API (`invoke` / `accept`). Pass no type for a bare `stream` without an
- * element type, whose chunks are numbers of elements, which only a
- * {@link import("./index.d.ts").Decoder} supports.
+ * `stream<elem>`. Carries an asynchronous sequence of `elem` chunks over the
+ * frames of an invocation, so `pack` and `unpack` only accept a ready one.
+ * Pass no type for a bare `stream` without an element type, whose chunks are
+ * numbers of elements.
  * @param {Type | null} [elem]
  * @returns {Type}
  */
