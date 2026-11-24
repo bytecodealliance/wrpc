@@ -350,7 +350,7 @@ where
     T: http_body::Body<Error: Into<Box<dyn core::error::Error + Send + Sync>>> + Unpin,
 {
     /// Serves the invocation using `codec` by calling `f` with its parameters, see
-    /// [`wrpc_core::Server::serve`]
+    /// [`Codec::serve`]
     ///
     /// Receives the asynchronous parameters while `f` runs and resolves to the response once the
     /// results `f` returns are encoded. Its [ResponseBody] transmits the asynchronous results and

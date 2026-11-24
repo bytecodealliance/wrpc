@@ -357,7 +357,10 @@ async fn serve_conn(
             enc: TupleEncoder::new(Arc::clone(&export.results)),
             dec: TupleDecoder::new(Arc::clone(&export.params)).with_max_len(max_len),
         };
-        srv.serve(codec, |params| call(store, func, export, guest, params))
+        codec
+            .serve(&mut srv.tx, &mut srv.rx, |params| {
+                call(store, func, export, guest, params)
+            })
             .await?;
     }
     Ok(())
