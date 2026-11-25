@@ -20,6 +20,7 @@ clap = { workspace = true, features = [
     "suggestions",
     "usage",
 ] }
+http-body-util = { workspace = true }
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "signal"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = [
