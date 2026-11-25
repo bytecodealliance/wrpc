@@ -75,7 +75,7 @@ pub trait Serve {
     ///
     /// The future resolves once all I/O of the invocation is done or the transport took over the
     /// rest of it, such as the response body of a request-response transport.
-    fn serve<E, D, T, Fut>(
+    fn serve_with<E, D, T, Fut>(
         self,
         codec: Codec<E, D>,
         f: impl FnOnce(D::Item) -> Fut + Send,
@@ -94,7 +94,7 @@ where
 {
     type Output = ();
 
-    fn serve<E, D, T, Fut>(
+    fn serve_with<E, D, T, Fut>(
         self,
         codec: Codec<E, D>,
         f: impl FnOnce(D::Item) -> Fut + Send,
@@ -117,7 +117,7 @@ where
 {
     type Output = ();
 
-    fn serve<E, D, T, Fut>(
+    fn serve_with<E, D, T, Fut>(
         self,
         codec: Codec<E, D>,
         f: impl FnOnce(D::Item) -> Fut + Send,
@@ -178,7 +178,7 @@ where
 }
 
 /// Serves an invocation using `srv` and the default codecs of parameters `P` and results `R`, see
-/// [`Codec::serve`]
+/// [`Serve::serve_with`]
 pub fn serve<P, R, S, Fut>(
     srv: S,
     f: impl FnOnce(P) -> Fut + Send,
@@ -189,5 +189,5 @@ where
     R: Encode<Encoder: Send + 'static>,
     Fut: Future<Output = std::io::Result<R>> + Send,
 {
-    srv.serve(Codec::<R::Encoder, P::Decoder>::default(), f)
+    srv.serve_with(Codec::<R::Encoder, P::Decoder>::default(), f)
 }

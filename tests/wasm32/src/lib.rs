@@ -5,7 +5,7 @@ use wrpc::http::IncomingRequest;
 use wrpc::wasmtime::{TupleDecoder, TupleEncoder, Val};
 use wrpc::{Codec, ServeError};
 
-pub async fn serve<T>(
+pub async fn serve_with<T>(
     req: IncomingRequest<T>,
     codec: Codec<TupleEncoder, TupleDecoder>,
     f: impl AsyncFnOnce(Vec<Val>) -> Vec<Val>,
@@ -13,7 +13,7 @@ pub async fn serve<T>(
 where
     T: Body<Error: Into<Box<dyn Error + Send + Sync>>> + Unpin,
 {
-    req.serve_local(codec, async move |params| Ok(f(params).await))
+    req.serve_local_with(codec, async move |params| Ok(f(params).await))
         .await?;
     Ok(())
 }

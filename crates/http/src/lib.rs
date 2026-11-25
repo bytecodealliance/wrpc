@@ -123,9 +123,9 @@ use tokio::io::AsyncRead;
 use tokio_util::codec::{Decoder, Encoder, FramedRead};
 use tokio_util::io::StreamReader;
 use wrpc_core::{
-    Codec, FrameDecoder, FrameEncoder, FrameHeaderEncoder, FrameHeaderRef, FrameRef, Header,
-    HeaderDecodeError, HeaderDecoder, HeaderEncoder, HeaderRef, Invoke, InvokeError, Receipt,
-    Receive, ReceiveError, Serve, ServeError, Transmit, receive,
+    Codec, Decode, Encode, FrameDecoder, FrameEncoder, FrameHeaderEncoder, FrameHeaderRef,
+    FrameRef, Header, HeaderDecodeError, HeaderDecoder, HeaderEncoder, HeaderRef, Invoke,
+    InvokeError, Receipt, Receive, ReceiveError, Serve, ServeError, Transmit, receive,
 };
 
 #[doc(inline)]
@@ -303,8 +303,8 @@ where
 /// Client invoking functions with requests built from `parts`, sent by `service`, such as a
 /// hyper-util client
 ///
-/// The parameters are encoded before [`Invoke::invoke`] returns. The response status and headers
-/// are not checked: to act on them, wrap `service` in a layer.
+/// The parameters are encoded before [`Invoke::invoke_with`] returns. The response status and
+/// headers are not checked: to act on them, wrap `service` in a layer.
 /// Errors of `service` are [`InvokeError::Request`].
 #[derive(Clone, Debug)]
 pub struct Client<T> {
@@ -329,11 +329,39 @@ impl<T> Client<T> {
 }
 
 impl<S> Client<S> {
+    /// Invokes function `func` on instance `instance` with `params` using the default codecs of
+    /// `params` and results `R`, see [`Client::invoke_local_with`]
+    ///
+    /// Unlike [`Invoke`], this does not require [`Send`] futures.
+    pub fn invoke_local<P, R, B>(
+        self,
+        instance: &str,
+        func: &str,
+        params: P,
+    ) -> impl Future<Output = Result<(R, Invocation<B, R::Decoder>), InvokeError>> + use<P, R, S, B>
+    where
+        P: Encode<Encoder: Send + 'static>,
+        R: Decode,
+        S: Service<
+                http::Request<OutgoingParams>,
+                Response = http::Response<B>,
+                Error: Into<Box<dyn core::error::Error + Send + Sync>>,
+            >,
+        B: http_body::Body<Data = Bytes, Error: Into<Box<dyn core::error::Error + Send + Sync>>>,
+    {
+        self.invoke_local_with(
+            Codec::<P::Encoder, R::Decoder>::default(),
+            instance,
+            func,
+            params,
+        )
+    }
+
     /// Invokes function `func` on instance `instance` with `params` using `codec`, see
     /// [`Codec::invoke`]
     ///
     /// Unlike [`Invoke`], this does not require [`Send`] futures.
-    pub fn invoke_local<E, D, T, B>(
+    pub fn invoke_local_with<E, D, T, B>(
         self,
         codec: Codec<E, D>,
         instance: &str,
@@ -435,7 +463,7 @@ where
         E: Transmit + Send + 'static,
         D: Receive + Send + 'static;
 
-    fn invoke<E, D, T>(
+    fn invoke_with<E, D, T>(
         self,
         codec: Codec<E, D>,
         instance: &str,
@@ -449,7 +477,7 @@ where
         D: Decoder<Error = std::io::Error> + Receive + Send + 'static,
         D::Item: Send,
     {
-        self.invoke_local(codec, instance, func, params)
+        self.invoke_local_with(codec, instance, func, params)
     }
 }
 
@@ -469,7 +497,7 @@ where
         E: Transmit + Send + 'static,
         D: Receive + Send + 'static;
 
-    fn invoke<E, D, T>(
+    fn invoke_with<E, D, T>(
         self,
         codec: Codec<E, D>,
         instance: &str,
@@ -488,7 +516,7 @@ where
             parts: parts.clone(),
             service,
         }
-        .invoke_local(codec, instance, func, params)
+        .invoke_local_with(codec, instance, func, params)
     }
 }
 
@@ -534,6 +562,22 @@ impl<T> IncomingRequest<T>
 where
     T: http_body::Body<Error: Into<Box<dyn core::error::Error + Send + Sync>>> + Unpin,
 {
+    /// Serves the invocation using the default codecs of parameters `P` and results `R` by
+    /// calling `f` with its parameters, see [`IncomingRequest::serve_local_with`]
+    ///
+    /// Unlike [`Serve`], this does not require [`Send`] values and futures.
+    pub async fn serve_local<P, R>(
+        self,
+        f: impl AsyncFnOnce(P) -> std::io::Result<R>,
+    ) -> Result<http::Response<OutgoingResults<R::Encoder, P::Decoder, T>>, ServeError>
+    where
+        P: Decode,
+        R: Encode,
+    {
+        self.serve_local_with(Codec::<R::Encoder, P::Decoder>::default(), f)
+            .await
+    }
+
     /// Serves the invocation using `codec` by calling `f` with its parameters, see
     /// [`Codec::serve`]
     ///
@@ -544,7 +588,7 @@ where
     /// [`BrokenPipe`](std::io::ErrorKind::BrokenPipe) after.
     ///
     /// Unlike [`Serve`], this does not require [`Send`] values and futures.
-    pub async fn serve_local<E, D, R>(
+    pub async fn serve_local_with<E, D, R>(
         self,
         codec: Codec<E, D>,
         f: impl AsyncFnOnce(D::Item) -> std::io::Result<R>,
@@ -586,7 +630,7 @@ where
 {
     type Output = http::Response<UnsyncBoxBody<Bytes, std::io::Error>>;
 
-    fn serve<E, D, R, Fut>(
+    fn serve_with<E, D, R, Fut>(
         self,
         codec: Codec<E, D>,
         f: impl FnOnce(D::Item) -> Fut + Send,
@@ -597,7 +641,7 @@ where
         D::Item: Send,
         Fut: Future<Output = std::io::Result<R>> + Send,
     {
-        IncomingRequest::serve_local(self, codec, async move |params| f(params).await)
+        IncomingRequest::serve_local_with(self, codec, async move |params| f(params).await)
             .map_ok(|res| res.map(BodyExt::boxed_unsync))
     }
 }

@@ -86,7 +86,7 @@ pub trait Invoke {
 
     /// Invokes function `func` on instance `instance` with `params` using `codec`, see
     /// [`Codec::invoke`]
-    fn invoke<E, D, T>(
+    fn invoke_with<E, D, T>(
         self,
         codec: Codec<E, D>,
         instance: &str,
@@ -115,7 +115,7 @@ where
         E: Transmit + Send + 'static,
         D: Receive + Send + 'static;
 
-    fn invoke<E, D, T>(
+    fn invoke_with<E, D, T>(
         self,
         codec: Codec<E, D>,
         instance: &str,
@@ -148,7 +148,7 @@ where
         E: Transmit + Send + 'static,
         D: Receive + Send + 'static;
 
-    fn invoke<E, D, T>(
+    fn invoke_with<E, D, T>(
         self,
         codec: Codec<E, D>,
         instance: &str,
@@ -245,7 +245,7 @@ where
 }
 
 /// Invokes function `func` on instance `instance` using `clt` and the default codecs of `params`
-/// and results `R`, see [`Codec::invoke`]
+/// and results `R`, see [`Invoke::invoke_with`]
 pub fn invoke<P, R, C>(
     clt: C,
     instance: &str,
@@ -259,7 +259,7 @@ where
     P: Encode<Encoder: Send + 'static>,
     R: Decode<Decoder: Send> + Send,
 {
-    clt.invoke(
+    clt.invoke_with(
         Codec::<P::Encoder, R::Decoder>::default(),
         instance,
         func,
