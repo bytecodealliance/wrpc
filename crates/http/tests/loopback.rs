@@ -25,8 +25,8 @@ use tokio::time::sleep;
 use tokio::{select, spawn, try_join};
 use tokio_util::codec::Encoder as _;
 use wrpc_core::{
-    Codec, Decode, Encode, FrameDecodeError, FrameEncoder, FrameRef, Header, HeaderEncoder,
-    HeaderRef, InvokeError, ReceiveError, ServeError, Utf8Bytes, invoke, serve,
+    FrameDecodeError, FrameEncoder, FrameRef, Header, HeaderEncoder, HeaderRef, InvokeError,
+    ReceiveError, ServeError, Utf8Bytes, invoke, serve,
 };
 use wrpc_http::{Client, IncomingRequest, OutgoingParams};
 
@@ -346,13 +346,9 @@ async fn local() -> anyhow::Result<()> {
             ) = wrpc_http::accept(req.into_body()).await?;
             ensure!(instance == "foo" && func == "bar");
             let res = srv
-                .serve_local(
-                    Codec::<
-                        <(String,) as Encode>::Encoder,
-                        <(LocalBoxFuture<'static, String>,) as Decode>::Decoder,
-                    >::default(),
-                    async |(greeting,)| Ok((format!("{}, {name}", greeting.await),)),
-                )
+                .serve_local(async |(greeting,): (LocalBoxFuture<'static, String>,)| {
+                    Ok((format!("{}, {name}", greeting.await),))
+                })
                 .await?;
             let (res, body) = res.into_parts();
             let body = body.collect().await?;
@@ -360,17 +356,7 @@ async fn local() -> anyhow::Result<()> {
         }),
     );
     let greeting: BoxFuture<'static, String> = Box::pin(async { "Hello".into() });
-    let ((greeting,), io) = clt
-        .invoke_local(
-            Codec::<
-                <(BoxFuture<'static, String>,) as Encode>::Encoder,
-                <(String,) as Decode>::Decoder,
-            >::default(),
-            "foo",
-            "bar",
-            (greeting,),
-        )
-        .await?;
+    let ((greeting,), io): ((String,), _) = clt.invoke_local("foo", "bar", (greeting,)).await?;
     io.await?;
     assert_eq!(greeting, "Hello, world");
     Ok(())
