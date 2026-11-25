@@ -1,6 +1,6 @@
 [package]
 name = "wit-bindgen-wrpc-rust-macro"
-version = "0.13.0-rc.2"
+version = "0.13.0-rc.3"
 description = """
 Procedural macro paired with the `wit-bindgen-wrpc` crate.
 """
