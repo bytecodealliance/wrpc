@@ -95,7 +95,7 @@ pub fn pack<T: Encode>(v: T, dst: &mut BytesMut) -> Result<(), PackError> {
 }
 
 /// Decodes a value [`pack`] encoded from `buf` using its default decoder, see [`unpack_with`]
-pub fn unpack<T: Decode>(buf: &mut BytesMut) -> Result<T, UnpackError> {
+pub fn unpack<T: Decode>(buf: impl Into<BytesMut>) -> Result<T, UnpackError> {
     unpack_with(T::Decoder::default(), buf)
 }
 
@@ -119,12 +119,14 @@ pub fn pack_with<T>(
 /// [`UnpackError::Incomplete`], [`UnpackError::Pending`] or [`UnpackError::TrailingBytes`] if `buf`
 /// is incomplete, contains pending asynchronous values or trailing bytes
 ///
-/// The contents of `buf` are unspecified on failure.
-pub fn unpack_with<D>(mut dec: D, buf: &mut BytesMut) -> Result<D::Item, UnpackError>
+/// `buf` is copied once if it is borrowed, such as `&[u8]`, or a [`Bytes`](bytes::Bytes) that is
+/// not [unique](bytes::Bytes::is_unique).
+pub fn unpack_with<D>(mut dec: D, buf: impl Into<BytesMut>) -> Result<D::Item, UnpackError>
 where
     D: Decoder<Error = std::io::Error> + Receive,
 {
-    let Some(v) = dec.decode(buf).map_err(UnpackError::Decode)? else {
+    let mut buf = buf.into();
+    let Some(v) = dec.decode(&mut buf).map_err(UnpackError::Decode)? else {
         return Err(UnpackError::Incomplete);
     };
     if !dec.is_complete() {
@@ -169,7 +171,7 @@ mod tests {
         );
         let mut buf = BytesMut::default();
         pack(v, &mut buf)?;
-        let (a, b, c, d): Values = unpack(&mut buf)?;
+        let (a, b, c, d): Values = unpack(buf)?;
         assert_eq!(a, 0x42);
         assert_eq!(b.await, "foo");
         assert_eq!(future::join_all(c.concat().await).await, [1, 2, 3]);
@@ -184,23 +186,19 @@ mod tests {
         let err = pack(fut, &mut BytesMut::default()).unwrap_err();
         assert!(matches!(err, PackError::Pending), "{err:?}");
 
-        let err = unpack::<BoxFuture<'static, u8>>(&mut BytesMut::from("\0"))
-            .err()
-            .unwrap();
+        let err = unpack::<BoxFuture<'static, u8>>("\0").err().unwrap();
         assert!(matches!(err, UnpackError::Pending), "{err:?}");
 
-        let err = unpack::<BoxStream<'static, Vec<u8>>>(&mut BytesMut::from("\0"))
-            .err()
-            .unwrap();
+        let err = unpack::<BoxStream<'static, Vec<u8>>>("\0").err().unwrap();
         assert!(matches!(err, UnpackError::Pending), "{err:?}");
 
-        let err = unpack::<u8>(&mut BytesMut::from("\x42\0")).unwrap_err();
+        let err = unpack::<u8>("\x42\0").unwrap_err();
         assert!(matches!(err, UnpackError::TrailingBytes), "{err:?}");
 
-        let err = unpack::<u32>(&mut BytesMut::from(&b"\x80"[..])).unwrap_err();
+        let err = unpack::<u32>(&b"\x80"[..]).unwrap_err();
         assert!(matches!(err, UnpackError::Incomplete), "{err:?}");
 
-        let err = unpack::<bool>(&mut BytesMut::from("\x02")).unwrap_err();
+        let err = unpack::<bool>("\x02").unwrap_err();
         assert!(
             matches!(&err, UnpackError::Decode(err) if err.kind() == std::io::ErrorKind::InvalidData),
             "{err:?}"

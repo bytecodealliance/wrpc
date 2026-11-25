@@ -601,7 +601,7 @@ where
 
             let mut buf = BytesMut::default();
             wrpc::pack(sync_values(), &mut buf)?;
-            let unpacked: SyncValues = wrpc::unpack(&mut buf)?;
+            let unpacked: SyncValues = wrpc::unpack(buf)?;
             let (tx, rx) = connect().await?;
             let mut clt = Framed::new(tx, rx);
             for params in [sync_values(), unpacked] {
