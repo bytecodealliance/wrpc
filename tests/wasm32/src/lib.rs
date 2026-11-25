@@ -13,7 +13,7 @@ pub async fn serve<T>(
 where
     T: Body<Error: Into<Box<dyn Error + Send + Sync>>> + Unpin,
 {
-    req.serve(codec, async move |params| Ok(f(params).await))
+    req.serve_local(codec, async move |params| Ok(f(params).await))
         .await?;
     Ok(())
 }

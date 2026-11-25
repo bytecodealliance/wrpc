@@ -346,7 +346,7 @@ async fn local() -> anyhow::Result<()> {
             ) = wrpc_http::accept(req.into_body()).await?;
             ensure!(instance == "foo" && func == "bar");
             let res = srv
-                .serve(
+                .serve_local(
                     Codec::<
                         <(String,) as Encode>::Encoder,
                         <(LocalBoxFuture<'static, String>,) as Decode>::Decoder,
@@ -361,7 +361,7 @@ async fn local() -> anyhow::Result<()> {
     );
     let greeting: BoxFuture<'static, String> = Box::pin(async { "Hello".into() });
     let ((greeting,), io) = clt
-        .invoke(
+        .invoke_local(
             Codec::<
                 <(BoxFuture<'static, String>,) as Encode>::Encoder,
                 <(String,) as Decode>::Decoder,

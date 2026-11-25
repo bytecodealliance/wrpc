@@ -96,7 +96,7 @@
 //! ```
 //!
 //! The response status is left to callers: clients act on it in their [`Service`], servers may
-//! set the status and headers of the response [`IncomingRequest::serve`] returns, `200 OK` by
+//! set the status and headers of the response [`IncomingRequest::serve_local`] returns, `200 OK` by
 //! default.
 //!
 //! With the `h2` feature (default), [`h2`](https://docs.rs/h2) errors from the peer are reported
@@ -333,7 +333,7 @@ impl<S> Client<S> {
     /// [`Codec::invoke`]
     ///
     /// Unlike [`Invoke`], this does not require [`Send`] futures.
-    pub fn invoke<E, D, T, B>(
+    pub fn invoke_local<E, D, T, B>(
         self,
         codec: Codec<E, D>,
         instance: &str,
@@ -449,7 +449,7 @@ where
         D: Decoder<Error = std::io::Error> + Receive + Send + 'static,
         D::Item: Send,
     {
-        self.invoke(codec, instance, func, params)
+        self.invoke_local(codec, instance, func, params)
     }
 }
 
@@ -488,7 +488,7 @@ where
             parts: parts.clone(),
             service,
         }
-        .invoke(codec, instance, func, params)
+        .invoke_local(codec, instance, func, params)
     }
 }
 
@@ -544,7 +544,7 @@ where
     /// [`BrokenPipe`](std::io::ErrorKind::BrokenPipe) after.
     ///
     /// Unlike [`Serve`], this does not require [`Send`] values and futures.
-    pub async fn serve<E, D, R>(
+    pub async fn serve_local<E, D, R>(
         self,
         codec: Codec<E, D>,
         f: impl AsyncFnOnce(D::Item) -> std::io::Result<R>,
@@ -597,7 +597,7 @@ where
         D::Item: Send,
         Fut: Future<Output = std::io::Result<R>> + Send,
     {
-        IncomingRequest::serve(self, codec, async move |params| f(params).await)
+        IncomingRequest::serve_local(self, codec, async move |params| f(params).await)
             .map_ok(|res| res.map(BodyExt::boxed_unsync))
     }
 }
