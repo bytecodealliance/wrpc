@@ -1190,6 +1190,7 @@ dependencies = [
  "anyhow",
  "axum",
  "clap",
+ "http-body-util",
  "tokio",
  "tracing",
  "tracing-subscriber",

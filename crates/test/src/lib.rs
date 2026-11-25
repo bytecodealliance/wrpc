@@ -569,7 +569,7 @@ where
 }
 
 /// Serves wRPC requests on HTTP/1 or HTTP/2 connection `stream` with the responses `f` returns
-/// until the connection ends. Returns the first error.
+/// until the connection ends. Returns the first error, including response body errors.
 #[cfg(feature = "http")]
 pub async fn serve_http<F, Fut>(stream: TcpStream, f: F) -> anyhow::Result<()>
 where
@@ -598,7 +598,12 @@ where
                 f(parts, header, req).await
             };
             match res.await {
-                Ok(res) => Ok(res),
+                Ok(res) => Ok(res.map(|body| {
+                    http_body_util::BodyExt::map_err(body, move |err| {
+                        _ = tx.try_send(err.into());
+                        anyhow::anyhow!("failed to serve invocation")
+                    })
+                })),
                 Err(err) => {
                     _ = tx.try_send(err);
                     anyhow::bail!("failed to serve invocation")

@@ -7,6 +7,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse as _, Response};
 use axum::routing::post;
 use clap::Parser;
+use http_body_util::BodyExt as _;
 use tokio::net::TcpListener;
 use tokio::signal;
 use tracing::{error, warn};
@@ -50,7 +51,17 @@ async fn serve(body: Body) -> Response {
         return StatusCode::NOT_FOUND.into_response();
     };
     match fut.await {
-        Ok(res) => res.map(Body::new),
+        Ok(res) => res.map(|body| {
+            Body::new(body.map_err(|err| {
+                match err {
+                    ServeError::Request(..) => warn!(?err, "failed to serve invocation"),
+                    ServeError::Unread | ServeError::Handler(..) | ServeError::Response(..) => {
+                        error!(?err, "failed to serve invocation");
+                    }
+                }
+                err
+            }))
+        }),
         Err(err @ ServeError::Request(..)) => {
             warn!(?err, "failed to serve invocation");
             StatusCode::BAD_REQUEST.into_response()
