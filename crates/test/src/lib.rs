@@ -580,7 +580,9 @@ where
         + 'static,
     Fut: Future<
             Output = anyhow::Result<
-                http::Response<http_body_util::combinators::UnsyncBoxBody<Bytes, std::io::Error>>,
+                http::Response<
+                    http_body_util::combinators::UnsyncBoxBody<Bytes, wrpc_core::ServeError>,
+                >,
             >,
         > + Send
         + 'static,
@@ -644,8 +646,9 @@ where
 pub async fn serve_http_invocation(
     Header { instance, name }: Header,
     req: wrpc_http::IncomingRequest<hyper::body::Incoming>,
-) -> anyhow::Result<http::Response<http_body_util::combinators::UnsyncBoxBody<Bytes, std::io::Error>>>
-{
+) -> anyhow::Result<
+    http::Response<http_body_util::combinators::UnsyncBoxBody<Bytes, wrpc_core::ServeError>>,
+> {
     ensure!(
         instance == "foo" && name == "bar",
         "unexpected invocation of `{instance}.{name}`",
