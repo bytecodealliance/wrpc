@@ -951,17 +951,15 @@ mod tests {
         let mut buf = BytesMut::default();
         crate::pack(v, &mut buf)?;
         assert_eq!(buf, b"\x01\x01a\x01"[..]);
-        let v: BTreeMap<String, u32> = crate::unpack(&mut buf)?;
+        let v: BTreeMap<String, u32> = crate::unpack(buf)?;
         assert_eq!(v, BTreeMap::from([("a".into(), 1)]));
         Ok(())
     }
 
     #[test]
     fn map_rejects_duplicate_keys() {
-        let err = crate::unpack::<HashMap<String, u32>>(&mut BytesMut::from(
-            &b"\x02\x01a\x01\x01a\x02"[..],
-        ))
-        .unwrap_err();
+        let err =
+            crate::unpack::<HashMap<String, u32>>(&b"\x02\x01a\x01\x01a\x02"[..]).unwrap_err();
         assert!(
             matches!(&err, UnpackError::Decode(err) if err.kind() == std::io::ErrorKind::InvalidData),
             "{err:?}"
@@ -970,8 +968,7 @@ mod tests {
 
     #[test_log::test(tokio::test)]
     async fn unit_stream_max_chunk() -> std::io::Result<()> {
-        let s: BoxStream<'static, Vec<()>> =
-            crate::unpack(&mut BytesMut::from(&b"\x01\xff\xff\xff\xff\x0f"[..]))?;
+        let s: BoxStream<'static, Vec<()>> = crate::unpack(&b"\x01\xff\xff\xff\xff\x0f"[..])?;
         let lens: Vec<_> = s.map(|chunk| chunk.len()).collect().await;
         assert_eq!(lens, [0xffff_ffff]);
         Ok(())
@@ -981,9 +978,9 @@ mod tests {
     fn list_length_exceeds_data() {
         const LEN: &[u8] = b"\xff\xff\xff\xff\x0f";
 
-        let err = crate::unpack::<Vec<String>>(&mut BytesMut::from(LEN)).unwrap_err();
+        let err = crate::unpack::<Vec<String>>(LEN).unwrap_err();
         assert!(matches!(err, UnpackError::Incomplete), "{err:?}");
-        let err = crate::unpack::<Bytes>(&mut BytesMut::from(LEN)).unwrap_err();
+        let err = crate::unpack::<Bytes>(LEN).unwrap_err();
         assert!(matches!(err, UnpackError::Incomplete), "{err:?}");
     }
 }

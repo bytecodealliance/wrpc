@@ -77,7 +77,7 @@ fn plain_values() -> wasmtime::Result<()> {
     let vs = [v.clone(), component::Val::Bool(true)];
     pack_with(TupleEncoder::new(Arc::clone(&tys)), &vs[..], &mut borrowed)?;
     assert_eq!(borrowed, buf);
-    let decoded = unpack_with(TupleDecoder::new(Arc::clone(&tys)), &mut buf)?;
+    let decoded = unpack_with(TupleDecoder::new(Arc::clone(&tys)), buf.split())?;
     let decoded = decoded
         .into_iter()
         .map(component::Val::try_from)
@@ -86,7 +86,7 @@ fn plain_values() -> wasmtime::Result<()> {
 
     pack_with(ValEncoder::new(ty.clone()), &v, &mut buf)?;
     assert_eq!(buf, b"\x2a\x01\x03foo\x01\x01k\x07\x01\x02"[..]);
-    let decoded = unpack_with(ValDecoder::new(ty), &mut buf)?;
+    let decoded = unpack_with(ValDecoder::new(ty), buf.split())?;
     let decoded = component::Val::try_from(decoded)?;
     assert_eq!(decoded, v);
 
@@ -126,7 +126,7 @@ fn plain_values() -> wasmtime::Result<()> {
         &b"\x2a\x00\x02\x01k\x01\x01k\x02\x01\x02\x01"[..],
     ] {
         let dec = TupleDecoder::new(Arc::clone(&tys)).with_max_len(2);
-        let err = unpack_with(dec, &mut buf.into()).unwrap_err();
+        let err = unpack_with(dec, buf).unwrap_err();
         assert!(
             matches!(&err, UnpackError::Decode(err) if err.kind() == std::io::ErrorKind::InvalidData),
             "{err:?}"
@@ -141,7 +141,7 @@ fn plain_values() -> wasmtime::Result<()> {
     );
 
     let dec = TupleDecoder::new(Arc::from([flags]));
-    let err = unpack_with(dec, &mut b"\x08"[..].into()).unwrap_err();
+    let err = unpack_with(dec, &b"\x08"[..]).unwrap_err();
     assert!(
         matches!(&err, UnpackError::Decode(err) if err.kind() == std::io::ErrorKind::InvalidData),
         "{err:?}"
