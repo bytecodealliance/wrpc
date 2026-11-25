@@ -30,7 +30,7 @@ use wrpc_core::{
 };
 use wrpc_http::{Client, IncomingRequest, OutgoingParams};
 
-type BoxBody = UnsyncBoxBody<Bytes, std::io::Error>;
+type BoxBody = UnsyncBoxBody<Bytes, ServeError>;
 
 fn service<F, Fut>(
     f: F,
@@ -482,5 +482,74 @@ async fn echo() -> anyhow::Result<()> {
     tokio::time::timeout(Duration::from_secs(10), fut)
         .await
         .context("response was not streamed")??;
+    Ok(())
+}
+
+#[test_log::test(tokio::test)]
+async fn body_error() -> anyhow::Result<()> {
+    use core::convert::Infallible;
+
+    use http_body::Frame;
+    use http_body_util::StreamBody;
+    use tokio::task::yield_now;
+
+    let mut buf = BytesMut::default();
+    HeaderEncoder.encode(
+        HeaderRef {
+            instance: "foo",
+            name: "bar",
+        },
+        &mut buf,
+    )?;
+    FrameEncoder.encode(
+        FrameRef {
+            path: &[],
+            data: b"",
+        },
+        &mut buf,
+    )?;
+    let req = buf.split().freeze();
+
+    let (tx, rx) = mpsc::unbounded();
+    tx.unbounded_send(Ok::<_, Infallible>(Frame::data(req.clone())))?;
+    let (.., srv) = wrpc_http::accept(StreamBody::new(rx)).await?;
+    let res = serve::<(), (), _, _>(srv, async |()| Ok(())).await?;
+    FrameEncoder.encode(
+        FrameRef {
+            path: &[],
+            data: b"",
+        },
+        &mut buf,
+    )?;
+    tx.unbounded_send(Ok(Frame::data(buf.freeze())))?;
+    drop(tx);
+    let err = res
+        .into_body()
+        .collect()
+        .await
+        .expect_err("data after the invocation must fail it");
+    assert!(
+        matches!(err, ServeError::Request(ReceiveError::DataAfterEnd)),
+        "{err:?}"
+    );
+
+    let (.., srv) = wrpc_http::accept(Full::new(req)).await?;
+    let res = serve::<(), (BoxFuture<'static, Utf8Bytes<&'static [u8]>>,), _, _>(srv, async |()| {
+        let s: BoxFuture<'static, _> = Box::pin(async {
+            yield_now().await;
+            Utf8Bytes(&b"\xff"[..])
+        });
+        Ok((s,))
+    })
+    .await?;
+    let err = res
+        .into_body()
+        .collect()
+        .await
+        .expect_err("invalid results must fail the invocation");
+    assert!(
+        matches!(&err, ServeError::Response(err) if err.kind() == ErrorKind::InvalidInput),
+        "{err:?}"
+    );
     Ok(())
 }

@@ -62,6 +62,16 @@ impl From<ReceiveError> for ServeError {
     }
 }
 
+impl From<ServeError> for std::io::Error {
+    fn from(err: ServeError) -> Self {
+        match err {
+            ServeError::Request(err) => err.into(),
+            ServeError::Unread => Self::new(std::io::ErrorKind::BrokenPipe, err),
+            ServeError::Handler(err) | ServeError::Response(err) => err,
+        }
+    }
+}
+
 /// Server serving invocations with [`Send`] futures, such as [`Framed`], see [`Codec::serve`]
 ///
 /// The handler must consume the asynchronous parameters concurrently with each other, see the

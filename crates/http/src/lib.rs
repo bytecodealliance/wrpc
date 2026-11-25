@@ -25,7 +25,7 @@
 //! use hyper::service::service_fn;
 //! use wrpc_core::{Header, ServeError, serve};
 //!
-//! fn status(status: StatusCode) -> http::Response<UnsyncBoxBody<Bytes, std::io::Error>> {
+//! fn status(status: StatusCode) -> http::Response<UnsyncBoxBody<Bytes, ServeError>> {
 //!     let mut res = http::Response::new(UnsyncBoxBody::default());
 //!     *res.status_mut() = status;
 //!     res
@@ -98,6 +98,38 @@
 //! The response status is left to callers: clients act on it in their [`Service`], servers may
 //! set the status and headers of the response [`IncomingRequest::serve_local`] returns, `200 OK` by
 //! default.
+//!
+//! Failures after the response head fail its body with a [`ServeError`]. hyper returns it from
+//! HTTP/1 `serve_connection`, but over HTTP/2 only resets the stream, so servers observe it by
+//! wrapping the body:
+//!
+//! ```
+//! # use bytes::Bytes;
+//! # use http_body_util::combinators::UnsyncBoxBody;
+//! use http_body_util::BodyExt as _;
+//! use wrpc_core::ServeError;
+//!
+//! fn observe(
+//!     res: http::Response<UnsyncBoxBody<Bytes, ServeError>>,
+//! ) -> http::Response<UnsyncBoxBody<Bytes, ServeError>> {
+//!     res.map(|body| {
+//!         body.map_err(|err| {
+//!             if let ServeError::Request(..) = err {
+//!                 eprintln!("invalid request: {err}");
+//!             } else {
+//!                 eprintln!("invocation failed: {err}");
+//!             }
+//!             err
+//!         })
+//!         .boxed_unsync()
+//!     })
+//! }
+//! ```
+//!
+//! Walking its [`source`](core::error::Error::source) chain finds the inner [`std::io::Error`], if
+//! any, whose own payload, such as a request body error, is found with [`std::io::Error::get_ref`].
+//! Request body errors other than [`std::io::Error`] are wrapped in one of kind
+//! [`std::io::ErrorKind::Other`], except for the [`h2`](https://docs.rs/h2) errors below.
 //!
 //! With the `h2` feature (default), [`h2`](https://docs.rs/h2) errors from the peer are reported
 //! as [`std::io::ErrorKind::ConnectionReset`], refused streams and graceful shutdowns as
@@ -584,8 +616,7 @@ where
     /// Receives the asynchronous parameters while `f` runs and resolves to the response once the
     /// results `f` returns are encoded. Its [OutgoingResults] transmits the asynchronous results
     /// and receives the rest of the request. Data for an asynchronous parameter `f` dropped fails
-    /// with [`ServeError::Unread`] until this resolves and fails the [OutgoingResults] with
-    /// [`BrokenPipe`](std::io::ErrorKind::BrokenPipe) after.
+    /// this, or the [OutgoingResults] once this resolved, with [`ServeError::Unread`].
     ///
     /// Unlike [`Serve`], this does not require [`Send`] values and futures.
     pub async fn serve_local_with<E, D, R>(
@@ -628,7 +659,7 @@ where
         + Send
         + 'static,
 {
-    type Output = http::Response<UnsyncBoxBody<Bytes, std::io::Error>>;
+    type Output = http::Response<UnsyncBoxBody<Bytes, ServeError>>;
 
     fn serve_with<E, D, R, Fut>(
         self,
@@ -652,6 +683,9 @@ where
 /// It fails on the first error of either and ends once both are done. The rest of the request is
 /// received only while it is polled, which HTTP/2 does only while the response has flow-control
 /// capacity.
+///
+/// It never fails with [`ServeError::Handler`], and [`ServeError::Response`] means encoding the
+/// results failed: failures to write the response are reported by the HTTP implementation.
 pub struct OutgoingResults<E, D, T: http_body::Body> {
     body: Egress<E>,
     rx: Ingress<D, BodyReader<T>>,
@@ -664,7 +698,7 @@ where
     T: http_body::Body<Error: Into<Box<dyn core::error::Error + Send + Sync>>> + Unpin,
 {
     type Data = Bytes;
-    type Error = std::io::Error;
+    type Error = ServeError;
 
     fn poll_frame(
         self: Pin<&mut Self>,
@@ -676,7 +710,7 @@ where
         }
         match ready!(Pin::new(body).poll_frame(cx)) {
             None if !matches!(rx, Ingress::Done) => Poll::Pending,
-            frame => Poll::Ready(frame),
+            frame => Poll::Ready(frame.map(|frame| frame.map_err(ServeError::Response))),
         }
     }
 
