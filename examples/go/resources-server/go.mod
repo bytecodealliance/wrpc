@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/google/uuid v1.6.0
-	wrpc.io/go v0.4.0-rc.2
+	wrpc.io/go v0.4.0-rc.3
 )
 
-replace wrpc.io/go v0.4.0-rc.2 => ../../../go
+replace wrpc.io/go v0.4.0-rc.3 => ../../../go
